@@ -65,7 +65,15 @@ Kunci berlaku tiap app dibuka / kembali dari latar.
 - Penangkap crash baru: tiap crash menulis jejak ke folder **_Log-Crash**
   di File Manager (bisa diekspor), karena logcat HP tidak bisa ditarik.
 
-Yang **belum** ada di S1 (menyusul): CRUD Space penuh sampai 10, freeze.
+**S1 lanjutan, slice CRUD Space (v0.1.6-s1crud):** tambah / ubah nama /
+hapus Space, maks 10 (D1–D2, mockup v2 layar 04). Kartu "＋ Space baru" di
+dashboard (nama + preset situs + warna); tahan lama di kartu Space untuk
+Ubah nama / Hapus. Hapus Space ikut membersihkan sesi WebView slot itu
+(supaya Space baru di slot yang sama tidak mewarisi login lama); file
+unduhan tetap ada di File Manager. Dashboard sekarang dirender dari
+registry Space (preset 7 awal tetap sama).
+
+Yang **belum** ada di S1 (menyusul): freeze Space (hemat RAM).
 
 ## Arsitektur
 
@@ -172,6 +180,25 @@ CI: `.github/workflows/android.yml` — `cargo test` + `assembleDebug` tiap push
 4. Kalau FC muncul lagi: buka **File Manager → _Log-Crash** — di sana ada
    file `crash-<tanggal>.txt`. Tap **Ekspor** di file itu, kirim ke Jhon.
    **LULUS** bila: file log-nya ada dan isinya kebaca.
+
+## Tes CRUD Space di HP (bahasa bayi)
+
+1. Di dashboard, di bawah kartu Space ada kartu **"＋ Space baru"**
+   (tulisan `7/10`). Tap kartu itu.
+2. Isi nama (cth: "Claude 7"), pilih situs **Claude**, pilih warna,
+   tap **"Buat Space & Login"**. **LULUS** bila: browser Space baru
+   kebuka di halaman login Claude, dan kembali ke dashboard ada kartu
+   baru "Claude 7" (tulisan jadi `8/10`).
+3. Login akun ke-7 di Space baru itu. **LULUS** bila: chip-nya jadi
+   "Aktif" dan tidak mengeluarkan akun Space lain.
+4. **Tahan lama** (tekan agak lama) di kartu "Claude 7" → pilih
+   **"Ubah nama"** → ganti jadi "Claude Tambahan". **LULUS** bila:
+   nama kartu berubah.
+5. Tahan lama lagi → **"Hapus Space"** → konfirmasi Hapus.
+   **LULUS** bila: kartu hilang, tulisan kembali `7/10`, dan file
+   unduhan lama (kalau ada) tetap ada di File Manager.
+6. Ulangi tambah Space sampai 10. **LULUS** bila: Space ke-11 ditolak
+   dengan pesan "Maksimal 10 Space".
 
 ## Keamanan
 

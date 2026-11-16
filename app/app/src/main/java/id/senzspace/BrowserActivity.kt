@@ -495,6 +495,21 @@ class Space6Activity : BrowserActivity() {
     override val dataDirectorySuffix: String = "space6"
 }
 
+/** Space 8 — proses :space8, data directory suffix "space8". */
+class Space8Activity : BrowserActivity() {
+    override val dataDirectorySuffix: String = "space8"
+}
+
+/** Space 9 — proses :space9, data directory suffix "space9". */
+class Space9Activity : BrowserActivity() {
+    override val dataDirectorySuffix: String = "space9"
+}
+
+/** Space 10 — proses :space10, data directory suffix "space10". */
+class Space10Activity : BrowserActivity() {
+    override val dataDirectorySuffix: String = "space10"
+}
+
 /** AI Studio — proses :aistudio, data directory suffix "aistudio". */
 class AiStudioActivity : BrowserActivity() {
     override val dataDirectorySuffix: String = "aistudio"

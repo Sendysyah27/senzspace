@@ -23,6 +23,9 @@ object FileStore {
         Folder("space5", "Claude 5", "#7BC47F"),
         Folder("space6", "Claude 6", "#D66BA5"),
         Folder("aistudio", "AI Studio", "#38BDF8"),
+        Folder("space8", "Space 8", "#A78BFA"),
+        Folder("space9", "Space 9", "#22D3EE"),
+        Folder("space10", "Space 10", "#FB7185"),
         Folder("_inbox", "_Inbox-Bersama", "#8A94A6"),
         Folder("_arsip", "_Arsip-Episode", "#8A94A6"),
         Folder("_log-crash", "_Log-Crash", "#8A94A6")

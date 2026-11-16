@@ -119,6 +119,9 @@ class FileManagerActivity : AppCompatActivity() {
 
     private fun renderFolders() {
         for (folder in FileStore.FOLDERS) {
+            // Nama folder Space mengikuti nama di registry (bila diganti).
+            val displayName = SpaceRegistry.findBySuffix(this, folder.key)?.name
+                ?: folder.name
             val count = FileStore.count(this, folder.key)
             val bytes = FileStore.totalBytes(this, folder.key)
             val inner = LinearLayout(this).apply {
@@ -132,7 +135,7 @@ class FileManagerActivity : AppCompatActivity() {
                 setTextColor(Color.parseColor(folder.color))
             }
             val name = TextView(this).apply {
-                text = "  📁  ${folder.name}"
+                text = "  📁  $displayName"
                 textSize = 16f
                 typeface = Typeface.DEFAULT_BOLD
                 setTextColor(Color.parseColor("#E8ECF4"))
