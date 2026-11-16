@@ -155,7 +155,7 @@ abstract class BrowserActivity : AppCompatActivity() {
         // Aturan anti-salah-akun (PRD F4): nama + warna Space aktif
         // tampil permanen di top bar.
         val topBar = TextView(this).apply {
-            text = "● $name  —  SenzSpace S0"
+            text = "● $name  —  SenzSpace S1"
             textSize = 16f
             setTypeface(null, android.graphics.Typeface.BOLD)
             setPadding(24, 24, 24, 24)
@@ -208,6 +208,11 @@ abstract class BrowserActivity : AppCompatActivity() {
                     // sempat ditulis, sesi login hilang — kejadian HP 20:17:
                     // Space 1 balik ke halaman login setelah FC Space 2.
                     CookieManager.getInstance().flush()
+                    // S1: tandai status login Space ini di file
+                    // space_<suffix>.txt ("1" = login, "0" = belum) supaya
+                    // chip di Dashboard jujur. Hanya bendera 1/0 — BUKAN
+                    // cookie/sesi, jadi aman disimpan sebagai file biasa.
+                    saveLoginState(url)
                 }
 
                 override fun onReceivedHttpError(
@@ -309,6 +314,31 @@ abstract class BrowserActivity : AppCompatActivity() {
         }
     }
 
+    /** S1: apakah URL ini berarti Space sedang login? Aturan default untuk
+     *  Claude: host claude.ai dengan path selain "/" dan "/login".
+     *  (Halaman "/" saat logout tampil sebagai landing "The AI for problem
+     *  solvers" — itu BUKAN login.) AI Studio menimpa aturan ini. */
+    protected open fun isLoggedIn(url: String): Boolean {
+        return try {
+            val u = android.net.Uri.parse(url)
+            val path = u.path ?: ""
+            u.host == "claude.ai" && path != "/" && path != "/login" &&
+                !path.contains("/login")
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    private fun saveLoginState(url: String) {
+        try {
+            val flag = if (isLoggedIn(url)) "1" else "0"
+            openFileOutput("space_${dataDirectorySuffix}.txt", MODE_PRIVATE)
+                .use { it.write(flag.toByteArray()) }
+        } catch (e: Exception) {
+            // Status chip boleh gagal diam-diam; login tetap jalan.
+        }
+    }
+
     override fun onBackPressed() {
         if (::webView.isInitialized && webView.canGoBack()) webView.goBack()
         else super.onBackPressed()
@@ -328,4 +358,43 @@ class Space1Activity : BrowserActivity() {
 /** Space 2 — proses :space2, data directory suffix "space2". */
 class Space2Activity : BrowserActivity() {
     override val dataDirectorySuffix: String = "space2"
+}
+
+/** Space 3 — proses :space3, data directory suffix "space3". */
+class Space3Activity : BrowserActivity() {
+    override val dataDirectorySuffix: String = "space3"
+}
+
+/** Space 4 — proses :space4, data directory suffix "space4". */
+class Space4Activity : BrowserActivity() {
+    override val dataDirectorySuffix: String = "space4"
+}
+
+/** Space 5 — proses :space5, data directory suffix "space5". */
+class Space5Activity : BrowserActivity() {
+    override val dataDirectorySuffix: String = "space5"
+}
+
+/** Space 6 — proses :space6, data directory suffix "space6". */
+class Space6Activity : BrowserActivity() {
+    override val dataDirectorySuffix: String = "space6"
+}
+
+/** AI Studio — proses :aistudio, data directory suffix "aistudio". */
+class AiStudioActivity : BrowserActivity() {
+    override val dataDirectorySuffix: String = "aistudio"
+
+    // AI Studio: login ditandai URL kerja (/prompts, /app); halaman "/" saat
+    // logout tampil sebagai landing — itu BUKAN login.
+    override fun isLoggedIn(url: String): Boolean {
+        return try {
+            val u = android.net.Uri.parse(url)
+            val path = u.path ?: ""
+            u.host == "aistudio.google.com" &&
+                (path.contains("/prompts") || path.contains("/app") ||
+                    path.contains("/library"))
+        } catch (e: Exception) {
+            false
+        }
+    }
 }

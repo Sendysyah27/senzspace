@@ -20,8 +20,9 @@
             </intent-filter>
         </activity>
 
-        <!-- S0: satu proses per Space, supaya WebView.setDataDirectorySuffix
-             benar-benar memisahkan cookie/storage antar Space. -->
+        <!-- S1: 7 Space, satu proses per Space, supaya
+             WebView.setDataDirectorySuffix benar-benar memisahkan
+             cookie/storage antar Space. -->
         <activity
             android:name=".Space1Activity"
             android:process=":space1"
@@ -29,6 +30,26 @@
         <activity
             android:name=".Space2Activity"
             android:process=":space2"
+            android:exported="false" />
+        <activity
+            android:name=".Space3Activity"
+            android:process=":space3"
+            android:exported="false" />
+        <activity
+            android:name=".Space4Activity"
+            android:process=":space4"
+            android:exported="false" />
+        <activity
+            android:name=".Space5Activity"
+            android:process=":space5"
+            android:exported="false" />
+        <activity
+            android:name=".Space6Activity"
+            android:process=":space6"
+            android:exported="false" />
+        <activity
+            android:name=".AiStudioActivity"
+            android:process=":aistudio"
             android:exported="false" />
 
     </application>

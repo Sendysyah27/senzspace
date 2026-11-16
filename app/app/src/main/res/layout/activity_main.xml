@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Dashboard SenzSpace — desain gelap navy, kartu Space radius 18dp.
-     Aturan: nama + warna Space selalu terlihat (anti-salah-akun, PRD F4).
-     Space yang belum dibuka di S0 tampil redup dengan lencana S1 — jujur,
-     bukan disembunyikan. -->
+<!-- Dashboard SenzSpace S1 — 7 Space aktif, kartu radius 18dp, warna per Space.
+     Chip status dibaca dari file space_<suffix>.txt yang ditulis BrowserActivity
+     tiap halaman selesai dimuat (1 = login, 0 = belum) — MainActivity baca ulang
+     di onResume, jadi chip selalu jujur. -->
 <ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
@@ -28,7 +28,7 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_marginTop="4dp"
-            android:text="Ruang kerja 7 Space — 2 aktif di S0"
+            android:text="Ruang kerja 7 Space — S1, semua aktif"
             android:textColor="@color/senz_muted"
             android:textSize="14sp" />
 
@@ -85,6 +85,7 @@
                         android:textStyle="bold" />
 
                     <TextView
+                        android:id="@+id/tvStatus1"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:background="@drawable/chip_bg"
@@ -114,7 +115,6 @@
                     android:textSize="12sp" />
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
-
         <!-- Claude 2 -->
         <com.google.android.material.card.MaterialCardView
             android:id="@+id/btnSpace2"
@@ -159,6 +159,7 @@
                         android:textStyle="bold" />
 
                     <TextView
+                        android:id="@+id/tvStatus2"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:background="@drawable/chip_bg"
@@ -188,22 +189,14 @@
                     android:textSize="12sp" />
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
-
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="24dp"
-            android:text="SEGERA DI S1"
-            android:textColor="@color/senz_muted"
-            android:textSize="12sp"
-            android:textStyle="bold" />
-
-        <!-- Claude 3–6 + AI Studio: redup, lencana S1, belum bisa dibuka -->
+        <!-- Claude 3 -->
         <com.google.android.material.card.MaterialCardView
+            android:id="@+id/btnSpace3"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="12dp"
-            android:alpha="0.45"
+            android:clickable="true"
+            android:focusable="true"
             app:cardBackgroundColor="@color/senz_card"
             app:cardCornerRadius="18dp"
             app:cardElevation="0dp"
@@ -240,6 +233,7 @@
                         android:textStyle="bold" />
 
                     <TextView
+                        android:id="@+id/tvStatus3"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:background="@drawable/chip_bg"
@@ -247,7 +241,7 @@
                         android:paddingTop="4dp"
                         android:paddingEnd="10dp"
                         android:paddingBottom="4dp"
-                        android:text="S1"
+                        android:text="Belum login"
                         android:textColor="@color/senz_muted"
                         android:textSize="12sp" />
                 </LinearLayout>
@@ -259,14 +253,24 @@
                     android:text="claude.ai"
                     android:textColor="@color/senz_muted"
                     android:textSize="13sp" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:text="Terakhir aktif: —  •  0 file baru"
+                    android:textColor="@color/senz_muted"
+                    android:textSize="12sp" />
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
-
+        <!-- Claude 4 -->
         <com.google.android.material.card.MaterialCardView
+            android:id="@+id/btnSpace4"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="12dp"
-            android:alpha="0.45"
+            android:clickable="true"
+            android:focusable="true"
             app:cardBackgroundColor="@color/senz_card"
             app:cardCornerRadius="18dp"
             app:cardElevation="0dp"
@@ -303,6 +307,7 @@
                         android:textStyle="bold" />
 
                     <TextView
+                        android:id="@+id/tvStatus4"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:background="@drawable/chip_bg"
@@ -310,7 +315,7 @@
                         android:paddingTop="4dp"
                         android:paddingEnd="10dp"
                         android:paddingBottom="4dp"
-                        android:text="S1"
+                        android:text="Belum login"
                         android:textColor="@color/senz_muted"
                         android:textSize="12sp" />
                 </LinearLayout>
@@ -322,14 +327,24 @@
                     android:text="claude.ai"
                     android:textColor="@color/senz_muted"
                     android:textSize="13sp" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:text="Terakhir aktif: —  •  0 file baru"
+                    android:textColor="@color/senz_muted"
+                    android:textSize="12sp" />
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
-
+        <!-- Claude 5 -->
         <com.google.android.material.card.MaterialCardView
+            android:id="@+id/btnSpace5"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="12dp"
-            android:alpha="0.45"
+            android:clickable="true"
+            android:focusable="true"
             app:cardBackgroundColor="@color/senz_card"
             app:cardCornerRadius="18dp"
             app:cardElevation="0dp"
@@ -366,6 +381,7 @@
                         android:textStyle="bold" />
 
                     <TextView
+                        android:id="@+id/tvStatus5"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:background="@drawable/chip_bg"
@@ -373,7 +389,7 @@
                         android:paddingTop="4dp"
                         android:paddingEnd="10dp"
                         android:paddingBottom="4dp"
-                        android:text="S1"
+                        android:text="Belum login"
                         android:textColor="@color/senz_muted"
                         android:textSize="12sp" />
                 </LinearLayout>
@@ -385,14 +401,24 @@
                     android:text="claude.ai"
                     android:textColor="@color/senz_muted"
                     android:textSize="13sp" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:text="Terakhir aktif: —  •  0 file baru"
+                    android:textColor="@color/senz_muted"
+                    android:textSize="12sp" />
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
-
+        <!-- Claude 6 -->
         <com.google.android.material.card.MaterialCardView
+            android:id="@+id/btnSpace6"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="12dp"
-            android:alpha="0.45"
+            android:clickable="true"
+            android:focusable="true"
             app:cardBackgroundColor="@color/senz_card"
             app:cardCornerRadius="18dp"
             app:cardElevation="0dp"
@@ -429,6 +455,7 @@
                         android:textStyle="bold" />
 
                     <TextView
+                        android:id="@+id/tvStatus6"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:background="@drawable/chip_bg"
@@ -436,7 +463,7 @@
                         android:paddingTop="4dp"
                         android:paddingEnd="10dp"
                         android:paddingBottom="4dp"
-                        android:text="S1"
+                        android:text="Belum login"
                         android:textColor="@color/senz_muted"
                         android:textSize="12sp" />
                 </LinearLayout>
@@ -448,14 +475,24 @@
                     android:text="claude.ai"
                     android:textColor="@color/senz_muted"
                     android:textSize="13sp" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:text="Terakhir aktif: —  •  0 file baru"
+                    android:textColor="@color/senz_muted"
+                    android:textSize="12sp" />
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
-
+        <!-- AI Studio -->
         <com.google.android.material.card.MaterialCardView
+            android:id="@+id/btnSpace7"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="12dp"
-            android:alpha="0.45"
+            android:clickable="true"
+            android:focusable="true"
             app:cardBackgroundColor="@color/senz_card"
             app:cardCornerRadius="18dp"
             app:cardElevation="0dp"
@@ -492,6 +529,7 @@
                         android:textStyle="bold" />
 
                     <TextView
+                        android:id="@+id/tvStatus7"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:background="@drawable/chip_bg"
@@ -499,7 +537,7 @@
                         android:paddingTop="4dp"
                         android:paddingEnd="10dp"
                         android:paddingBottom="4dp"
-                        android:text="S1"
+                        android:text="Belum login"
                         android:textColor="@color/senz_muted"
                         android:textSize="12sp" />
                 </LinearLayout>
@@ -511,6 +549,14 @@
                     android:text="aistudio.google.com"
                     android:textColor="@color/senz_muted"
                     android:textSize="13sp" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:text="Terakhir aktif: —  •  0 file baru"
+                    android:textColor="@color/senz_muted"
+                    android:textSize="12sp" />
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
 
@@ -519,7 +565,7 @@
             android:layout_height="wrap_content"
             android:layout_marginTop="24dp"
             android:gravity="center"
-            android:text="S0 Prototipe Gerbang — maks 10 Space (D1). File Manager, Unduhan &amp; Kunci App menyusul di S1–S4."
+            android:text="S1 — 7 Space aktif, maks 10 Space (D1). File Manager, Unduhan &amp; Kunci App menyusul."
             android:textColor="@color/senz_muted"
             android:textSize="12sp" />
     </LinearLayout>
