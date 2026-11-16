@@ -15,12 +15,27 @@ android {
         versionName = "0.1.0-s0.3"
     }
 
+    // Kunci debug TETAP (sejak 16 Nov 2026): keystore disimpan sebagai GitHub
+    // Actions secret (DEBUG_KEYSTORE_*), BUKAN di repo — kunci debug yang
+    // dibuat runner tiap run bikin tanda tangan APK berubah terus, jadi
+    // Sendy harus uninstall + login ulang tiap build. Dengan kunci tetap,
+    // APK baru bisa menimpa (install over) tanpa hapus sesi.
+    signingConfigs {
+        debug {
+            storeFile = file("debug.keystore")
+            storePassword = System.getenv("DEBUG_KEYSTORE_PASSWORD")
+            keyAlias = System.getenv("DEBUG_KEY_ALIAS")
+            keyPassword = System.getenv("DEBUG_KEY_PASSWORD")
+        }
+    }
+
     buildTypes {
         release {
             minifyEnabled = false
         }
         debug {
             applicationIdSuffix = ".debug"
+            signingConfig = signingConfigs.debug
         }
     }
 

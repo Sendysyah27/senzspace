@@ -46,8 +46,23 @@ jobs:
         with:
           gradle-version: "8.7"
 
+      # Kunci debug TETAP: decode dari secret agar tanda tangan APK stabil
+      # antar run — tanpa ini tiap run pakai kunci debug baru dan Sendy
+      # harus uninstall + login ulang tiap build.
+      - name: Restore fixed debug keystore
+        working-directory: app
+        env:
+          DEBUG_KEYSTORE_BASE64: ${{ secrets.DEBUG_KEYSTORE_BASE64 }}
+        run: |
+          echo "$DEBUG_KEYSTORE_BASE64" | base64 -d > app/debug.keystore
+          ls -l app/debug.keystore
+
       - name: Build debug APK
         working-directory: app
+        env:
+          DEBUG_KEYSTORE_PASSWORD: ${{ secrets.DEBUG_KEYSTORE_PASSWORD }}
+          DEBUG_KEY_ALIAS: ${{ secrets.DEBUG_KEY_ALIAS }}
+          DEBUG_KEY_PASSWORD: ${{ secrets.DEBUG_KEY_PASSWORD }}
         run: gradle :app:assembleDebug --stacktrace --no-daemon
 
       - name: Upload APK
