@@ -346,6 +346,27 @@ ditulis langsung ke folder Space.
    muncul "Tidak bisa dilihat di sini" + tombol "Buka dengan app
    lain".
 
+## Tes unduh AI Studio v0.1.14 di HP (bahasa bayi)
+
+Akar masalah (temuan HP 00:35): AI Studio membuat blob audio lalu
+LANGSUNG me-revoke URL-nya setelah tombol unduh ditekan — Download-
+Listener baru jalan sesudahnya, jadi XHR ke URL yang sudah mati.
+Sekarang isi blob ditangkap saat dibuat (cache) + revoke ditunda
+60 detik.
+
+1. Install APK v0.1.14-s1blobcache (nimpa, tanpa uninstall).
+2. Buka **AI Studio** → Playground → generate suara (Speaker 1 -
+   Sadaltager, teks apa saja) sampai muncul player audio.
+3. Tap tombol **unduh** (ikon panah ke bawah) di bawah player.
+   **LULUS** bila: muncul toast "Tersimpan di folder AI Studio:
+   …" (bukan "Gagal mengunduh file (blob tidak bisa dibaca)").
+4. Buka File Manager → folder **AI Studio**. **LULUS** bila: file
+   audio (.wav/.mp3) ada di sana dan bisa diputar (tap → View →
+   video/audio muter; atau Buka → pemutar HP).
+5. Ulangi tes unduh blob di **Claude 4** (PROJECT STATE .md).
+   **LULUS** bila: masih tersimpan seperti v0.1.11 — perbaikan
+   ini tidak boleh merusak yang sudah jalan.
+
 ## Kontrol app dari Jhon (via Termux bridge)
 
 SenzSpace menulis statusnya ke file JSON di HP (hanya status yang

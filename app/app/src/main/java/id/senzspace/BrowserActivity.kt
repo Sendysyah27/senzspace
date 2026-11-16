@@ -548,6 +548,11 @@ abstract class BrowserActivity : AppCompatActivity() {
                     // Multi Live v2: pasang pengamat DOM + tangkap langsung
                     // bila halaman selesai dimuat saat Space di belakang.
                     injectLiveObserver()
+                    // Unduh blob v0.1.14: pasang penangkap blob (cache isi
+                    // + tunda revoke) supaya unduhan blob yang dibuat lalu
+                    // langsung di-revoke halaman (pola AI Studio) tetap
+                    // bisa diambil.
+                    injectBlobCache()
                     if (!isForeground) captureLiveThumbnail()
                 }
 
@@ -826,21 +831,27 @@ abstract class BrowserActivity : AppCompatActivity() {
         }
     }
 
-    /** Ambil isi blob: URL lewat JS halaman (XHR responseType blob →
-     *  FileReader → base64). Hanya SATU unduhan blob dalam satu waktu;
-     *  unduhan kedua yang datang selagi yang pertama jalan akan
-     *  menimpa nama pending-nya (jarang terjadi di Claude). */
+    /** Ambil isi blob: URL lewat JS halaman — pertama dari cache yang
+     *  dipasang injectBlobCache(), kalau belum ada baru XHR + FileReader
+     *  (jalur v0.1.11). Nama asli file diambil dari atribut download
+     *  anchor yang diklik (mis. "audio.wav" dari AI Studio). */
     private fun downloadBlob(dlUrl: String, fileName: String) {
         if (!::webView.isInitialized) return
         pendingBlobFileName = fileName
         val escaped = dlUrl.replace("\\", "\\\\").replace("'", "\\'")
         val js = "(function(){try{" +
+            "var url='$escaped';" +
+            "var name='';" +
+            "try{name=(window.__senzBlobName&&window.__senzBlobName(url))||'';}catch(e){}" +
+            "var cached='';" +
+            "try{cached=(window.__senzBlobGet&&window.__senzBlobGet(url))||'';}catch(e){}" +
+            "if(cached){window.SenzBlob.onBlobData(cached,name);return;}" +
             "var xhr=new XMLHttpRequest();" +
-            "xhr.open('GET','$escaped',true);" +
+            "xhr.open('GET',url,true);" +
             "xhr.responseType='blob';" +
             "xhr.onload=function(){var r=new FileReader();" +
             "r.onloadend=function(){var s=r.result||'';var i=s.indexOf(',');" +
-            "window.SenzBlob.onBlobData(i>=0?s.substring(i+1):s);};" +
+            "window.SenzBlob.onBlobData(i>=0?s.substring(i+1):s,name);};" +
             "r.onerror=function(){window.SenzBlob.onBlobError();};" +
             "r.readAsDataURL(xhr.response);};" +
             "xhr.onerror=function(){window.SenzBlob.onBlobError();};" +
@@ -849,6 +860,55 @@ abstract class BrowserActivity : AppCompatActivity() {
             webView.evaluateJavascript(js, null)
         } catch (e: Exception) {
             Toast.makeText(this, "Gagal mengunduh: ${e.message}", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    /** Penangkap blob (v0.1.14) — dipasang tiap halaman selesai dimuat.
+     *  Masalahnya (temuan HP 00:35, AI Studio): halaman membuat blob
+     *  untuk unduhan lalu LANGSUNG me-revoke URL-nya setelah klik —
+     *  DownloadListener native baru jalan sesudahnya, jadi XHR ke URL
+     *  yang sudah mati ("blob tidak bisa dibaca"). Perbaikannya dua
+     *  lapis: (1) bungkus createObjectURL — isi blob dibaca jadi base64
+     *  dan disimpan di cache halaman (maks 5 blob, <30MB); (2) bungkus
+     *  revokeObjectURL — revoke ASLI ditunda 60 detik, jadi jalur XHR
+     *  masih sempat membaca. Plus: catat atribut download anchor yang
+     *  diklik supaya nama file aslinya kebawa. Semua dibungkus
+     *  try/catch dan selalu memanggil fungsi aslinya — halaman tidak
+     *  boleh rusak gara-gara ini. */
+    private fun injectBlobCache() {
+        if (!::webView.isInitialized) return
+        val js = "(function(){try{" +
+            "if(window.__senzBlobCache)return;" +
+            "window.__senzBlobCache={};" +
+            "window.__senzBlobNames={};" +
+            "window.__senzBlobGet=function(u){return window.__senzBlobCache[u]||'';};" +
+            "window.__senzBlobName=function(u){return window.__senzBlobNames[u]||'';};" +
+            "var _create=URL.createObjectURL.bind(URL);" +
+            "URL.createObjectURL=function(b){" +
+            "var u=_create(b);" +
+            "try{if(b&&b.size&&b.size<30*1024*1024){" +
+            "var keys=Object.keys(window.__senzBlobCache);" +
+            "if(keys.length>=5){delete window.__senzBlobCache[keys[0]];}" +
+            "var r=new FileReader();" +
+            "r.onloadend=function(){var s=r.result||'';var i=s.indexOf(',');" +
+            "window.__senzBlobCache[u]=i>=0?s.substring(i+1):s;};" +
+            "r.readAsDataURL(b);}}catch(e){}" +
+            "return u;};" +
+            "var _revoke=URL.revokeObjectURL.bind(URL);" +
+            "URL.revokeObjectURL=function(u){" +
+            "setTimeout(function(){" +
+            "try{_revoke(u);}catch(e){}" +
+            "try{delete window.__senzBlobCache[u];}catch(e){}},60000);};" +
+            "var _click=HTMLAnchorElement.prototype.click;" +
+            "HTMLAnchorElement.prototype.click=function(){" +
+            "try{var h=this.href||'';var d=this.getAttribute('download');" +
+            "if(h.indexOf('blob:')===0&&d){window.__senzBlobNames[h]=d;}}catch(e){}" +
+            "return _click.call(this);};" +
+            "}catch(e){}})();"
+        try {
+            webView.evaluateJavascript(js, null)
+        } catch (e: Exception) {
+            // Cache blob boleh gagal; jalur XHR tetap dicoba saat unduh.
         }
     }
 
@@ -895,18 +955,27 @@ abstract class BrowserActivity : AppCompatActivity() {
         }.start()
     }
 
-    /** Jembatan unduh blob: halaman mengirim isi file sebagai base64.
+    /** Jembatan unduh blob: halaman mengirim isi file sebagai base64
+     *  + nama asli dari atribut download anchor (bisa kosong).
      *  Dipanggil dari thread binder — decode + tulis di thread pekerja. */
     private inner class BlobDownloadBridge {
         @android.webkit.JavascriptInterface
-        fun onBlobData(base64: String) {
-            val fileName = pendingBlobFileName.ifEmpty { "download" }
+        fun onBlobData(base64: String, fileName: String) {
+            var name = pendingBlobFileName.ifEmpty { "download" }
+            // Pakai nama asli dari anchor (mis. "audio.wav") bila nama
+            // tebakan generik (tanpa ekstensi / "download").
+            if ((name == "download" || !name.contains(".")) &&
+                fileName.isNotBlank()
+            ) {
+                name = fileName
+            }
+            val finalName = name
             Thread {
                 try {
                     val bytes = android.util.Base64.decode(
                         base64, android.util.Base64.DEFAULT
                     )
-                    saveDownloadedBytes(fileName, bytes)
+                    saveDownloadedBytes(finalName, bytes)
                 } catch (e: Exception) {
                     runOnUiThread {
                         Toast.makeText(
@@ -924,7 +993,7 @@ abstract class BrowserActivity : AppCompatActivity() {
             runOnUiThread {
                 Toast.makeText(
                     this@BrowserActivity,
-                    "Gagal mengunduh file (blob tidak bisa dibaca)",
+                    "Gagal mengunduh file (blob tidak bisa dibaca) — coba tekan lagi tombol unduhnya",
                     Toast.LENGTH_LONG
                 ).show()
             }
