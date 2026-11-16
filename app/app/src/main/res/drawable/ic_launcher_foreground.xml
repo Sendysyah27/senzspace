@@ -1,0 +1,21 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Ikon app SenzSpace (v0.1.12): 4 kotak membulat 2×2 = "banyak Space
+         hidup bersamaan". Warna: indigo (Space 1) + teal (Space 2) + langit
+         (AI Studio) + putih. Latar navy ada di ic_launcher_background. -->
+    <path
+        android:fillColor="#5B5BD6"
+        android:pathData="M28,21 h16 a7,7 0 0 1 7,7 v16 a7,7 0 0 1 -7,7 h-16 a7,7 0 0 1 -7,-7 v-16 a7,7 0 0 1 7,-7 z" />
+    <path
+        android:fillColor="#0EA5A5"
+        android:pathData="M64,21 h16 a7,7 0 0 1 7,7 v16 a7,7 0 0 1 -7,7 h-16 a7,7 0 0 1 -7,-7 v-16 a7,7 0 0 1 7,-7 z" />
+    <path
+        android:fillColor="#38BDF8"
+        android:pathData="M28,57 h16 a7,7 0 0 1 7,7 v16 a7,7 0 0 1 -7,7 h-16 a7,7 0 0 1 -7,-7 v-16 a7,7 0 0 1 7,-7 z" />
+    <path
+        android:fillColor="#E8ECF4"
+        android:pathData="M64,57 h16 a7,7 0 0 1 7,7 v16 a7,7 0 0 1 -7,7 h-16 a7,7 0 0 1 -7,-7 v-16 a7,7 0 0 1 7,-7 z" />
+</vector>

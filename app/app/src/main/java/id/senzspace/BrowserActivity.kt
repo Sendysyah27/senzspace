@@ -57,7 +57,12 @@ abstract class BrowserActivity : AppCompatActivity() {
 
     private lateinit var webView: WebView
     private lateinit var rootLayout: LinearLayout
-    private lateinit var downloadBtn: android.widget.Button
+    private lateinit var downloadBtn: android.widget.ImageButton
+    private lateinit var downloadBadge: android.widget.TextView
+
+    /** dp → px (top bar ikon 44dp, badge, dsb). */
+    private fun dp(v: Int): Int =
+        (v * resources.displayMetrics.density).toInt()
     private val lockLauncher = LockGate.register(this)
     private var popupView: WebView? = null
     private var currentUrl = ""
@@ -65,6 +70,37 @@ abstract class BrowserActivity : AppCompatActivity() {
     private var homeUrl = "https://claude.ai"
     private var activityDestroyed = false
     private var pendingBlobFileName = ""
+
+    /** Callback unduhan file-chooser yang sedang menunggu pilihan user.
+     *  WAJIB dipanggil tepat sekali (dengan array URI atau null). */
+    private var fileChooserCallback: android.webkit.ValueCallback<Array<android.net.Uri>>? = null
+
+    /** Pemilih file sistem untuk <input type="file"> di WebView.
+     *  Didaftar di sini (bukan di onCreate) supaya siap sebelum WebView
+     *  pertama kali dipakai; dipanggil dari onShowFileChooser. */
+    private val fileChooserLauncher = registerForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        val cb = fileChooserCallback
+        fileChooserCallback = null
+        if (cb == null) return@registerForActivityResult
+        if (result.resultCode != RESULT_OK || result.data == null) {
+            cb.onReceiveValue(null)
+            return@registerForActivityResult
+        }
+        val data = result.data!!
+        val uris = mutableListOf<android.net.Uri>()
+        // Pilih banyak: ClipData; pilih satu: data.data.
+        val clip = data.clipData
+        if (clip != null) {
+            for (i in 0 until clip.itemCount) {
+                clip.getItemAt(i).uri?.let { uris.add(it) }
+            }
+        } else {
+            data.data?.let { uris.add(it) }
+        }
+        cb.onReceiveValue(if (uris.isEmpty()) null else uris.toTypedArray())
+    }
 
     // Multi Live v2 (S1, perintah Sendy 21:58 WIB — "bener bener direct
     // live"): tile Beranda harus menampilkan halaman web yang sedang
@@ -258,6 +294,59 @@ abstract class BrowserActivity : AppCompatActivity() {
                 override fun onCloseWindow(window: WebView) {
                     closePopupWindow()
                 }
+
+                // File chooser (v0.1.12): tanpa override ini, <input
+                // type="file"> di halaman (mis. "Choose files or photos"
+                // di Claude) DIAM — tidak ada respon sama sekali (temuan
+                // HP 23:21). WebView tidak membuka pemilih file sendiri;
+                // app yang harus menampilkannya lalu menyerahkan URI
+                // pilihan ke callback halaman.
+                override fun onShowFileChooser(
+                    view: WebView,
+                    filePathCallback: android.webkit.ValueCallback<Array<android.net.Uri>>,
+                    fileChooserParams: WebChromeClient.FileChooserParams
+                ): Boolean {
+                    // Batalkan chooser sebelumnya bila ada (callback lama
+                    // tidak boleh digantung — halaman menunggu jawabannya).
+                    fileChooserCallback?.onReceiveValue(null)
+                    fileChooserCallback = filePathCallback
+                    try {
+                        val acceptTypes = fileChooserParams.acceptTypes
+                        val mimeType = acceptTypes.firstOrNull {
+                            it.isNotBlank() && it != "*/*"
+                        } ?: "*/*"
+                        val intent = android.content.Intent(
+                            android.content.Intent.ACTION_GET_CONTENT
+                        ).apply {
+                            addCategory(android.content.Intent.CATEGORY_OPENABLE)
+                            type = mimeType
+                            if (fileChooserParams.mode ==
+                                WebChromeClient.FileChooserParams.MODE_OPEN_MULTIPLE
+                            ) {
+                                putExtra(
+                                    android.content.Intent.EXTRA_ALLOW_MULTIPLE, true
+                                )
+                            }
+                            addFlags(
+                                android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION
+                            )
+                        }
+                        fileChooserLauncher.launch(
+                            android.content.Intent.createChooser(
+                                intent, "Pilih file"
+                            )
+                        )
+                    } catch (e: Exception) {
+                        fileChooserCallback = null
+                        filePathCallback.onReceiveValue(null)
+                        Toast.makeText(
+                            this@BrowserActivity,
+                            "Tidak bisa membuka pemilih file: ${e.message}",
+                            Toast.LENGTH_LONG
+                        ).show()
+                    }
+                    return true
+                }
             }
         }
         popupView = popup
@@ -355,32 +444,56 @@ abstract class BrowserActivity : AppCompatActivity() {
             ellipsize = android.text.TextUtils.TruncateAt.END
             layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
         }
-        fun topBarBtn(label: String): android.widget.Button =
-            android.widget.Button(this).apply {
-                text = label
-                setTextColor(Color.WHITE)
+        // Ikon top bar (v0.1.12): vektor garis minimalis gaya Feather/
+        // Lucide (bukan lagi huruf ⌄ ↻ ⌂ ⬇ yang tampilannya beda-beda
+        // tiap HP). Tiap ikon 44dp (area sentuh nyaman) + deskripsi
+        // buat pembaca layar.
+        fun topBarIcon(iconRes: Int, description: String): android.widget.ImageButton =
+            android.widget.ImageButton(this).apply {
+                setImageResource(iconRes)
+                contentDescription = description
+                scaleType = android.widget.ImageView.ScaleType.FIT_CENTER
                 setBackgroundColor(Color.parseColor("#00000000"))
-                textSize = 16f
-                minimumHeight = 0
-                minHeight = 0
+                setPadding(dp(10), dp(10), dp(10), dp(10))
+                layoutParams = LinearLayout.LayoutParams(dp(44), dp(44))
             }
-        val minimizeBtn = topBarBtn("⌄")
+        val minimizeBtn = topBarIcon(R.drawable.ic_chevron_down, "Minimize")
         minimizeBtn.setOnClickListener { goToDashboard() }
-        val reloadBtn = topBarBtn("↻")
+        val reloadBtn = topBarIcon(R.drawable.ic_refresh, "Muat ulang")
         reloadBtn.setOnClickListener { if (::webView.isInitialized) webView.reload() }
-        val homeBtn = topBarBtn("⌂")
+        val homeBtn = topBarIcon(R.drawable.ic_home, "Beranda Space")
         homeBtn.setOnClickListener { if (::webView.isInitialized) webView.loadUrl(homeUrl) }
-        downloadBtn = topBarBtn("⬇")
+        // Unduhan: ikon + badge angka kecil di pojok kanan atas
+        // (jumlah file di folder Space ini; tap → File Manager).
+        val downloadWrap = android.widget.FrameLayout(this).apply {
+            layoutParams = LinearLayout.LayoutParams(dp(44), dp(44))
+        }
+        downloadBtn = topBarIcon(R.drawable.ic_download, "Unduhan")
         downloadBtn.setOnClickListener {
             val intent = android.content.Intent(this, FileManagerActivity::class.java)
             intent.putExtra(FileManagerActivity.EXTRA_FOLDER, dataDirectorySuffix)
             startActivity(intent)
         }
+        downloadBadge = TextView(this).apply {
+            textSize = 10f
+            setTypeface(null, android.graphics.Typeface.BOLD)
+            setTextColor(Color.WHITE)
+            gravity = android.view.Gravity.CENTER
+            setBackgroundResource(R.drawable.badge_bg)
+            visibility = android.view.View.GONE
+            layoutParams = android.widget.FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                android.view.Gravity.TOP or android.view.Gravity.END
+            )
+        }
+        downloadWrap.addView(downloadBtn)
+        downloadWrap.addView(downloadBadge)
         topBarLayout.addView(topBar)
         topBarLayout.addView(minimizeBtn)
         topBarLayout.addView(reloadBtn)
         topBarLayout.addView(homeBtn)
-        topBarLayout.addView(downloadBtn)
+        topBarLayout.addView(downloadWrap)
         root.addView(topBarLayout)
 
         webView = WebView(this).apply {
@@ -497,6 +610,59 @@ abstract class BrowserActivity : AppCompatActivity() {
                 override fun onCloseWindow(window: WebView) {
                     closePopupWindow()
                 }
+
+                // File chooser (v0.1.12): tanpa override ini, <input
+                // type="file"> di halaman (mis. "Choose files or photos"
+                // di Claude) DIAM — tidak ada respon sama sekali (temuan
+                // HP 23:21). WebView tidak membuka pemilih file sendiri;
+                // app yang harus menampilkannya lalu menyerahkan URI
+                // pilihan ke callback halaman.
+                override fun onShowFileChooser(
+                    view: WebView,
+                    filePathCallback: android.webkit.ValueCallback<Array<android.net.Uri>>,
+                    fileChooserParams: WebChromeClient.FileChooserParams
+                ): Boolean {
+                    // Batalkan chooser sebelumnya bila ada (callback lama
+                    // tidak boleh digantung — halaman menunggu jawabannya).
+                    fileChooserCallback?.onReceiveValue(null)
+                    fileChooserCallback = filePathCallback
+                    try {
+                        val acceptTypes = fileChooserParams.acceptTypes
+                        val mimeType = acceptTypes.firstOrNull {
+                            it.isNotBlank() && it != "*/*"
+                        } ?: "*/*"
+                        val intent = android.content.Intent(
+                            android.content.Intent.ACTION_GET_CONTENT
+                        ).apply {
+                            addCategory(android.content.Intent.CATEGORY_OPENABLE)
+                            type = mimeType
+                            if (fileChooserParams.mode ==
+                                WebChromeClient.FileChooserParams.MODE_OPEN_MULTIPLE
+                            ) {
+                                putExtra(
+                                    android.content.Intent.EXTRA_ALLOW_MULTIPLE, true
+                                )
+                            }
+                            addFlags(
+                                android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION
+                            )
+                        }
+                        fileChooserLauncher.launch(
+                            android.content.Intent.createChooser(
+                                intent, "Pilih file"
+                            )
+                        )
+                    } catch (e: Exception) {
+                        fileChooserCallback = null
+                        filePathCallback.onReceiveValue(null)
+                        Toast.makeText(
+                            this@BrowserActivity,
+                            "Tidak bisa membuka pemilih file: ${e.message}",
+                            Toast.LENGTH_LONG
+                        ).show()
+                    }
+                    return true
+                }
             }
         }
         root.addView(webView)
@@ -570,13 +736,18 @@ abstract class BrowserActivity : AppCompatActivity() {
 
     /** Badge ⬇ di top bar = jumlah file di folder Space ini. */
     private fun refreshDownloadCount() {
-        if (!::downloadBtn.isInitialized) return
+        if (!::downloadBtn.isInitialized || !::downloadBadge.isInitialized) return
         val n = try {
             FileStore.count(this, dataDirectorySuffix)
         } catch (e: Exception) {
             0
         }
-        downloadBtn.text = if (n > 0) "⬇ $n" else "⬇"
+        if (n > 0) {
+            downloadBadge.text = if (n > 99) "99+" else "$n"
+            downloadBadge.visibility = android.view.View.VISIBLE
+        } else {
+            downloadBadge.visibility = android.view.View.GONE
+        }
     }
 
     override fun onPause() {

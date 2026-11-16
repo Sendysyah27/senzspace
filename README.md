@@ -299,6 +299,27 @@ ditulis langsung ke folder Space.
    nama Space tetap SATU baris (dipotong "…") dan keempat tombol
    (⌄ ↻ ⌂ ⬇) tetap kelihatan — tidak wrap 4 baris seperti dulu.
 
+## Tes file chooser + ikon v0.1.12 di HP (bahasa bayi)
+
+1. Install APK v0.1.12-s1chooser-icons (nimpa, tanpa uninstall).
+2. **Upload file ke Claude**: buka Claude 1 → tap **＋** → **Add files**
+   → **Choose files or photos**. **LULUS** bila: pemilih file sistem
+   terbuka (Galeri/File) — bukan diam tanpa respon seperti dulu.
+   Pilih 1 file (mis. .md dari folder Claude 4) → **LULUS** bila:
+   file muncul sebagai lampiran di kolom chat Claude dan bisa dikirim.
+3. **Ikon top bar**: di Space mana pun, **LULUS** bila: 4 tombol atas
+   adalah ikon garis putih minimalis — panah bawah (⌄ minimize),
+   panah melingkar (↻ reload), rumah (⌂ home), panah ke nampan
+   (⬇ unduhan) — bukan lagi huruf yang tampilannya beda-beda.
+4. **Badge unduhan**: kalau folder Space sudah ada file-nya,
+   **LULUS** bila: ada angka merah kecil di pojok kanan atas ikon
+   unduhan (jumlah file); tap ikon unduhan → File Manager folder itu.
+5. **Ikon app**: tutup app, lihat di layar utama / laci app.
+   **LULUS** bila: ikon SenzSpace adalah 4 kotak membulat 2×2
+   (indigo, teal, biru langit, putih) di atas latar navy — bukan
+   lagi huruf "S" lama. (Ikon lama mungkin masih muncul di cache
+   launcher; kalau begitu, restart HP sekali lalu cek lagi.)
+
 ## Kontrol app dari Jhon (via Termux bridge)
 
 SenzSpace menulis statusnya ke file JSON di HP (hanya status yang
