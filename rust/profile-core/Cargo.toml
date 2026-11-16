@@ -1,0 +1,10 @@
+[package]
+name = "profile-core"
+version = "0.1.0"
+edition = "2021"
+description = "SenzSpace core: Space/Profile registry, max-10 enforcement, presets"
+license = "MIT"
+
+[lib]
+name = "profile_core"
+crate-type = ["rlib"]

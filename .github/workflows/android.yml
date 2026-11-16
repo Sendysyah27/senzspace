@@ -1,0 +1,43 @@
+name: SenzSpace CI (S0)
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Rust core tests
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.93.1"
+      - run: cargo test --manifest-path rust/profile-core/Cargo.toml
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Set up Gradle 8.5
+        uses: gradle/actions/setup-gradle@v3
+        with:
+          gradle-version: "8.5"
+
+      - name: Build debug APK
+        working-directory: app
+        run: gradle :app:assembleDebug --stacktrace --no-daemon
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: senzspace-s0-debug
+          path: app/app/build/outputs/apk/debug/app-debug.apk
