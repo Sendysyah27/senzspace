@@ -392,6 +392,38 @@ alasan gagal) — Jhon bisa baca file itu lewat bridge.
    tertulis alasan persisnya (mis. cache kosong / iframe banyak /
    xhr-error).
 
+## Tes unduh AI Studio v0.1.16 di HP (bahasa bayi)
+
+v0.1.15 JUGA gagal (log _Log-Blob 01:02 WIB membuktikan kenapa):
+URL-nya `blob:null/<uuid>` — blob audio dibuat di dalam iframe
+sandboxed (kotak terkunci, origin "null") dan HANYA bisa dibaca dari
+dalam kotak itu. XHR, cache, dan klik-ulang dari frame utama PASTI
+gagal; fallback native pun gagal karena kliknya datang dari luar
+kotak. Satu-satunya jalur yang bekerja: unduhan native Chromium dari
+klik user sendiri di dalam iframe — dan itu MATI selama
+DownloadListener membajak unduhan. v0.1.16 MELEPAS listener total:
+Chromium mengunduh sendiri ke Download publik, lalu pengawas app
+memindahkan file yang selesai ke folder Space (tiap 2 detik selagi
+Space di depan; hanya unduhan baru selagi Space di depan yang
+dipindah, supaya unduhan Chrome tidak ikut tercuri).
+
+1. Install APK v0.1.16-s1nativedl (nimpa, tanpa uninstall).
+2. Buka **AI Studio** → Playground → generate suara sampai muncul
+   player audio.
+3. Tap tombol **unduh** di bawah player. **LULUS** bila: muncul
+   toast "Tersimpan di folder AI Studio: …" (tanpa toast gagal
+   sebelumnya; file mampir sebentar di Download publik lalu pindah
+   sendiri — jangan kaget kalau sempat terlihat di sana).
+4. Buka File Manager → folder **AI Studio**. **LULUS** bila: file
+   audio ada di sana dan bisa diputar. Nama file ikut nama asli dari
+   AI Studio (bukan UUID).
+5. Ulangi tes unduh blob di **Claude 4** (PROJECT STATE .md).
+   **LULUS** bila: masih tersimpan di folder Claude 4 seperti
+   v0.1.11 — jalur baru ini menggantikan jalur lama untuk SEMUA
+   unduhan.
+6. Kalau masih gagal: File Manager → **_Log-Blob** →
+   `blob-debug.txt` (baris "PINDAH …" / "PINDAH GAGAL …").
+
 ## Kontrol app dari Jhon (via Termux bridge)
 
 SenzSpace menulis statusnya ke file JSON di HP (hanya status yang
