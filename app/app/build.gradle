@@ -20,6 +20,9 @@ android {
     // dibuat runner tiap run bikin tanda tangan APK berubah terus, jadi
     // Sendy harus uninstall + login ulang tiap build. Dengan kunci tetap,
     // APK baru bisa menimpa (install over) tanpa hapus sesi.
+    // ATURAN PKCS12 (pelajaran run #13 MERAH): password kunci HARUS SAMA
+    // dengan password store — PKCS12 mengabaikan keypass berbeda dan
+    // getKey() gagal "Given final block not properly padded".
     signingConfigs {
         debug {
             storeFile = file("debug.keystore")
