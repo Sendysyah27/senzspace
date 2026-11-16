@@ -35,7 +35,7 @@ engine embed). S0 sengaja hanya membuktikan 2 Space dulu.
 | Titik | Hasil | Bukti |
 |---|---|---|
 | Isolasi 2 akun situs sama | BELUM DIUJI DI HP | — |
-| Login Google di WebView | BELUM DIUJI DI HP | — |
+| Login Google di WebView | GAGAL (percobaan 1) | Screenshot 16 Nov 18:27 WIB: Space 1 terbuka, top bar "● Claude 1 — SenzSpace S0" tampil, WebView putih kosong setelah login. Halaman login sempat tampil, jadi WebView jalan — yang blank halaman sesudah login. Dugaan: pop-up login (Google) tidak tertangani (`setSupportMultipleWindows(false)`, tanpa `onCreateWindow`) + cookie pihak ketiga ditolak + UA WebView ("; wv"). Perbaikan S0.1: pop-up dialihkan ke WebView utama, cookie pihak ketiga diterima, UA dibersihkan dari "; wv", plus Toast saat halaman gagal muat. |
 | Sesi bertahan setelah restart | BELUM DIUJI DI HP | — |
 
 Diisi setelah tes bahasa bayi di `README.md` dijalankan Sendy di HP.
