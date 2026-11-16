@@ -6,6 +6,10 @@ on:
   pull_request:
     branches: [main]
 
+env:
+  ANDROID_HOME: /usr/local/lib/android/sdk
+  ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -24,8 +28,18 @@ jobs:
           distribution: temurin
           java-version: "21"
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+      # JANGAN pakai android-actions/setup-android@v3: step itu gagal di
+      # run #1 karena menjalankan `sdkmanager tools` — paket `tools`
+      # sudah tidak ada di cmdline-tools 16.0 ("Failed to find package
+      # 'tools'", exit 1). Runner ubuntu sudah membawa Android SDK
+      # preinstalled (/usr/local/lib/android/sdk); instal paket yang
+      # dibutuhkan langsung dengan sdkmanager.
+      - name: Install Android SDK packages
+        run: |
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          ls "$ANDROID_HOME/cmdline-tools"
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses || true
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platform-tools" "platforms;android-34" "build-tools;34.0.0"
 
       - name: Set up Gradle 8.5
         uses: gradle/actions/setup-gradle@v3
