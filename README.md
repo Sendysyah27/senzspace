@@ -498,6 +498,30 @@ PNG/JPG/MP4).
    **LULUS** bila nama file asli + ekstensi benar (mis.
    "PROJECT STATE.md", BUKAN UUID + .bin).
 
+## Tes Beku Live v0.1.20 di HP (bahasa bayi)
+
+Baru: tiap Space bisa dibekukan Live-nya — gambar di kartu Beranda
+berhenti update, tapi browser + sesi Space tetap jalan (bukan
+dimatikan). Caranya: **tahan lama** kartu Space di Beranda → menu
+muncul (Ubah nama / Matikan Live / Hapus Space).
+
+1. Install APK v0.1.20-s1livefreeze (nimpa, tanpa uninstall).
+2. Di Beranda (mode Multi Live), **tahan lama** kartu Claude 1.
+   **LULUS** bila menu muncul dengan 3 pilihan: "Ubah nama",
+   "Matikan Live", "Hapus Space".
+3. Tap **"Matikan Live"**. **LULUS** bila: toast "Live dibekukan —
+   browser tetap jalan"; chip kartu berubah jadi **"Beku"** (abu-abu);
+   badge LIVE hilang; teks bawah jadi "live dibekukan"; gambar kartu
+   berhenti berubah walau halaman di Space-nya berubah.
+4. Buka Claude 1 (tap kartu). **LULUS** bila: halaman + sesi tetap
+   jalan normal (beku cuma matiin gambar live, bukan browser).
+5. Tahan lama kartu lagi → tap **"Nyalakan Live"**. **LULUS** bila:
+   chip balik "Aktif", badge LIVE muncul lagi, gambar kartu update
+   lagi.
+6. Mode Daftar (toggle Beranda): kartu yang dibekukan chip-nya
+   "Beku" juga. Hapus Space yang beku → Space baru di slot yang sama
+   tidak ikut beku.
+
 ## Kontrol app dari Jhon (via Termux bridge)
 
 SenzSpace menulis statusnya ke file JSON di HP (hanya status yang

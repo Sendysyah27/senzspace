@@ -179,6 +179,11 @@ abstract class BrowserActivity : AppCompatActivity() {
 
     private fun captureLiveThumbnail() {
         if (!::webView.isInitialized) return
+        // v0.1.20: Live dibekukan dari Beranda (tahan lama tile →
+        // Matikan Live) — thumbnail berhenti update, browser + sesi
+        // tetap jalan. Satu titik cek ini menutup semua pemicu tangkap
+        // (timer 2 dtk, MutationObserver, onPageFinished).
+        if (LiveFreeze.isFrozen(this, dataDirectorySuffix)) return
         val now = System.currentTimeMillis()
         if (now - lastCaptureMs < 1000) return
         lastCaptureMs = now

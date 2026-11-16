@@ -83,6 +83,7 @@ class MainActivity : AppCompatActivity() {
                 val suffix = SpaceRegistry.suffixForSlot(entry.slot)
                 val loggedIn = SpaceStatus.readLogin(this, suffix)
                 val limit = SpaceStatus.readLimit(this, suffix)
+                val frozen = LiveFreeze.isFrozen(this, suffix)
                 val thumb = FileStore.liveThumbFile(this, suffix)
                 val mod = if (thumb.exists()) thumb.lastModified() else 0L
                 val files = try { FileStore.count(this, suffix) } catch (e: Exception) { 0 }
@@ -95,7 +96,7 @@ class MainActivity : AppCompatActivity() {
                     .append(",\"limit\":")
                     .append(if (limit == null) "null" else "\"" + jsonEscape(limit) + "\"")
                     .append(",\"liveThumbMod\":").append(mod)
-                    .append(",\"files\":").append(files).append("}")
+                    .append(",\"files\":").append(files).append(",\"liveFrozen\":").append(frozen).append("}")
             }
             sb.append("]}")
             val json = sb.toString()
@@ -590,10 +591,12 @@ class MainActivity : AppCompatActivity() {
             val suffix = SpaceRegistry.suffixForSlot(entry.slot)
             val loggedIn = SpaceStatus.readLogin(this, suffix)
             val limit = SpaceStatus.readLimit(this, suffix)
+            val frozen = LiveFreeze.isFrozen(this, suffix)
             // Chip status: Limit (amber) mengalahkan Aktif — akun Claude
             // yang kena limit 5 jam harus kelihatan tanpa buka Space-nya.
             val statusText = when {
                 limit != null -> if (limit == "LIMIT") "Limit" else "Limit • $limit"
+                frozen -> "Beku"
                 loggedIn -> "Aktif"
                 else -> "Belum login"
             }
@@ -604,6 +607,10 @@ class MainActivity : AppCompatActivity() {
                     when {
                         limit != null -> {
                             setTextColor(Color.parseColor("#FBBF24"))
+                            setBackgroundResource(R.drawable.chip_bg)
+                        }
+                        frozen -> {
+                            setTextColor(Color.parseColor("#8A94A6"))
                             setBackgroundResource(R.drawable.chip_bg)
                         }
                         loggedIn -> {
@@ -648,10 +655,11 @@ class MainActivity : AppCompatActivity() {
                 }.start()
             }
             val ageSec = if (mod > 0) (now - mod) / 1000 else -1
-            val fresh = ageSec in 0 until LIVE_FRESH_SEC
+            val fresh = ageSec in 0 until LIVE_FRESH_SEC && !frozen
             if (fresh) liveCount++
             tile.badge.visibility = if (fresh) View.VISIBLE else View.GONE
             val subText = when {
+                frozen -> "$site • live dibekukan"
                 limit != null -> "$site • limit, reset ${if (limit == "LIMIT") "segera" else limit}"
                 mod > 0 -> "$site • live ${ageText(ageSec)}"
                 else -> "$site • $fileCount file baru"
@@ -677,12 +685,33 @@ class MainActivity : AppCompatActivity() {
     // ---------- Opsi Space (rename / hapus, dipakai kedua mode) ----------
 
     private fun showSpaceOptions(entry: SpaceRegistry.SpaceEntry) {
+        // v0.1.20: toggle Live per Space — tahan lama kartu live di
+        // Beranda, pilih Matikan/Nyalakan Live. Yang berhenti hanya
+        // update gambar live; browser + sesi Space tetap jalan.
+        val suffix = SpaceRegistry.suffixForSlot(entry.slot)
+        val frozen = LiveFreeze.isFrozen(this, suffix)
         AlertDialog.Builder(this)
             .setTitle(entry.name)
-            .setItems(arrayOf("Ubah nama", "Hapus Space")) { _, which ->
+            .setItems(
+                arrayOf(
+                    "Ubah nama",
+                    if (frozen) "Nyalakan Live" else "Matikan Live",
+                    "Hapus Space"
+                )
+            ) { _, which ->
                 when (which) {
                     0 -> showRenameDialog(entry)
-                    1 -> showDeleteDialog(entry)
+                    1 -> {
+                        LiveFreeze.setFrozen(this, suffix, !frozen)
+                        Toast.makeText(
+                            this,
+                            if (frozen) "\"${entry.name}\": Live dinyalakan"
+                            else "\"${entry.name}\": Live dibekukan — browser tetap jalan",
+                            Toast.LENGTH_SHORT
+                        ).show()
+                        renderDashboard()
+                    }
+                    2 -> showDeleteDialog(entry)
                 }
             }
             .setNegativeButton("Batal", null)
@@ -719,6 +748,7 @@ class MainActivity : AppCompatActivity() {
             )
             .setPositiveButton("Hapus") { _, _ ->
                 SpaceRegistry.remove(this, entry.slot)
+                LiveFreeze.setFrozen(this, SpaceRegistry.suffixForSlot(entry.slot), false)
                 // Matikan guard anti-kill Space ini (prosesnya boleh mati).
                 KeepAlive.stop(this, SpaceRegistry.suffixForSlot(entry.slot))
                 Toast.makeText(this, "\"${entry.name}\" dihapus", Toast.LENGTH_SHORT).show()
@@ -735,9 +765,11 @@ class MainActivity : AppCompatActivity() {
             val suffix = SpaceRegistry.suffixForSlot(entry.slot)
             val loggedIn = SpaceStatus.readLogin(this, suffix)
             val limit = SpaceStatus.readLimit(this, suffix)
+            val frozen = LiveFreeze.isFrozen(this, suffix)
             view.apply {
                 text = when {
                     limit != null -> if (limit == "LIMIT") "Limit" else "Limit • $limit"
+                    frozen -> "Beku"
                     loggedIn -> "Aktif"
                     else -> "Belum login"
                 }
