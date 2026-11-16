@@ -522,6 +522,36 @@ muncul (Ubah nama / Matikan Live / Hapus Space).
    "Beku" juga. Hapus Space yang beku → Space baru di slot yang sama
    tidak ikut beku.
 
+## Tes Split-screen + Geser Top Bar v0.1.21 di HP (bahasa bayi)
+
+Baru (perintah Sendy 06:45 — pindah Space HANYA untuk yang aktif):
+geser top bar cuma muter di Space yang chip-nya "Aktif" (sudah login);
+yang "Belum login" dilewatin. Split-screen juga cuma menawarkan Space
+aktif lain.
+
+**A. Split-screen 2 Space:**
+1. Install APK v0.1.21-s1split-swipe (nimpa, tanpa uninstall).
+2. Di Beranda, **tahan lama** kartu Claude 1 → tap **"Buka
+   berdampingan"**. **LULUS** bila muncul daftar Space aktif lain
+   (yang Belum login tidak ada di daftar).
+3. Pilih mis. Claude 2. **LULUS** bila: layar terbagi dua — Claude 1
+   di satu sisi, Claude 2 di sisi lain, keduanya jalan + bisa
+   dipakai bersamaan.
+4. Kalau HP menolak split (bukan semua HP mengizinkan), Space yang
+   dipilih terbuka biasa fullscreen — itu batas HP, bukan bug app.
+   Catatan: masuk split tidak me-reload halaman (WebView tetap hidup).
+
+**B. Geser top bar pindah Space (hanya yang aktif):**
+1. Buka Claude 1. **Geser kiri** di bar atas (dari nama Space, usap
+   cepat ke kiri). **LULUS** bila: pindah ke Space aktif berikutnya
+   (toast "→ <nama>"), Space yang Belum login dilewatin.
+2. **Geser kanan** di bar atas. **LULUS** bila: balik ke Space aktif
+   sebelumnya.
+3. Bila cuma 1 Space aktif, geser menampilkan toast "Tidak ada Space
+   aktif lain" (bukan diam / bukan pindah ke yang belum login).
+4. Tap tombol top bar (⌄ ↻ ⌂ ⬇) tetap berfungsi normal — geser
+   tidak merusak tap.
+
 ## Kontrol app dari Jhon (via Termux bridge)
 
 SenzSpace menulis statusnya ke file JSON di HP (hanya status yang

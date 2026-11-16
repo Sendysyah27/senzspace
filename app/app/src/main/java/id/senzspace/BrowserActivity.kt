@@ -42,6 +42,14 @@ abstract class BrowserActivity : AppCompatActivity() {
     protected abstract val dataDirectorySuffix: String
 
     companion object {
+        /** Split-screen (v0.1.21): slot Space yang harus dibuka
+         *  berdampingan begitu Space peminta tampil. Satu tembakan —
+         *  dibersihkan setelah dipakai supaya resume berikutnya tidak
+         *  membuka split lagi. */
+        @Volatile
+        private var pendingSplitSlot: Int? = null
+        fun requestSplitWith(slot: Int) { pendingSplitSlot = slot }
+
         // setDataDirectorySuffix() HANYA boleh dipanggil sekali seumur hidup
         // satu proses Android — panggilan kedua melempar IllegalStateException.
         // Proses :spaceN TETAP HIDUP setelah Activity keluar (Android
@@ -57,6 +65,35 @@ abstract class BrowserActivity : AppCompatActivity() {
 
     private lateinit var webView: WebView
     private lateinit var rootLayout: LinearLayout
+    private var topBarView: android.view.View? = null
+    private var swipeTrackingTopBar = false
+
+    /** Geser top bar (v0.1.21): geser kiri = Space aktif berikutnya,
+     *  geser kanan = Space aktif sebelumnya. Hanya Space yang chip-nya
+     *  "Aktif" (sudah login) yang dilewati — perintah Sendy 06:45. */
+    private val spaceSwipeDetector by lazy {
+        android.view.GestureDetector(
+            this,
+            object : android.view.GestureDetector.SimpleOnGestureListener() {
+                override fun onDown(e: android.view.MotionEvent): Boolean = true
+                override fun onFling(
+                    e1: android.view.MotionEvent?,
+                    e2: android.view.MotionEvent,
+                    velocityX: Float,
+                    velocityY: Float
+                ): Boolean {
+                    val start = e1 ?: return false
+                    val dx = e2.x - start.x
+                    val dy = e2.y - start.y
+                    if (kotlin.math.abs(dx) < dp(80)) return false
+                    if (kotlin.math.abs(dx) < kotlin.math.abs(dy) * 1.5f) return false
+                    if (kotlin.math.abs(velocityX) < 200) return false
+                    switchSpace(if (dx < 0) 1 else -1)
+                    return true
+                }
+            }
+        )
+    }
     private lateinit var downloadBtn: android.widget.ImageButton
     private lateinit var downloadBadge: android.widget.TextView
 
@@ -525,6 +562,7 @@ abstract class BrowserActivity : AppCompatActivity() {
         topBarLayout.addView(homeBtn)
         topBarLayout.addView(downloadWrap)
         root.addView(topBarLayout)
+        topBarView = topBarLayout
 
         webView = WebView(this).apply {
             layoutParams = LinearLayout.LayoutParams(
@@ -746,11 +784,117 @@ abstract class BrowserActivity : AppCompatActivity() {
         if (guardOn) KeepAlive.start(this, dataDirectorySuffix, spaceName)
     }
 
+    /** Teruskan sentuhan yang MULAI di top bar ke detektor geser
+     *  (v0.1.21). Sentuhan lain (WebView, tombol) tidak disentuh —
+     *  detector hanya mengamati; tap/klik tetap jalan normal. */
+    override fun dispatchTouchEvent(ev: android.view.MotionEvent): Boolean {
+        when (ev.actionMasked) {
+            android.view.MotionEvent.ACTION_DOWN -> {
+                swipeTrackingTopBar =
+                    topBarView?.let { ev.y <= it.bottom } ?: false
+            }
+            android.view.MotionEvent.ACTION_UP,
+            android.view.MotionEvent.ACTION_CANCEL -> {
+                if (swipeTrackingTopBar) spaceSwipeDetector.onTouchEvent(ev)
+                swipeTrackingTopBar = false
+            }
+        }
+        if (swipeTrackingTopBar) spaceSwipeDetector.onTouchEvent(ev)
+        return super.dispatchTouchEvent(ev)
+    }
+
+    /** Pindah ke Space AKTIF berikutnya (arah +1) / sebelumnya (-1).
+     *  Pool = Space yang sudah login; yang "Belum login" dilewatin.
+     *  Bila tidak ada Space aktif lain, beri tahu (bukan diam). */
+    private fun switchSpace(direction: Int) {
+        val spaces = try {
+            SpaceRegistry.load(this)
+        } catch (e: Exception) {
+            return
+        }
+        if (spaces.size < 2) {
+            android.widget.Toast.makeText(this, "Hanya 1 Space", android.widget.Toast.LENGTH_SHORT).show()
+            return
+        }
+        val active = spaces.filter {
+            SpaceStatus.readLogin(this, SpaceRegistry.suffixForSlot(it.slot))
+        }
+        val pool = when {
+            active.size >= 2 -> active
+            active.isEmpty() -> spaces
+            else -> {
+                android.widget.Toast.makeText(
+                    this, "Tidak ada Space aktif lain", android.widget.Toast.LENGTH_SHORT
+                ).show()
+                return
+            }
+        }
+        val idx = pool.indexOfFirst {
+            SpaceRegistry.suffixForSlot(it.slot) == dataDirectorySuffix
+        }
+        val next = when {
+            idx >= 0 -> pool[(idx + direction + pool.size) % pool.size]
+            direction > 0 -> pool.first()
+            else -> pool.last()
+        }
+        android.widget.Toast.makeText(this, "→ ${next.name}", android.widget.Toast.LENGTH_SHORT).show()
+        val intent = android.content.Intent(this, SpaceRegistry.activityForSlot(next.slot)).apply {
+            flags = android.content.Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
+            putExtra(MainActivity.EXTRA_SPACE_NAME, next.name)
+            putExtra(MainActivity.EXTRA_SPACE_COLOR, next.color)
+            putExtra(MainActivity.EXTRA_URL, next.url)
+        }
+        startActivity(intent)
+    }
+
+    /** Buka Space lain berdampingan (split-screen, v0.1.21):
+     *  FLAG_ACTIVITY_LAUNCH_ADJACENT minta sistem menaruh Space baru
+     *  di panel sebelah. Bila HP menolak split, activity dibuka biasa
+     *  (tanpa crash) — itu batas HP, bukan bug app. */
+    private fun openSplitSpace(slot: Int) {
+        val entry = try {
+            SpaceRegistry.load(this).firstOrNull { it.slot == slot }
+        } catch (e: Exception) {
+            null
+        } ?: return
+        val intent = android.content.Intent(this, SpaceRegistry.activityForSlot(slot)).apply {
+            flags = android.content.Intent.FLAG_ACTIVITY_LAUNCH_ADJACENT or
+                android.content.Intent.FLAG_ACTIVITY_NEW_TASK
+            putExtra(MainActivity.EXTRA_SPACE_NAME, entry.name)
+            putExtra(MainActivity.EXTRA_SPACE_COLOR, entry.color)
+            putExtra(MainActivity.EXTRA_URL, entry.url)
+        }
+        try {
+            startActivity(intent)
+        } catch (e: Exception) {
+            val fallback = android.content.Intent(this, SpaceRegistry.activityForSlot(slot)).apply {
+                flags = android.content.Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
+                putExtra(MainActivity.EXTRA_SPACE_NAME, entry.name)
+                putExtra(MainActivity.EXTRA_SPACE_COLOR, entry.color)
+                putExtra(MainActivity.EXTRA_URL, entry.url)
+            }
+            startActivity(fallback)
+        }
+    }
+
     override fun onResume() {
         super.onResume()
         isForeground = true
         LockGate.check(this, lockLauncher)
         refreshDownloadCount()
+        // v0.1.21: jalankan permintaan split-screen (sekali saja).
+        val split = pendingSplitSlot
+        if (split != null) {
+            pendingSplitSlot = null
+            val mySlot = try {
+                SpaceRegistry.load(this).firstOrNull {
+                    SpaceRegistry.suffixForSlot(it.slot) == dataDirectorySuffix
+                }?.slot
+            } catch (e: Exception) {
+                null
+            }
+            if (mySlot != null && split != mySlot) openSplitSpace(split)
+        }
     }
 
     override fun onStop() {

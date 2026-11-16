@@ -682,7 +682,7 @@ class MainActivity : AppCompatActivity() {
         else -> "${ageSec / 60} mnt lalu"
     }
 
-    // ---------- Opsi Space (rename / hapus, dipakai kedua mode) ----------
+    // ---------- Opsi Space (rename / beku / split / hapus, dipakai kedua mode) ----------
 
     private fun showSpaceOptions(entry: SpaceRegistry.SpaceEntry) {
         // v0.1.20: toggle Live per Space — tahan lama kartu live di
@@ -696,6 +696,7 @@ class MainActivity : AppCompatActivity() {
                 arrayOf(
                     "Ubah nama",
                     if (frozen) "Nyalakan Live" else "Matikan Live",
+                    "Buka berdampingan",
                     "Hapus Space"
                 )
             ) { _, which ->
@@ -711,8 +712,40 @@ class MainActivity : AppCompatActivity() {
                         ).show()
                         renderDashboard()
                     }
-                    2 -> showDeleteDialog(entry)
+                    2 -> showSplitPicker(entry)
+                    3 -> showDeleteDialog(entry)
                 }
+            }
+            .setNegativeButton("Batal", null)
+            .show()
+    }
+
+    /** Split-screen (v0.1.21): pilih Space AKTIF lain untuk dibuka
+     *  berdampingan dengan Space ini. Hanya yang sudah login yang
+     *  ditawarkan — sama seperti aturan geser pindah Space. */
+    private fun showSplitPicker(entry: SpaceRegistry.SpaceEntry) {
+        val others = try {
+            SpaceRegistry.load(this).filter {
+                it.slot != entry.slot &&
+                    SpaceStatus.readLogin(this, SpaceRegistry.suffixForSlot(it.slot))
+            }
+        } catch (e: Exception) {
+            emptyList()
+        }
+        if (others.isEmpty()) {
+            Toast.makeText(
+                this,
+                "Tidak ada Space aktif lain untuk berdampingan",
+                Toast.LENGTH_SHORT
+            ).show()
+            return
+        }
+        val names = others.map { it.name }.toTypedArray()
+        AlertDialog.Builder(this)
+            .setTitle("Berdampingan dengan \"${entry.name}\"")
+            .setItems(names) { _, which ->
+                BrowserActivity.requestSplitWith(others[which].slot)
+                openSpace(entry)
             }
             .setNegativeButton("Batal", null)
             .show()
