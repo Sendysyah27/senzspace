@@ -37,17 +37,91 @@ abstract class BrowserActivity : AppCompatActivity() {
 
     private lateinit var webView: WebView
     private lateinit var debugView: TextView
+    private lateinit var rootLayout: LinearLayout
+    private var popupView: WebView? = null
+    private var currentUrl = ""
     private val debugLines = ArrayDeque<String>()
 
     /** Log diagnostik S0.2: tampil di layar (bawah) supaya Sendy bisa
-     *  screenshot penyebab blank — logcat HP tidak bisa ditarik (adbd mati). */
+     *  screenshot penyebab blank — logcat HP tidak bisa ditarik (adbd mati).
+     *  Baris pertama SELALU URL halaman utama saat ini (tidak pernah
+     *  kegeser log JS yang panjang). */
     private fun logEvent(msg: String) {
         runOnUiThread {
             debugLines.addLast(msg)
-            while (debugLines.size > 8) debugLines.removeFirst()
+            while (debugLines.size > 6) debugLines.removeFirst()
             if (::debugView.isInitialized) {
-                debugView.text = debugLines.joinToString("\n")
+                debugView.text = ("URL: $currentUrl\n" +
+                    debugLines.joinToString("\n"))
             }
+        }
+    }
+
+    /** S0.3: pop-up login Google harus jadi WebView popup ASLI (ditampilkan,
+     *  bukan dialihkan ke WebView utama). Alasannya: halaman callback OAuth
+     *  Claude didesain jalan di dalam pop-up dan menyerahkan token lewat
+     *  window.opener.postMessage ke halaman claude.ai yang membukanya.
+     *  Kalau URL login dimuat di WebView utama, halaman claude.ai-nya sudah
+     *  pergi (navigasi ke Google) dan callback-nya tidak punya opener —
+     *  hasilnya: login "selesai" tapi halaman putih kosong. Bukti 19:13:
+     *  panel log S0.2 hanya menampilkan warning JS dari komponen Material
+     *  Google (VfPpkd-..., halaman accounts.google.com) tanpa error —
+     *  alur OAuth-nya yang patah, bukan halaman yang gagal muat. */
+    private fun openPopupWindow(view: WebView, resultMsg: Message): Boolean {
+        val popup = WebView(view.context).apply {
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                0,
+                1f
+            )
+            settings.javaScriptEnabled = true
+            settings.javaScriptCanOpenWindowsAutomatically = true
+            settings.setSupportMultipleWindows(true)
+            settings.domStorageEnabled = true
+            settings.databaseEnabled = true
+            settings.userAgentString = settings.userAgentString
+                .replace("; wv", "")
+                .replace(" Version/4.0", "")
+            webViewClient = object : WebViewClient() {
+                override fun onPageStarted(
+                    v: WebView,
+                    url: String,
+                    favicon: android.graphics.Bitmap?
+                ) {
+                    logEvent("POPUP MULAI: $url")
+                }
+
+                override fun onPageFinished(v: WebView, url: String) {
+                    logEvent("POPUP SELESAI: $url")
+                }
+            }
+            webChromeClient = object : WebChromeClient() {
+                override fun onCloseWindow(window: WebView) {
+                    closePopupWindow()
+                }
+            }
+        }
+        popupView = popup
+        // Tampilkan pop-up di tempat WebView utama; halaman claude.ai
+        // tetap hidup di belakang (tidak dinavigasi pergi) supaya bisa
+        // menerima token lewat window.opener.
+        rootLayout.addView(popup, 1)
+        webView.visibility = android.view.View.GONE
+        popup.visibility = android.view.View.VISIBLE
+        (resultMsg.obj as WebView.WebViewTransport).webView = popup
+        resultMsg.sendToTarget()
+        return true
+    }
+
+    private fun closePopupWindow() {
+        runOnUiThread {
+            popupView?.let { popup ->
+                rootLayout.removeView(popup)
+                popup.destroy()
+            }
+            popupView = null
+            webView.visibility = android.view.View.VISIBLE
+            logEvent("POPUP ditutup — kembali ke $currentUrl")
         }
     }
 
@@ -71,6 +145,7 @@ abstract class BrowserActivity : AppCompatActivity() {
                 ViewGroup.LayoutParams.MATCH_PARENT
             )
         }
+        rootLayout = root
 
         // Aturan anti-salah-akun (PRD F4): nama + warna Space aktif
         // tampil permanen di top bar.
@@ -91,14 +166,9 @@ abstract class BrowserActivity : AppCompatActivity() {
                 1f
             )
             // S0.1 — perbaikan blank putih setelah login (temuan HP 16 Nov 18:27):
-            // 1) Login Claude pakai pop-up (khususnya "Continue with Google").
-            //    WebView polos tanpa onCreateWindow tidak bisa membuka pop-up
-            //    itu, jadi alur login mentok / halaman sesudah login blank.
-            //    Sekarang pop-up dialihkan ke WebView utama yang sama.
-            // 2) Cookie pihak ketiga ditolak diam-diam oleh WebView polos,
-            //    padahal sesi login Claude/OAuth butuh cookie itu.
-            // 3) User-Agent bawaan WebView mengandung "; wv" — sebagian situs
-            //    melayani halaman kosong / versi rusak untuk UA itu.
+            // cookie pihak ketiga diterima + UA dibersihkan dari "; wv".
+            // Pop-up login ditangani WebChromeClient.onCreateWindow ->
+            // openPopupWindow (pop-up asli, S0.3).
             CookieManager.getInstance().setAcceptCookie(true)
             CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
             settings.javaScriptEnabled = true
@@ -120,10 +190,12 @@ abstract class BrowserActivity : AppCompatActivity() {
                     url: String,
                     favicon: android.graphics.Bitmap?
                 ) {
+                    currentUrl = url
                     logEvent("MULAI: $url")
                 }
 
                 override fun onPageFinished(view: WebView, url: String) {
+                    currentUrl = url
                     logEvent("SELESAI: $url")
                 }
 
@@ -132,8 +204,14 @@ abstract class BrowserActivity : AppCompatActivity() {
                     request: WebResourceRequest,
                     errorResponse: android.webkit.WebResourceResponse
                 ) {
+                    // S0.3: catat juga gagal muat subresource (mis. bundle JS
+                    // Claude) — halaman bisa blank putih padahal frame utama
+                    // sukses, dan itu tidak kelihatan kalau hanya main frame
+                    // yang dicatat.
                     if (request.isForMainFrame) {
                         logEvent("HTTP ${errorResponse.statusCode}: ${request.url}")
+                    } else {
+                        logEvent("HTTP-sub ${errorResponse.statusCode}: ${request.url}")
                     }
                 }
 
@@ -149,6 +227,8 @@ abstract class BrowserActivity : AppCompatActivity() {
                             "Gagal muat: ${error.description}",
                             Toast.LENGTH_LONG
                         ).show()
+                    } else {
+                        logEvent("ERR-sub: ${error.description} ${request.url}")
                     }
                 }
             }
@@ -170,37 +250,13 @@ abstract class BrowserActivity : AppCompatActivity() {
                     isUserGesture: Boolean,
                     resultMsg: Message
                 ): Boolean {
-                    // Pop-up (mis. login Google) dimuat di WebView utama,
-                    // supaya sesi login mendarat di Space ini, bukan hilang.
-                    // S0.2: forward lewat onPageStarted — shouldOverrideUrlLoading
-                    // TIDAK terpanggil untuk load awal pop-up, jadi URL login
-                    // sempat nyangkut di pop-up tersembunyi.
-                    val popup = WebView(view.context).apply {
-                        settings.javaScriptEnabled = true
-                        settings.domStorageEnabled = true
-                        webViewClient = object : WebViewClient() {
-                            override fun onPageStarted(
-                                v: WebView,
-                                url: String,
-                                favicon: android.graphics.Bitmap?
-                            ) {
-                                if (url != "about:blank") {
-                                    webView.loadUrl(url)
-                                }
-                            }
+                    // S0.3: pop-up asli (lihat openPopupWindow) — JANGAN
+                    // dialihkan ke WebView utama, callback OAuth butuh opener.
+                    return openPopupWindow(view, resultMsg)
+                }
 
-                            override fun shouldOverrideUrlLoading(
-                                v: WebView,
-                                request: WebResourceRequest
-                            ): Boolean {
-                                webView.loadUrl(request.url.toString())
-                                return true
-                            }
-                        }
-                    }
-                    (resultMsg.obj as WebView.WebViewTransport).webView = popup
-                    resultMsg.sendToTarget()
-                    return true
+                override fun onCloseWindow(window: WebView) {
+                    closePopupWindow()
                 }
             }
         }
@@ -212,7 +268,7 @@ abstract class BrowserActivity : AppCompatActivity() {
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT
             )
-            maxLines = 6
+            maxLines = 8
             textSize = 11f
             setPadding(16, 8, 16, 8)
             setBackgroundColor(Color.parseColor("#CC000000"))
@@ -221,6 +277,12 @@ abstract class BrowserActivity : AppCompatActivity() {
         }
         root.addView(debugView)
         setContentView(root)
+
+        // S0.1 — perbaikan blank putih setelah login (temuan HP 16 Nov 18:27):
+        // cookie pihak ketiga + UA dibersihkan. S0.2: panel log. S0.3: pop-up
+        // login jadi WebView popup asli (window.opener utuh) — lihat
+        // openPopupWindow; pengalihan URL pop-up ke WebView utama (S0.1/S0.2)
+        // TERBUKTI bikin callback OAuth kehilangan opener → blank putih.
 
         if (savedInstanceState == null) {
             webView.loadUrl(url)
