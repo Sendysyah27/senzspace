@@ -202,6 +202,12 @@ abstract class BrowserActivity : AppCompatActivity() {
                 override fun onPageFinished(view: WebView, url: String) {
                     currentUrl = url
                     logEvent("SELESAI: $url")
+                    // S0.4: paksa tulis cookie sesi ke disk tiap halaman
+                    // selesai dimuat. WebView hanya menulis cookie ke disk
+                    // secara berkala; kalau app mati mendadak (FC) sebelum
+                    // sempat ditulis, sesi login hilang — kejadian HP 20:17:
+                    // Space 1 balik ke halaman login setelah FC Space 2.
+                    CookieManager.getInstance().flush()
                 }
 
                 override fun onReceivedHttpError(
@@ -291,6 +297,15 @@ abstract class BrowserActivity : AppCompatActivity() {
 
         if (savedInstanceState == null) {
             webView.loadUrl(url)
+        }
+    }
+
+    override fun onPause() {
+        super.onPause()
+        // S0.4: tulis cookie sesi ke disk tiap app ditinggalkan, supaya sesi
+        // tetap ada walau proses mati mendadak setelahnya.
+        if (::webView.isInitialized) {
+            CookieManager.getInstance().flush()
         }
     }
 
