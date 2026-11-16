@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Chip status Aktif di tile Multi Live (Figma: #34D399 dengan bg 18%). -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <solid android:color="#2E34D399" />
+    <corners android:radius="8dp" />
+</shape>

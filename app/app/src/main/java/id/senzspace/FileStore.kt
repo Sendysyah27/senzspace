@@ -12,6 +12,7 @@ import java.io.File
 // yang disimpan di sini (cookie tetap di WebView data dir masing-masing).
 object FileStore {
     const val ROOT = "SenzSpace"
+    const val LIVE = "_live"
 
     data class Folder(val key: String, val name: String, val color: String)
 
@@ -38,6 +39,15 @@ object FileStore {
             ?: File(ctx.filesDir, ROOT)
     }
 
+    /** Folder thumbnail live Multi Live (S1): tiap proses :spaceN menulis
+     *  tangkapan layar WebView-nya ke sini tiap 5 detik
+     *  (<suffix>.png); Dashboard (proses utama) hanya MEMBACA file ini
+     *  untuk tile grid — tidak ada sesi/secret di sini, cuma gambar. */
+    fun liveDir(ctx: Context): File = File(rootDir(ctx), LIVE)
+
+    fun liveThumbFile(ctx: Context, suffix: String): File =
+        File(liveDir(ctx), "$suffix.png")
+
     fun folderDir(ctx: Context, key: String): File {
         return File(rootDir(ctx), key)
     }
@@ -47,6 +57,7 @@ object FileStore {
         for (f in FOLDERS) {
             folderDir(ctx, f.key).mkdirs()
         }
+        liveDir(ctx).mkdirs()
     }
 
     fun listFiles(ctx: Context, key: String): List<File> {

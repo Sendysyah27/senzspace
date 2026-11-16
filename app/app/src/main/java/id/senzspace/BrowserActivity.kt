@@ -1,8 +1,13 @@
 package id.senzspace
 
 import android.annotation.SuppressLint
+import android.content.Intent
+import android.graphics.Bitmap
+import android.graphics.Canvas
 import android.graphics.Color
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.os.Message
 import android.view.ViewGroup
 import android.webkit.CookieManager
@@ -17,6 +22,7 @@ import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.webkit.WebViewCompat
+import java.io.FileOutputStream
 
 /**
  * Browser per Space (S0).
@@ -59,6 +65,59 @@ abstract class BrowserActivity : AppCompatActivity() {
     private var spaceName = "Space"
     private var activityDestroyed = false
     private val debugLines = ArrayDeque<String>()
+
+    // Multi Live (S1, Figma "01 — Beranda · Multi Live"): Space ini jalan
+    // TERUS di belakang walau pengguna kembali ke Beranda — WebView tidak
+    // dimatikan (Back tidak finish, lihat goToDashboard). Tiap 5 detik,
+    // selama Activity ini TIDAK di depan (isForeground == false), WebView
+    // digambar ke bitmap kecil (320px) dan disimpan sebagai
+    // _live/<suffix>.png supaya tile Beranda bisa menampilkan halaman web
+    // yang sedang berjalan. Tangkap diam-diam bila gagal — thumbnail boleh
+    // kosong, halaman web tetap jalan.
+    private val liveHandler = Handler(Looper.getMainLooper())
+    private var liveRunning = false
+    private var isForeground = false
+    private val liveRunnable = object : Runnable {
+        override fun run() {
+            if (!liveRunning) return
+            if (!isForeground) captureLiveThumbnail()
+            liveHandler.postDelayed(this, 5000)
+        }
+    }
+
+    private fun startLiveCapture() {
+        if (liveRunning) return
+        liveRunning = true
+        liveHandler.postDelayed(liveRunnable, 5000)
+    }
+
+    private fun stopLiveCapture() {
+        liveRunning = false
+        liveHandler.removeCallbacks(liveRunnable)
+    }
+
+    private fun captureLiveThumbnail() {
+        if (!::webView.isInitialized) return
+        try {
+            val w = webView.width
+            val h = webView.height
+            if (w <= 0 || h <= 0 || webView.contentHeight <= 0) return
+            val tw = 320
+            val th = (320f * h / w).toInt().coerceIn(1, 240)
+            val bmp = Bitmap.createBitmap(tw, th, Bitmap.Config.RGB_565)
+            val canvas = Canvas(bmp)
+            canvas.scale(tw.toFloat() / w, th.toFloat() / h)
+            webView.draw(canvas)
+            val file = FileStore.liveThumbFile(this, dataDirectorySuffix)
+            file.parentFile?.mkdirs()
+            FileOutputStream(file).use { out ->
+                bmp.compress(Bitmap.CompressFormat.PNG, 90, out)
+            }
+            bmp.recycle()
+        } catch (e: Exception) {
+            // Thumbnail boleh gagal; jangan ganggu browsing.
+        }
+    }
 
     /** Log diagnostik S0.2: tampil di layar (bawah) supaya Sendy bisa
      *  screenshot penyebab blank — logcat HP tidak bisa ditarik (adbd mati).
@@ -398,10 +457,12 @@ abstract class BrowserActivity : AppCompatActivity() {
         if (savedInstanceState == null) {
             webView.loadUrl(url)
         }
+        startLiveCapture()
     }
 
     override fun onResume() {
         super.onResume()
+        isForeground = true
         LockGate.check(this, lockLauncher)
         refreshDownloadCount()
     }
@@ -424,11 +485,16 @@ abstract class BrowserActivity : AppCompatActivity() {
 
     override fun onPause() {
         super.onPause()
+        isForeground = false
         // S0.4: tulis cookie sesi ke disk tiap app ditinggalkan, supaya sesi
         // tetap ada walau proses mati mendadak setelahnya.
         if (::webView.isInitialized) {
             CookieManager.getInstance().flush()
         }
+        // Multi Live: begitu pengguna meninggalkan Space ini, langsung
+        // ambil satu tangkapan segar supaya tile Beranda tidak menunggu
+        // 5 detik untuk gambar pertama.
+        captureLiveThumbnail()
     }
 
     /** S1: apakah URL ini berarti Space sedang login? Aturan default untuk
@@ -457,8 +523,26 @@ abstract class BrowserActivity : AppCompatActivity() {
     }
 
     override fun onBackPressed() {
+        // Pop-up login terbuka: Back menutup pop-up dulu.
+        if (popupView != null) {
+            closePopupWindow()
+            return
+        }
         if (::webView.isInitialized && webView.canGoBack()) webView.goBack()
-        else super.onBackPressed()
+        else goToDashboard()
+    }
+
+    /** Multi Live (S1): Back dari Space TIDAK menutup Space. Activity ini
+     *  tinggal di back stack (WebView + sesi tetap hidup, thumbnail live
+     *  terus di-capture) dan Beranda dimunculkan ke depan. Tap tile di
+     *  Beranda membawa Activity ini kembali ke depan tanpa WebView baru
+     *  (MainActivity.openSpace memakai FLAG_ACTIVITY_REORDER_TO_FRONT).
+     *  Keluar app tetap lewat Back di Beranda seperti biasa. */
+    private fun goToDashboard() {
+        val intent = Intent(this, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
+        }
+        startActivity(intent)
     }
 
     override fun onDestroy() {
@@ -468,6 +552,7 @@ abstract class BrowserActivity : AppCompatActivity() {
         // bikin crash native. Urutan aman: hancurkan pop-up dulu, lepas
         // keduanya dari parent, baru hancurkan WebView utama.
         activityDestroyed = true
+        stopLiveCapture()
         try {
             popupView?.let {
                 popupView = null

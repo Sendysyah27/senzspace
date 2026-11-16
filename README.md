@@ -197,6 +197,36 @@ CI: `.github/workflows/android.yml` — `cargo test` + `assembleDebug` tiap push
 6. Ulangi tambah Space sampai 10. **LULUS** bila: Space ke-11 ditolak
    dengan pesan "Maksimal 10 Space".
 
+## Tes Multi Live di HP (bahasa bayi)
+
+Mode baru di Beranda: semua Space yang sedang berjalan kelihatan
+gambar halamannya (hidup, bukan gambar mati) dalam kotak-kotak kecil.
+Desainnya dari Figma "01 — Beranda · Multi Live".
+
+1. Install APK v0.1.8-s1multilive (nimpa, tanpa uninstall).
+2. Buka **Claude 1** (sudah login), tunggu halaman kebuka, tekan
+   **Back** (tombol kembali HP). **LULUS** bila: balik ke Beranda
+   (bukan keluar app), dan tidak ada dialog "SenzSpace has stopped".
+3. Di Beranda, tunggu 5 detik. **LULUS** bila: kotak Claude 1
+   menampilkan gambar halaman Claude (bukan gambar abu-abu polos),
+   ada tulisan **LIVE** merah di pojoknya dan "live baru saja" di
+   bawah nama.
+4. Ulangi langkah 2–3 untuk Claude 2 dan AI Studio. **LULUS** bila:
+   ketiga kotaknya menampilkan gambar halaman masing-masing, dan
+   tulisan di bawahnya berubah ("live 5 dtk lalu", dst).
+5. Tap kotak **AI Studio**. **LULUS** bila: langsung masuk ke
+   halaman AI Studio yang sudah login (tidak minta login ulang,
+   tidak loading dari awal).
+6. Tap tombol **"Daftar"** di atas grid. **LULUS** bila: tampilan
+   berubah jadi daftar kartu seperti dulu. Tap **"Multi Live"**
+   lagi → kembali ke grid.
+7. Tekan Back di Beranda (bukan di Space). **LULUS** bila: app
+   diminimalkan seperti biasa; buka lagi → Space-Space masih login.
+8. Kalau kotak tetap abu-abu polos setelah 10 detik: buka File
+   Manager → folder **_Live** — di sana harus ada file
+   `space1.png` (dan seterusnya). Kalau folder kosong, kirim
+   kabar ke Jhon (tangkapan layar WebView belum jalan).
+
 ## Keamanan
 
 Tidak ada password yang disimpan sebagai teks biasa. Login dilakukan Sendy
