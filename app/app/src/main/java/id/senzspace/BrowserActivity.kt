@@ -83,10 +83,8 @@ abstract class BrowserActivity : AppCompatActivity() {
             //    padahal sesi login Claude/OAuth butuh cookie itu.
             // 3) User-Agent bawaan WebView mengandung "; wv" — sebagian situs
             //    melayani halaman kosong / versi rusak untuk UA itu.
-            CookieManager.getInstance().apply {
-                setAcceptCookie(true)
-                setAcceptThirdPartyCookies(this@apply, true)
-            }
+            CookieManager.getInstance().setAcceptCookie(true)
+            CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
             settings.javaScriptEnabled = true
             settings.javaScriptCanOpenWindowsAutomatically = true
             settings.setSupportMultipleWindows(true)
