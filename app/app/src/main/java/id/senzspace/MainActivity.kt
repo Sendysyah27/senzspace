@@ -46,7 +46,7 @@ class MainActivity : AppCompatActivity() {
         private const val KEY_MODE = "dashboard_mode"
         private const val MODE_LIVE = "live"
         private const val MODE_LIST = "list"
-        private const val LIVE_REFRESH_MS = 5000L
+        private const val LIVE_REFRESH_MS = 2000L
         private const val LIVE_FRESH_SEC = 60L
     }
 
@@ -110,6 +110,20 @@ class MainActivity : AppCompatActivity() {
         }
         findViewById<View>(R.id.navSettings).setOnClickListener {
             startActivity(Intent(this, SettingsActivity::class.java))
+        }
+        // Guard anti-kill butuh izin notifikasi (Android 13+): tanpa ini
+        // service tetap jalan tapi tidak bisa foreground — guard melemah.
+        // Minta sekali di awal; kalau ditolak, app tetap jalan normal.
+        if (android.os.Build.VERSION.SDK_INT >= 33 &&
+            androidx.core.content.ContextCompat.checkSelfPermission(
+                this, android.Manifest.permission.POST_NOTIFICATIONS
+            ) != android.content.pm.PackageManager.PERMISSION_GRANTED
+        ) {
+            androidx.core.app.ActivityCompat.requestPermissions(
+                this,
+                arrayOf(android.Manifest.permission.POST_NOTIFICATIONS),
+                1001
+            )
         }
     }
 
@@ -335,12 +349,12 @@ class MainActivity : AppCompatActivity() {
                 ViewGroup.LayoutParams.WRAP_CONTENT
             )
         }
-        // Preview web 149×80 (Figma): placeholder chrome di bawah,
-        // thumbnail live di atasnya bila sudah ada file-nya.
+        // Preview web VERTIKAL 159×212 (3:4, Figma v2 portrait) — sesuai
+        // layar HP; thumbnail JPEG 240×320 dari WebView dipotong atas.
         val preview = FrameLayout(this).apply {
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
-                dp(80)
+                dp(212)
             ).apply { setMargins(dp(5), dp(5), dp(5), 0) }
             background = roundedBg("#1B2A44", 10)
         }
@@ -475,7 +489,7 @@ class MainActivity : AppCompatActivity() {
             layoutParams = tileLayoutParams()
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER
-            minimumHeight = dp(134)
+            minimumHeight = dp(262)
             background = GradientDrawable().apply {
                 setColor(Color.parseColor("#00000000"))
                 setStroke(dp(1), Color.parseColor("#24344D"), dp(6).toFloat(), dp(4).toFloat())
@@ -600,6 +614,8 @@ class MainActivity : AppCompatActivity() {
             )
             .setPositiveButton("Hapus") { _, _ ->
                 SpaceRegistry.remove(this, entry.slot)
+                // Matikan guard anti-kill Space ini (prosesnya boleh mati).
+                KeepAlive.stop(this, SpaceRegistry.suffixForSlot(entry.slot))
                 Toast.makeText(this, "\"${entry.name}\" dihapus", Toast.LENGTH_SHORT).show()
                 renderDashboard()
             }

@@ -56,7 +56,6 @@ abstract class BrowserActivity : AppCompatActivity() {
     }
 
     private lateinit var webView: WebView
-    private lateinit var debugView: TextView
     private lateinit var rootLayout: LinearLayout
     private lateinit var downloadBtn: android.widget.Button
     private val lockLauncher = LockGate.register(this)
@@ -64,31 +63,37 @@ abstract class BrowserActivity : AppCompatActivity() {
     private var currentUrl = ""
     private var spaceName = "Space"
     private var activityDestroyed = false
-    private val debugLines = ArrayDeque<String>()
 
-    // Multi Live (S1, Figma "01 — Beranda · Multi Live"): Space ini jalan
-    // TERUS di belakang walau pengguna kembali ke Beranda — WebView tidak
-    // dimatikan (Back tidak finish, lihat goToDashboard). Tiap 5 detik,
-    // selama Activity ini TIDAK di depan (isForeground == false), WebView
-    // digambar ke bitmap kecil (320px) dan disimpan sebagai
-    // _live/<suffix>.png supaya tile Beranda bisa menampilkan halaman web
-    // yang sedang berjalan. Tangkap diam-diam bila gagal — thumbnail boleh
-    // kosong, halaman web tetap jalan.
+    // Multi Live v2 (S1, perintah Sendy 21:58 WIB — "bener bener direct
+    // live"): tile Beranda harus menampilkan halaman web yang sedang
+    // berjalan sedekat mungkin dengan live. Mekanismenya tiga lapis:
+    // (1) heartbeat tiap 2 detik selama Space di belakang;
+    // (2) tangkap langsung tiap halaman selesai dimuat saat di belakang;
+    // (3) MutationObserver di halaman (jembatan JS) — tiap DOM berubah
+    // (mis. Claude sedang mengetik jawaban) picu tangkap, debounce 400ms
+    // di JS + jeda minimum 1 detik di native. Tangkapannya VERTIKAL
+    // 240×320 (3:4, bagian ATAS halaman — sesuai layar HP) format JPEG
+    // supaya cepat, disimpan sebagai _live/<suffix>.jpg.
+    // Jujur soal batas: WebView tiap Space hidup di prosesnya sendiri
+    // (isolasi sesi, D3) dan Android tidak mengizinkan WebView proses
+    // lain ditempel langsung di Beranda — jadi "live" di sini = gambar
+    // langsung dari WebView yang sedang jalan, bukan WebView-nya sendiri.
     private val liveHandler = Handler(Looper.getMainLooper())
     private var liveRunning = false
     private var isForeground = false
+    private var lastCaptureMs = 0L
     private val liveRunnable = object : Runnable {
         override fun run() {
             if (!liveRunning) return
             if (!isForeground) captureLiveThumbnail()
-            liveHandler.postDelayed(this, 5000)
+            liveHandler.postDelayed(this, 2000)
         }
     }
 
     private fun startLiveCapture() {
         if (liveRunning) return
         liveRunning = true
-        liveHandler.postDelayed(liveRunnable, 5000)
+        liveHandler.postDelayed(liveRunnable, 2000)
     }
 
     private fun stopLiveCapture() {
@@ -98,40 +103,67 @@ abstract class BrowserActivity : AppCompatActivity() {
 
     private fun captureLiveThumbnail() {
         if (!::webView.isInitialized) return
+        val now = System.currentTimeMillis()
+        if (now - lastCaptureMs < 1000) return
+        lastCaptureMs = now
         try {
             val w = webView.width
             val h = webView.height
             if (w <= 0 || h <= 0 || webView.contentHeight <= 0) return
-            val tw = 320
-            val th = (320f * h / w).toInt().coerceIn(1, 240)
+            // Vertikal 3:4 — gambar bagian atas halaman (greeting, tombol,
+            // kolom chat), skala lebar pas 240px, potong sisanya.
+            val tw = 240
+            val th = 320
             val bmp = Bitmap.createBitmap(tw, th, Bitmap.Config.RGB_565)
             val canvas = Canvas(bmp)
-            canvas.scale(tw.toFloat() / w, th.toFloat() / h)
+            val scale = tw.toFloat() / w
+            canvas.scale(scale, scale)
             webView.draw(canvas)
             val file = FileStore.liveThumbFile(this, dataDirectorySuffix)
             file.parentFile?.mkdirs()
             FileOutputStream(file).use { out ->
-                bmp.compress(Bitmap.CompressFormat.PNG, 90, out)
+                bmp.compress(Bitmap.CompressFormat.JPEG, 80, out)
             }
             bmp.recycle()
+            // Bersihkan file PNG lama (format v0.1.8) supaya tidak menumpuk.
+            val oldPng = java.io.File(file.parentFile, "$dataDirectorySuffix.png")
+            if (oldPng.exists()) oldPng.delete()
         } catch (e: Exception) {
             // Thumbnail boleh gagal; jangan ganggu browsing.
         }
     }
 
-    /** Log diagnostik S0.2: tampil di layar (bawah) supaya Sendy bisa
-     *  screenshot penyebab blank — logcat HP tidak bisa ditarik (adbd mati).
-     *  Baris pertama SELALU URL halaman utama saat ini (tidak pernah
-     *  kegeser log JS yang panjang). */
-    private fun logEvent(msg: String) {
-        runOnUiThread {
-            debugLines.addLast(msg)
-            while (debugLines.size > 6) debugLines.removeFirst()
-            if (::debugView.isInitialized) {
-                debugView.text = ("URL: $currentUrl\n" +
-                    debugLines.joinToString("\n"))
+    /** Jembatan JS untuk MutationObserver: halaman memanggil onChanged()
+     *  tiap DOM berubah. Dipanggil dari thread binder — lempar ke UI. */
+    private inner class LiveBridge {
+        @android.webkit.JavascriptInterface
+        fun onChanged() {
+            liveHandler.post {
+                if (!isForeground) captureLiveThumbnail()
             }
         }
+    }
+
+    private fun injectLiveObserver() {
+        if (!::webView.isInitialized) return
+        try {
+            webView.evaluateJavascript(
+                "(function(){if(window.__senzLive)return;window.__senzLive=true;" +
+                    "var t=null;var ob=new MutationObserver(function(){" +
+                    "clearTimeout(t);t=setTimeout(function(){" +
+                    "window.SenzLive.onChanged();},400);});" +
+                    "if(document.body){ob.observe(document.body," +
+                    "{childList:true,subtree:true,characterData:true});}})();",
+                null
+            )
+        } catch (e: Exception) {
+        }
+    }
+
+    // Panel log kuning S0.2 SUDAH DILEPAS (perintah Sendy 21:58 WIB).
+    // logEvent() sekarang no-op — crash tetap ditangkap CrashLog
+    // (file _Log-Crash), bukan panel di layar.
+    private fun logEvent(msg: String) {
     }
 
     /** S0.3: pop-up login Google harus jadi WebView popup ASLI (ditampilkan,
@@ -328,6 +360,10 @@ abstract class BrowserActivity : AppCompatActivity() {
                     // chip di Dashboard jujur. Hanya bendera 1/0 — BUKAN
                     // cookie/sesi, jadi aman disimpan sebagai file biasa.
                     saveLoginState(url)
+                    // Multi Live v2: pasang pengamat DOM + tangkap langsung
+                    // bila halaman selesai dimuat saat Space di belakang.
+                    injectLiveObserver()
+                    if (!isForeground) captureLiveThumbnail()
                 }
 
                 override fun onReceivedHttpError(
@@ -392,6 +428,10 @@ abstract class BrowserActivity : AppCompatActivity() {
             }
         }
         root.addView(webView)
+        // Jembatan JS Multi Live v2 (MutationObserver): halaman hanya boleh
+        // memanggil SenzLive.onChanged() tanpa argumen — tidak ada data
+        // halaman yang keluar, cuma sinyal "halaman berubah".
+        webView.addJavascriptInterface(LiveBridge(), "SenzLive")
 
         // Unduhan per Space (PRD F6, slice File Manager): file unduhan
         // dari WebView masuk ke folder Space ini di FileStore. Cookie sesi
@@ -432,20 +472,6 @@ abstract class BrowserActivity : AppCompatActivity() {
             }
         }
 
-        // Panel log diagnostik S0.2 (sementara, sampai gerbang login lulus).
-        debugView = TextView(this).apply {
-            layoutParams = LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
-            )
-            maxLines = 8
-            textSize = 11f
-            setPadding(16, 8, 16, 8)
-            setBackgroundColor(Color.parseColor("#CC000000"))
-            setTextColor(Color.parseColor("#FFD54F"))
-            text = "LOG: menunggu muat..."
-        }
-        root.addView(debugView)
         setContentView(root)
 
         // S0.1 — perbaikan blank putih setelah login (temuan HP 16 Nov 18:27):
@@ -458,6 +484,9 @@ abstract class BrowserActivity : AppCompatActivity() {
             webView.loadUrl(url)
         }
         startLiveCapture()
+        // Guard anti-kill: service foreground di proses Space ini supaya
+        // sistem tidak mematikan Space yang lama tidak dibuka.
+        KeepAlive.start(this, dataDirectorySuffix, spaceName)
     }
 
     override fun onResume() {

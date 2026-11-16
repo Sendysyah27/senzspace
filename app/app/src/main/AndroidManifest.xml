@@ -4,6 +4,11 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.USE_BIOMETRIC" />
+    <!-- Guard anti-kill Multi Live (S1): foreground service per proses
+         Space supaya sistem tidak mematikan Space yang lama tidak dibuka. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <application
         android:allowBackup="true"
@@ -83,6 +88,100 @@
         <activity
             android:name=".AddSpaceActivity"
             android:exported="false" />
+
+        <!-- Guard anti-kill Multi Live: satu foreground service per proses
+             :spaceN (START_STICKY). Tipe specialUse + penjelasan pemakaian
+             wajib di Android 14 (target SDK 34). -->
+        <service
+            android:name=".KeepAliveSpace1Service"
+            android:exported="false"
+            android:foregroundServiceType="specialUse"
+            android:process=":space1">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Menjaga sesi dan tampilan live Space 1 tetap berjalan untuk Multi Live Display." />
+        </service>
+        <service
+            android:name=".KeepAliveSpace2Service"
+            android:exported="false"
+            android:foregroundServiceType="specialUse"
+            android:process=":space2">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Menjaga sesi dan tampilan live Space 2 tetap berjalan untuk Multi Live Display." />
+        </service>
+        <service
+            android:name=".KeepAliveSpace3Service"
+            android:exported="false"
+            android:foregroundServiceType="specialUse"
+            android:process=":space3">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Menjaga sesi dan tampilan live Space 3 tetap berjalan untuk Multi Live Display." />
+        </service>
+        <service
+            android:name=".KeepAliveSpace4Service"
+            android:exported="false"
+            android:foregroundServiceType="specialUse"
+            android:process=":space4">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Menjaga sesi dan tampilan live Space 4 tetap berjalan untuk Multi Live Display." />
+        </service>
+        <service
+            android:name=".KeepAliveSpace5Service"
+            android:exported="false"
+            android:foregroundServiceType="specialUse"
+            android:process=":space5">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Menjaga sesi dan tampilan live Space 5 tetap berjalan untuk Multi Live Display." />
+        </service>
+        <service
+            android:name=".KeepAliveSpace6Service"
+            android:exported="false"
+            android:foregroundServiceType="specialUse"
+            android:process=":space6">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Menjaga sesi dan tampilan live Space 6 tetap berjalan untuk Multi Live Display." />
+        </service>
+        <service
+            android:name=".KeepAliveAiStudioService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse"
+            android:process=":aistudio">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Menjaga sesi dan tampilan live AI Studio tetap berjalan untuk Multi Live Display." />
+        </service>
+        <service
+            android:name=".KeepAliveSpace8Service"
+            android:exported="false"
+            android:foregroundServiceType="specialUse"
+            android:process=":space8">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Menjaga sesi dan tampilan live Space 8 tetap berjalan untuk Multi Live Display." />
+        </service>
+        <service
+            android:name=".KeepAliveSpace9Service"
+            android:exported="false"
+            android:foregroundServiceType="specialUse"
+            android:process=":space9">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Menjaga sesi dan tampilan live Space 9 tetap berjalan untuk Multi Live Display." />
+        </service>
+        <service
+            android:name=".KeepAliveSpace10Service"
+            android:exported="false"
+            android:foregroundServiceType="specialUse"
+            android:process=":space10">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Menjaga sesi dan tampilan live Space 10 tetap berjalan untuk Multi Live Display." />
+        </service>
 
     </application>
 </manifest>

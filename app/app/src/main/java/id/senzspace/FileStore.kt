@@ -46,7 +46,7 @@ object FileStore {
     fun liveDir(ctx: Context): File = File(rootDir(ctx), LIVE)
 
     fun liveThumbFile(ctx: Context, suffix: String): File =
-        File(liveDir(ctx), "$suffix.png")
+        File(liveDir(ctx), "$suffix.jpg")
 
     fun folderDir(ctx: Context, key: String): File {
         return File(rootDir(ctx), key)
