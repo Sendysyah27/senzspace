@@ -114,12 +114,17 @@ abstract class BrowserActivity : AppCompatActivity() {
     }
 
     private fun closePopupWindow() {
-        runOnUiThread {
-            popupView?.let { popup ->
-                rootLayout.removeView(popup)
-                popup.destroy()
-            }
-            popupView = null
+        // S0.4: JANGAN hancurkan pop-up di dalam callback onCloseWindow —
+        // WebView masih menyelesaikan callback penutupan itu dan destroy()
+        // sinkron di dalamnya bikin crash native ("SenzSpace has stopped",
+        // kejadian HP 20:16: login Space 2 selesai → kembali ke beranda
+        // malah FC). Tunda teardown ke antrean UI thread supaya callback
+        // selesai dulu baru pop-up dilepas + dihancurkan.
+        val popup = popupView ?: return
+        popupView = null
+        rootLayout.post {
+            rootLayout.removeView(popup)
+            popup.destroy()
             webView.visibility = android.view.View.VISIBLE
             logEvent("POPUP ditutup — kembali ke $currentUrl")
         }
