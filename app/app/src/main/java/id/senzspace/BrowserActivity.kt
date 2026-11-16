@@ -987,8 +987,22 @@ abstract class BrowserActivity : AppCompatActivity() {
      *  iframe sandboxed blob:null/. Isi blob di-cache base64; antar
      *  frame bicara via postMessage (tetap jalan lintas origin);
      *  frame utama meneruskan jawaban ke jembatan native SenzBlob. */
+    /** Skrip penangkap blob (v0.1.17) — disisipkan ke SETIAP dokumen
+     *  (frame utama + iframe) lewat shouldInterceptRequest, jadi
+     *  berjalan di konteks yang SAMA dengan pembuat blob — termasuk
+     *  iframe sandboxed blob:null/. Isi blob di-cache base64; antar
+     *  frame bicara via postMessage (tetap jalan lintas origin);
+     *  frame utama meneruskan jawaban ke jembatan native SenzBlob.
+     *  v0.1.18: + perangkap iframe srcdoc/data: (lihat trap di bawah).
+     *  Bukti log 01:32 WIB: injeksi masuk ke dokumen utama + 2 iframe
+     *  layanan (auth_warmup, bscframe) TAPI tidak ada jawaban
+     *  postMessage — pembuat blob adalah iframe yang dokumennya TIDAK
+     *  lewat jaringan (srcdoc/about:blank, dibuat saat generate).
+     *  Perangkap ini menangkap iframe itu saat dimasukkan ke DOM /
+     *  saat srcdoc di-set, lalu menyisipkan skrip yang sama ke
+     *  dalamnya. */
     private fun blobInjectScript(): String {
-        return "(function(){try{" +
+        val core = "(function(){try{" +
             "if(window.__senzBlobCache)return;" +
             "window.__senzBlobCache={};" +
             "window.__senzBlobNames={};" +
@@ -1029,6 +1043,67 @@ abstract class BrowserActivity : AppCompatActivity() {
             "window.__senzBlobDone=true;window.SenzBlob.onBlobData(m.data,m.name||'');}" +
             "}}catch(e){}});" +
             "}catch(e){}})();"
+        // Perangkap iframe (v0.1.18) — HANYA di frame utama. Menangkap
+        // iframe srcdoc / data:text/html saat dimasukkan ke DOM atau
+        // saat srcdoc/src di-set, lalu menyisipkan CORE yang sama ke
+        // dalamnya. Tulis '<scr'+'ipt>' (bukan literal '</script>')
+        // supaya tidak memutus tag <script> injeksi ini sendiri.
+        val trap = "(function(){try{" +
+            "if(window.parent!==window)return;" +
+            "var CORE=" + org.json.JSONObject.quote(core) + ";" +
+            "var wrap=function(h){try{" +
+            "if(!h||h.indexOf('__senzBlobCache')!==-1)return h;" +
+            "return h+'<scr'+'ipt>'+CORE+'</scr'+'ipt>';}catch(e){return h;}};" +
+            "var diag=function(m){try{if(window.SenzBlob)window.SenzBlob.onBlobDiag(m);}catch(e){}};" +
+            "var rewriteDataSrc=function(s){try{" +
+            "if(!s||s.indexOf('data:text/html')!==0)return s;" +
+            "var comma=s.indexOf(',');if(comma<0)return s;" +
+            "var head=s.substring(0,comma+1);var raw=s.substring(comma+1);" +
+            "var b64=head.indexOf(';base64')!==-1;" +
+            "var body=b64?atob(raw):decodeURIComponent(raw);" +
+            "var w=wrap(body);if(w===body)return s;" +
+            "diag('TRAP data: len='+body.length);" +
+            "return head+(b64?btoa(w):encodeURIComponent(w));" +
+            "}catch(e){return s;}};" +
+            "var trapOne=function(f){try{" +
+            "if(!f||f.__senzTrapped)return;f.__senzTrapped=true;" +
+            "var sd=null;try{sd=f.getAttribute('srcdoc');}catch(e){}" +
+            "if(sd){var w=wrap(sd);" +
+            "if(w!==sd){f.setAttribute('srcdoc',w);" +
+            "diag('TRAP srcdoc sandbox='+(f.getAttribute('sandbox')||'')+' len='+sd.length);}return;}" +
+            "var s='';try{s=f.getAttribute('src')||'';}catch(e){}" +
+            "var rs=rewriteDataSrc(s);if(rs!==s){f.setAttribute('src',rs);}" +
+            "}catch(e){}};" +
+            "var trapNode=function(n){try{" +
+            "if(!n)return;" +
+            "if(n.tagName==='IFRAME')trapOne(n);" +
+            "if(n.querySelectorAll){var fs=n.querySelectorAll('iframe');" +
+            "for(var i=0;i<fs.length;i++)trapOne(fs[i]);}" +
+            "}catch(e){}};" +
+            "var _append=Node.prototype.appendChild;" +
+            "Node.prototype.appendChild=function(n){try{trapNode(n);}catch(e){}return _append.call(this,n);};" +
+            "var _insert=Node.prototype.insertBefore;" +
+            "Node.prototype.insertBefore=function(n,r){try{trapNode(n);}catch(e){}return _insert.call(this,n,r);};" +
+            "var _replace=Node.prototype.replaceChild;" +
+            "Node.prototype.replaceChild=function(n,o){try{trapNode(n);}catch(e){}return _replace.call(this,n,o);};" +
+            "var _setAttr=Element.prototype.setAttribute;" +
+            "Element.prototype.setAttribute=function(k,v){try{" +
+            "var kk=String(k).toLowerCase();" +
+            "if(this.tagName==='IFRAME'&&kk==='srcdoc'){v=wrap(String(v));}" +
+            "else if(this.tagName==='IFRAME'&&kk==='src'){v=rewriteDataSrc(String(v));}" +
+            "}catch(e){}return _setAttr.call(this,k,v);};" +
+            "try{var _d=Object.getOwnPropertyDescriptor(HTMLIFrameElement.prototype,'srcdoc');" +
+            "if(_d&&_d.set){var _s=_d.set;" +
+            "Object.defineProperty(HTMLIFrameElement.prototype,'srcdoc',{configurable:true,enumerable:_d.enumerable,get:_d.get,set:function(v){try{v=wrap(String(v));}catch(e){}return _s.call(this,v);}});}}catch(e){}" +
+            "try{var _d2=Object.getOwnPropertyDescriptor(HTMLIFrameElement.prototype,'src');" +
+            "if(_d2&&_d2.set){var _s2=_d2.set;" +
+            "Object.defineProperty(HTMLIFrameElement.prototype,'src',{configurable:true,enumerable:_d2.enumerable,get:_d2.get,set:function(v){try{v=rewriteDataSrc(String(v));}catch(e){}return _s2.call(this,v);}});}}catch(e){}" +
+            "try{var _obs=new MutationObserver(function(muts){" +
+            "for(var i=0;i<muts.length;i++){var m=muts[i];" +
+            "for(var j=0;j<m.addedNodes.length;j++)trapNode(m.addedNodes[j]);}});" +
+            "_obs.observe(document.documentElement||document,{childList:true,subtree:true});}catch(e){}" +
+            "}catch(e){}})();"
+        return core + trap
     }
 
     /** Sisipkan skrip penangkap blob ke HTML: sebelum </body> (fallback:

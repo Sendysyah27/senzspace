@@ -451,6 +451,34 @@ Space. Pengawas unduhan v0.1.16 dihapus (tidak dibutuhkan lagi).
    `blob-debug.txt` (baris "INJECT: …" membuktikan skrip masuk ke
    dokumen; baris "dl url=…" + "GAGAL: …" bila masih gagal).
 
+## Tes unduh AI Studio v0.1.18 di HP (bahasa bayi)
+
+v0.1.17 masih gagal (log 01:32 WIB): injeksi MASUK ke dokumen utama
++ 2 iframe layanan (auth_warmup, bscframe) TAPI tidak ada jawaban
+postMessage — pembuat blob adalah iframe yang dokumennya TIDAK lewat
+jaringan (srcdoc/about:blank, dibuat saat generate). v0.1.18 menambah
+perangkap iframe di frame utama: tiap iframe srcdoc / data:text/html
+yang dimasukkan ke DOM (appendChild/insertBefore/replaceChild,
+setAttribute, property srcdoc/src, MutationObserver) disisipi skrip
+penangkap blob yang sama SEBELUM dimuat — jadi skripnya jalan di
+dalam kotak pembuat blob dan mengirim isinya via postMessage.
+
+1. Install APK v0.1.18-s1srcdoctrap (nimpa, tanpa uninstall).
+2. Buka **AI Studio** → Playground → generate suara sampai muncul
+   player audio.
+3. Tap tombol **unduh** di bawah player. **LULUS** bila: muncul
+   toast "Tersimpan di folder AI Studio: …" dengan nama asli
+   "Generated Audio … .wav".
+4. Buka File Manager → folder **AI Studio**. **LULUS** bila: file
+   .wav ada di sana dan bisa diputar.
+5. Ulangi tes unduh blob di **Claude 4** (PROJECT STATE .md).
+   **LULUS** bila: masih tersimpan di folder Claude 4 seperti
+   v0.1.11.
+6. Kalau masih gagal: File Manager → **_Log-Blob** →
+   `blob-debug.txt` (baris "TRAP srcdoc …" / "TRAP data: …"
+   membuktikan perangkap menangkap iframe-nya; baris "dl url=…"
+   + "GAGAL: …" bila masih gagal).
+
 ## Kontrol app dari Jhon (via Termux bridge)
 
 SenzSpace menulis statusnya ke file JSON di HP (hanya status yang
