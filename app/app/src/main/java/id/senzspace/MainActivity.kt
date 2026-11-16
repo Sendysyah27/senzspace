@@ -2,7 +2,7 @@ package id.senzspace
 
 import android.content.Intent
 import android.os.Bundle
-import android.widget.Button
+import android.view.View
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 
@@ -29,18 +29,18 @@ class MainActivity : AppCompatActivity() {
         setContentView(R.layout.activity_main)
 
         findViewById<TextView>(R.id.tvSubtitle).text =
-            "S0 Prototipe Gerbang — 2 Space terisolasi. Maks 10 Space (D1)."
+            "Ruang kerja 7 Space — 2 aktif di S0"
 
-        findViewById<Button>(R.id.btnSpace1).setOnClickListener {
+        findViewById<View>(R.id.btnSpace1).setOnClickListener {
             openSpace(
                 Space1Activity::class.java,
                 "Claude 1", "#5B5BD6", "https://claude.ai"
             )
         }
-        findViewById<Button>(R.id.btnSpace2).setOnClickListener {
+        findViewById<View>(R.id.btnSpace2).setOnClickListener {
             openSpace(
                 Space2Activity::class.java,
-                "Claude 2", "#5B5BD6", "https://claude.ai"
+                "Claude 2", "#0EA5A5", "https://claude.ai"
             )
         }
     }

@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.SenzSpace" parent="Theme.AppCompat.NoActionBar">
+        <item name="colorPrimary">@color/senz_accent</item>
+        <item name="colorPrimaryDark">@color/senz_bg</item>
+        <item name="colorAccent">@color/senz_accent</item>
+        <item name="android:windowBackground">@color/senz_bg</item>
+        <item name="android:textColorPrimary">@color/senz_text</item>
+        <item name="android:textColorSecondary">@color/senz_muted</item>
+    </style>
+</resources>

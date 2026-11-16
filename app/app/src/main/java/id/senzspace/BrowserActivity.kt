@@ -63,6 +63,7 @@ abstract class BrowserActivity : AppCompatActivity() {
         val topBar = TextView(this).apply {
             text = "● $name  —  SenzSpace S0"
             textSize = 16f
+            setTypeface(null, android.graphics.Typeface.BOLD)
             setPadding(24, 24, 24, 24)
             setBackgroundColor(Color.parseColor(color))
             setTextColor(Color.WHITE)
