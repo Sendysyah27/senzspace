@@ -30,6 +30,8 @@ object FileStore {
         Folder("_inbox", "_Inbox-Bersama", "#8A94A6"),
         Folder("_arsip", "_Arsip-Episode", "#8A94A6"),
         Folder("_log-crash", "_Log-Crash", "#8A94A6"),
+        // Log diagnosis unduh blob (v0.1.15) — alasan gagal per unduhan.
+        Folder("_log-blob", "_Log-Blob", "#8A94A6"),
         // Thumbnail live Multi Live — kelihatan di File Manager supaya
         // bisa dicek langsung bila tile Beranda abu-abu (debug).
         Folder(LIVE, "_Live (thumbnail)", "#8A94A6")

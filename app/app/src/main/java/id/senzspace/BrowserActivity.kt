@@ -70,6 +70,23 @@ abstract class BrowserActivity : AppCompatActivity() {
     private var homeUrl = "https://claude.ai"
     private var activityDestroyed = false
     private var pendingBlobFileName = ""
+    private var pendingBlobUrl = ""
+    private var blobFallbackTried = false
+
+    /** Listener unduhan sebagai field (bukan lambda anonim) supaya bisa
+     *  dilepas-pasang lagi oleh fallback native blob (v0.1.15). */
+    private val downloadListener = android.webkit.DownloadListener { dlUrl, userAgent, contentDisposition, mimeType, _ ->
+        val fileName = android.webkit.URLUtil.guessFileName(
+            dlUrl, contentDisposition, mimeType
+        )
+        when {
+            dlUrl.startsWith("blob:") -> downloadBlob(dlUrl, fileName)
+            dlUrl.startsWith("data:") -> downloadDataUrl(dlUrl, fileName)
+            else -> downloadViaManager(
+                dlUrl, userAgent, contentDisposition, mimeType, fileName
+            )
+        }
+    }
 
     /** Callback unduhan file-chooser yang sedang menunggu pilihan user.
      *  WAJIB dipanggil tepat sekali (dengan array URI atau null). */
@@ -689,18 +706,7 @@ abstract class BrowserActivity : AppCompatActivity() {
         // BISA menangani skema blob: ("Can not handle uri: blob:…").
         // Jadi blob: diambil isinya lewat JS (XHR + FileReader → base64)
         // lalu ditulis langsung ke folder Space; data: didekode langsung.
-        webView.setDownloadListener { dlUrl, userAgent, contentDisposition, mimeType, _ ->
-            val fileName = android.webkit.URLUtil.guessFileName(
-                dlUrl, contentDisposition, mimeType
-            )
-            when {
-                dlUrl.startsWith("blob:") -> downloadBlob(dlUrl, fileName)
-                dlUrl.startsWith("data:") -> downloadDataUrl(dlUrl, fileName)
-                else -> downloadViaManager(
-                    dlUrl, userAgent, contentDisposition, mimeType, fileName
-                )
-            }
-        }
+        webView.setDownloadListener(downloadListener)
 
         setContentView(root)
 
@@ -834,28 +840,40 @@ abstract class BrowserActivity : AppCompatActivity() {
     /** Ambil isi blob: URL lewat JS halaman — pertama dari cache yang
      *  dipasang injectBlobCache(), kalau belum ada baru XHR + FileReader
      *  (jalur v0.1.11). Nama asli file diambil dari atribut download
-     *  anchor yang diklik (mis. "audio.wav" dari AI Studio). */
+     *  anchor yang diklik (mis. "audio.wav" dari AI Studio).
+     *  v0.1.15: kirim dulu diagnosis (cache ada? hit? berapa iframe?)
+     *  ke log _Log-Blob supaya akar gagalnya kelihatan, bukan tebak. */
     private fun downloadBlob(dlUrl: String, fileName: String) {
         if (!::webView.isInitialized) return
         pendingBlobFileName = fileName
+        pendingBlobUrl = dlUrl
+        blobFallbackTried = false
         val escaped = dlUrl.replace("\\", "\\\\").replace("'", "\\'")
         val js = "(function(){try{" +
             "var url='$escaped';" +
             "var name='';" +
             "try{name=(window.__senzBlobName&&window.__senzBlobName(url))||'';}catch(e){}" +
             "var cached='';" +
-            "try{cached=(window.__senzBlobGet&&window.__senzBlobGet(url))||'';}catch(e){}" +
+            "var hasCache=false;var keys=0;var frames=0;" +
+            "try{hasCache=!!window.__senzBlobCache;" +
+            "keys=hasCache?Object.keys(window.__senzBlobCache).length:0;" +
+            "cached=(window.__senzBlobGet&&window.__senzBlobGet(url))||'';" +
+            "frames=document.querySelectorAll('iframe').length;}catch(e){}" +
+            "try{window.SenzBlob.onBlobDiag(" +
+            "'hasCache='+hasCache+',keys='+keys+',hit='+(cached!=='')+',iframes='+frames+',url='+url.slice(0,60));}catch(e){}" +
             "if(cached){window.SenzBlob.onBlobData(cached,name);return;}" +
             "var xhr=new XMLHttpRequest();" +
             "xhr.open('GET',url,true);" +
             "xhr.responseType='blob';" +
+            "xhr.timeout=30000;" +
             "xhr.onload=function(){var r=new FileReader();" +
             "r.onloadend=function(){var s=r.result||'';var i=s.indexOf(',');" +
             "window.SenzBlob.onBlobData(i>=0?s.substring(i+1):s,name);};" +
-            "r.onerror=function(){window.SenzBlob.onBlobError();};" +
+            "r.onerror=function(){window.SenzBlob.onBlobError('reader-error');};" +
             "r.readAsDataURL(xhr.response);};" +
-            "xhr.onerror=function(){window.SenzBlob.onBlobError();};" +
-            "xhr.send();}catch(e){window.SenzBlob.onBlobError();}})();"
+            "xhr.onerror=function(){window.SenzBlob.onBlobError('xhr-error status='+xhr.status);};" +
+            "xhr.ontimeout=function(){window.SenzBlob.onBlobError('xhr-timeout');};" +
+            "xhr.send();}catch(e){window.SenzBlob.onBlobError('js-exception '+e.message);}})();"
         try {
             webView.evaluateJavascript(js, null)
         } catch (e: Exception) {
@@ -863,21 +881,16 @@ abstract class BrowserActivity : AppCompatActivity() {
         }
     }
 
-    /** Penangkap blob (v0.1.14) — dipasang tiap halaman selesai dimuat.
-     *  Masalahnya (temuan HP 00:35, AI Studio): halaman membuat blob
-     *  untuk unduhan lalu LANGSUNG me-revoke URL-nya setelah klik —
-     *  DownloadListener native baru jalan sesudahnya, jadi XHR ke URL
-     *  yang sudah mati ("blob tidak bisa dibaca"). Perbaikannya dua
-     *  lapis: (1) bungkus createObjectURL — isi blob dibaca jadi base64
-     *  dan disimpan di cache halaman (maks 5 blob, <30MB); (2) bungkus
-     *  revokeObjectURL — revoke ASLI ditunda 60 detik, jadi jalur XHR
-     *  masih sempat membaca. Plus: catat atribut download anchor yang
-     *  diklik supaya nama file aslinya kebawa. Semua dibungkus
-     *  try/catch dan selalu memanggil fungsi aslinya — halaman tidak
-     *  boleh rusak gara-gara ini. */
-    private fun injectBlobCache() {
-        if (!::webView.isInitialized) return
-        val js = "(function(){try{" +
+    /** Skrip penangkap blob (v0.1.14, diperkuat v0.1.15): bungkus
+     *  createObjectURL (cache isi base64, maks 5 blob <30MB) +
+     *  revokeObjectURL (revoke asli ditunda 60 detik) + catat atribut
+     *  download anchor yang diklik. v0.1.15: pasang JUGA ke iframe
+     *  same-origin (komponen audio AI Studio bisa hidup di iframe —
+     *  blob yang dibuat di sana tidak kelihatan dari frame utama,
+     *  dan revoke-nya pun tidak tertunda). Iframe beda origin pasti
+     *  menolak (try/catch per iframe, bukan masalah). */
+    private fun blobCacheScript(): String {
+        return "(function(){try{" +
             "if(window.__senzBlobCache)return;" +
             "window.__senzBlobCache={};" +
             "window.__senzBlobNames={};" +
@@ -905,11 +918,188 @@ abstract class BrowserActivity : AppCompatActivity() {
             "if(h.indexOf('blob:')===0&&d){window.__senzBlobNames[h]=d;}}catch(e){}" +
             "return _click.call(this);};" +
             "}catch(e){}})();"
+    }
+
+    /** Penangkap blob (v0.1.14): pasang tiap halaman selesai dimuat.
+     *  Masalahnya (temuan HP 00:35, AI Studio): halaman membuat blob
+     *  untuk unduhan lalu LANGSUNG me-revoke URL-nya setelah klik —
+     *  DownloadListener native baru jalan sesudahnya, jadi XHR ke URL
+     *  yang sudah mati ("blob tidak bisa dibaca"). Perbaikannya dua
+     *  lapis: (1) bungkus createObjectURL — isi blob dibaca jadi base64
+     *  dan disimpan di cache halaman (maks 5 blob, <30MB); (2) bungkus
+     *  revokeObjectURL — revoke ASLI ditunda 60 detik, jadi jalur XHR
+     *  masih sempat membaca. Plus: catat atribut download anchor yang
+     *  diklik supaya nama file aslinya kebawa. Semua dibungkus
+     *  try/catch dan selalu memanggil fungsi aslinya — halaman tidak
+     *  boleh rusak gara-gara ini. */
+    private fun injectBlobCache() {
+        if (!::webView.isInitialized) return
         try {
-            webView.evaluateJavascript(js, null)
+            webView.evaluateJavascript(blobCacheScript(), null)
+            // Iframe same-origin: pasang juga di tiap iframe (komponen
+            // audio bisa hidup di sana). Beda origin → ditolak, abaikan.
+            val framesJs = "(function(){try{" +
+                "var s=" + org.json.JSONObject.quote(blobCacheScript()) + ";" +
+                "var fs=document.querySelectorAll('iframe');" +
+                "for(var i=0;i<fs.length;i++){" +
+                "try{fs[i].contentWindow.eval(s);}catch(e){}}" +
+                "}catch(e){}})();"
+            webView.evaluateJavascript(framesJs, null)
         } catch (e: Exception) {
             // Cache blob boleh gagal; jalur XHR tetap dicoba saat unduh.
         }
+    }
+
+    /** Tulis satu baris diagnosis ke _Log-Blob/blob-debug.txt (bisa
+     *  dibaca Jhon lewat bridge + dilihat Sendy di File Manager). */
+    private fun logBlobDiag(info: String) {
+        Thread {
+            try {
+                val dir = java.io.File(FileStore.rootDir(this), "_log-blob")
+                dir.mkdirs()
+                val sdf = java.text.SimpleDateFormat(
+                    "yyyy-MM-dd HH:mm:ss", java.util.Locale("id", "ID")
+                )
+                val line = "${sdf.format(java.util.Date())} [$dataDirectorySuffix] $info\n"
+                java.io.File(dir, "blob-debug.txt").appendText(line)
+            } catch (e: Exception) {
+            }
+        }.start()
+    }
+
+    /** Fallback native (v0.1.15): bila cache + XHR gagal, lepas
+     *  DownloadListener sementara dan klik ulang anchor blob yang
+     *  sama — tanpa listener, Chromium mengunduh blob secara native
+     *  (ia membaca blob langsung: tanpa CSP, tanpa soal revoke,
+     *  tanpa peduli frame). File mendarat di Download publik HP,
+     *  lalu dipantau dan dipindah ke folder Space ini. */
+    private fun tryNativeBlobDownload() {
+        if (!::webView.isInitialized) return
+        val url = pendingBlobUrl
+        val name = pendingBlobFileName.ifEmpty { "download" }
+        if (url.isEmpty()) {
+            Toast.makeText(
+                this,
+                "Gagal mengunduh file (blob tidak bisa dibaca)",
+                Toast.LENGTH_LONG
+            ).show()
+            return
+        }
+        Toast.makeText(
+            this, "Mencoba unduh cara lain…", Toast.LENGTH_SHORT
+        ).show()
+        try {
+            webView.setDownloadListener(null)
+            val escapedUrl = url.replace("\\", "\\\\").replace("'", "\\'")
+            val escapedName = name.replace("\\", "\\\\").replace("'", "\\'")
+            val js = "(function(){try{var a=document.createElement('a');" +
+                "a.href='$escapedUrl';a.download='$escapedName';" +
+                "document.body.appendChild(a);a.click();a.remove();}catch(e){}})();"
+            webView.evaluateJavascript(js, null)
+        } catch (e: Exception) {
+        }
+        // Pasang lagi listener-nya supaya unduhan berikut tetap masuk
+        // folder Space.
+        try {
+            webView.setDownloadListener(downloadListener)
+        } catch (e: Exception) {
+        }
+        watchNativeDownload(name)
+    }
+
+    /** Pantau DownloadManager sampai 60 detik: cari unduhan SELESAI
+     *  berjudul fileName yang baru saja dibuat, lalu pindah ke folder
+     *  Space ini. */
+    private fun watchNativeDownload(fileName: String) {
+        Thread {
+            val dm = try {
+                getSystemService(DOWNLOAD_SERVICE) as android.app.DownloadManager
+            } catch (e: Exception) {
+                null
+            }
+            var foundUri: android.net.Uri? = null
+            if (dm != null) {
+                val deadline = System.currentTimeMillis() + 60_000
+                val startedAt = System.currentTimeMillis()
+                while (System.currentTimeMillis() < deadline && foundUri == null) {
+                    try {
+                        val c = dm.query(android.app.DownloadManager.Query())
+                        c?.use {
+                            val titleIdx = it.getColumnIndex(
+                                android.app.DownloadManager.COLUMN_TITLE
+                            )
+                            val statusIdx = it.getColumnIndex(
+                                android.app.DownloadManager.COLUMN_STATUS
+                            )
+                            val uriIdx = it.getColumnIndex(
+                                android.app.DownloadManager.COLUMN_LOCAL_URI
+                            )
+                            val timeIdx = it.getColumnIndex(
+                                android.app.DownloadManager.COLUMN_LAST_MODIFIED_TIMESTAMP
+                            )
+                            while (it.moveToNext()) {
+                                val title = if (titleIdx >= 0) it.getString(titleIdx) else ""
+                                val status = if (statusIdx >= 0) it.getInt(statusIdx) else -1
+                                val whenMs = if (timeIdx >= 0) it.getLong(timeIdx) else 0L
+                                if (title == fileName &&
+                                    status == android.app.DownloadManager.STATUS_SUCCESSFUL &&
+                                    whenMs >= startedAt - 5_000
+                                ) {
+                                    foundUri = if (uriIdx >= 0) {
+                                        it.getString(uriIdx)?.let { u ->
+                                            android.net.Uri.parse(u)
+                                        }
+                                    } else null
+                                    break
+                                }
+                            }
+                        }
+                    } catch (e: Exception) {
+                    }
+                    if (foundUri == null) {
+                        try {
+                            Thread.sleep(1000)
+                        } catch (e: Exception) {
+                        }
+                    }
+                }
+            }
+            if (foundUri != null) {
+                try {
+                    val bytes: ByteArray? = when (foundUri!!.scheme) {
+                        "file" -> foundUri!!.path?.let { java.io.File(it).readBytes() }
+                        "content" -> contentResolver.openInputStream(foundUri!!)?.use {
+                            it.readBytes()
+                        }
+                        else -> null
+                    }
+                    if (bytes != null) {
+                        // Hapus salinan publiknya supaya tidak dobel.
+                        try {
+                            if (foundUri!!.scheme == "file") {
+                                foundUri!!.path?.let { java.io.File(it).delete() }
+                            } else {
+                                contentResolver.delete(foundUri!!, null, null)
+                            }
+                        } catch (e: Exception) {
+                        }
+                        saveDownloadedBytes(fileName, bytes)
+                        logBlobDiag("NATIVE OK: $fileName tersimpan via fallback native")
+                        return@Thread
+                    }
+                } catch (e: Exception) {
+                    logBlobDiag("NATIVE GAGAL baca: ${e.message}")
+                }
+            }
+            logBlobDiag("NATIVE GAGAL: $fileName tidak ketemu di DownloadManager")
+            runOnUiThread {
+                Toast.makeText(
+                    this,
+                    "Gagal mengunduh file (blob tidak bisa dibaca) — coba tekan lagi tombol unduhnya",
+                    Toast.LENGTH_LONG
+                ).show()
+            }
+        }.start()
     }
 
     private fun downloadDataUrl(dlUrl: String, fileName: String) {
@@ -988,8 +1178,22 @@ abstract class BrowserActivity : AppCompatActivity() {
             }.start()
         }
 
+        /** Diagnosis dari halaman (cache ada? hit? berapa iframe?) —
+         *  ditulis ke _Log-Blob supaya akar gagalnya bisa dibaca. */
         @android.webkit.JavascriptInterface
-        fun onBlobError() {
+        fun onBlobDiag(info: String) {
+            logBlobDiag(info)
+        }
+
+        @android.webkit.JavascriptInterface
+        fun onBlobError(reason: String) {
+            logBlobDiag("GAGAL: $reason (url=${pendingBlobUrl.take(60)})")
+            // Sekali saja per unduhan: coba jalur native Chromium.
+            if (!blobFallbackTried) {
+                blobFallbackTried = true
+                runOnUiThread { tryNativeBlobDownload() }
+                return
+            }
             runOnUiThread {
                 Toast.makeText(
                     this@BrowserActivity,

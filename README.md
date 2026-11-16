@@ -367,6 +367,31 @@ Sekarang isi blob ditangkap saat dibuat (cache) + revoke ditunda
    **LULUS** bila: masih tersimpan seperti v0.1.11 — perbaikan
    ini tidak boleh merusak yang sudah jalan.
 
+## Tes unduh AI Studio v0.1.15 di HP (bahasa bayi)
+
+v0.1.14 masih gagal di HP (00:45) — cache + tunda revoke saja belum
+cukup. v0.1.15 menambah dua hal: (1) cache dipasang JUGA ke iframe
+(komponen audio bisa hidup di iframe — blob di sana tidak kelihatan
+dari frame utama); (2) bila semua jalur gagal, app mencoba unduhan
+native Chromium (lepas listener, klik ulang anchor, file dipindah
+dari Download publik ke folder Space). Plus diagnosis: tiap percobaan
+unduh blob dicatat di File Manager → folder **_Log-Blob** →
+`blob-debug.txt` (isinya: cache ada/tidak, hit/tidak, berapa iframe,
+alasan gagal) — Jhon bisa baca file itu lewat bridge.
+
+1. Install APK v0.1.15-s1blobdiag (nimpa, tanpa uninstall).
+2. Buka **AI Studio** → Playground → generate suara sampai muncul
+   player audio.
+3. Tap tombol **unduh** di bawah player. **LULUS** bila: muncul
+   toast "Tersimpan di folder AI Studio: …" (boleh diawali toast
+   "Mencoba unduh cara lain…" — itu fallback native yang bekerja).
+4. Buka File Manager → folder **AI Studio**. **LULUS** bila: file
+   audio ada di sana dan bisa diputar.
+5. Kalau MASIH gagal: buka File Manager → **_Log-Blob** →
+   `blob-debug.txt`, screenshot isinya dan kirim ke Jhon — di situ
+   tertulis alasan persisnya (mis. cache kosong / iframe banyak /
+   xhr-error).
+
 ## Kontrol app dari Jhon (via Termux bridge)
 
 SenzSpace menulis statusnya ke file JSON di HP (hanya status yang
