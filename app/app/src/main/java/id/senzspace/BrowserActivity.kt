@@ -36,6 +36,20 @@ abstract class BrowserActivity : AppCompatActivity() {
     protected abstract val dataDirectorySuffix: String
 
     private lateinit var webView: WebView
+    private lateinit var debugView: TextView
+    private val debugLines = ArrayDeque<String>()
+
+    /** Log diagnostik S0.2: tampil di layar (bawah) supaya Sendy bisa
+     *  screenshot penyebab blank — logcat HP tidak bisa ditarik (adbd mati). */
+    private fun logEvent(msg: String) {
+        runOnUiThread {
+            debugLines.addLast(msg)
+            while (debugLines.size > 8) debugLines.removeFirst()
+            if (::debugView.isInitialized) {
+                debugView.text = debugLines.joinToString("\n")
+            }
+        }
+    }
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -73,7 +87,8 @@ abstract class BrowserActivity : AppCompatActivity() {
         webView = WebView(this).apply {
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.MATCH_PARENT
+                0,
+                1f
             )
             // S0.1 — perbaikan blank putih setelah login (temuan HP 16 Nov 18:27):
             // 1) Login Claude pakai pop-up (khususnya "Continue with Google").
@@ -100,12 +115,35 @@ abstract class BrowserActivity : AppCompatActivity() {
                 .replace("; wv", "")
                 .replace(" Version/4.0", "")
             webViewClient = object : WebViewClient() {
+                override fun onPageStarted(
+                    view: WebView,
+                    url: String,
+                    favicon: android.graphics.Bitmap?
+                ) {
+                    logEvent("MULAI: $url")
+                }
+
+                override fun onPageFinished(view: WebView, url: String) {
+                    logEvent("SELESAI: $url")
+                }
+
+                override fun onReceivedHttpError(
+                    view: WebView,
+                    request: WebResourceRequest,
+                    errorResponse: android.webkit.WebResourceResponse
+                ) {
+                    if (request.isForMainFrame) {
+                        logEvent("HTTP ${errorResponse.statusCode}: ${request.url}")
+                    }
+                }
+
                 override fun onReceivedError(
                     view: WebView,
                     request: WebResourceRequest,
                     error: WebResourceError
                 ) {
                     if (request.isForMainFrame) {
+                        logEvent("ERROR: ${error.description} ${request.url}")
                         Toast.makeText(
                             this@BrowserActivity,
                             "Gagal muat: ${error.description}",
@@ -115,6 +153,17 @@ abstract class BrowserActivity : AppCompatActivity() {
                 }
             }
             webChromeClient = object : WebChromeClient() {
+                override fun onConsoleMessage(
+                    consoleMessage: android.webkit.ConsoleMessage
+                ): Boolean {
+                    logEvent(
+                        "JS ${consoleMessage.messageLevel()}: " +
+                            "${consoleMessage.message()} " +
+                            "(${consoleMessage.sourceId()}:${consoleMessage.lineNumber()})"
+                    )
+                    return true
+                }
+
                 override fun onCreateWindow(
                     view: WebView,
                     isDialog: Boolean,
@@ -123,10 +172,23 @@ abstract class BrowserActivity : AppCompatActivity() {
                 ): Boolean {
                     // Pop-up (mis. login Google) dimuat di WebView utama,
                     // supaya sesi login mendarat di Space ini, bukan hilang.
+                    // S0.2: forward lewat onPageStarted — shouldOverrideUrlLoading
+                    // TIDAK terpanggil untuk load awal pop-up, jadi URL login
+                    // sempat nyangkut di pop-up tersembunyi.
                     val popup = WebView(view.context).apply {
                         settings.javaScriptEnabled = true
                         settings.domStorageEnabled = true
                         webViewClient = object : WebViewClient() {
+                            override fun onPageStarted(
+                                v: WebView,
+                                url: String,
+                                favicon: android.graphics.Bitmap?
+                            ) {
+                                if (url != "about:blank") {
+                                    webView.loadUrl(url)
+                                }
+                            }
+
                             override fun shouldOverrideUrlLoading(
                                 v: WebView,
                                 request: WebResourceRequest
@@ -143,6 +205,21 @@ abstract class BrowserActivity : AppCompatActivity() {
             }
         }
         root.addView(webView)
+
+        // Panel log diagnostik S0.2 (sementara, sampai gerbang login lulus).
+        debugView = TextView(this).apply {
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            )
+            maxLines = 6
+            textSize = 11f
+            setPadding(16, 8, 16, 8)
+            setBackgroundColor(Color.parseColor("#CC000000"))
+            setTextColor(Color.parseColor("#FFD54F"))
+            text = "LOG: menunggu muat..."
+        }
+        root.addView(debugView)
         setContentView(root)
 
         if (savedInstanceState == null) {
