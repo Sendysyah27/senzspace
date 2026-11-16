@@ -37,8 +37,15 @@ di proses Android terpisah dengan direktori data WebView sendiri, plus chip
 status di Dashboard yang jujur ("Aktif" hijau kalau Space sedang login,
 "Belum login" kalau belum) — status ditulis tiap halaman selesai dimuat.
 
-Yang **belum** ada di S1 (masuk S1 lanjutan): CRUD Space penuh sampai 10,
-File Manager + Inbox Bersama, Download Manager, freeze, kunci app.
+**S1 lanjutan, slice File Manager (v0.1.2-s1fm):** File Manager + Inbox
+Bersama (PRD F7) dan unduhan per Space (PRD F6). Tiap Space punya folder
+unduhan sendiri; tombol ⬇ di top bar Browser membuka File Manager di folder
+Space itu dan menunjukkan jumlah file; file bisa dipindah ke folder Space
+lain / _Inbox-Bersama / _Arsip-Episode, atau dihapus. Ekspor ke folder
+publik Download (D5) dan kunci app (D4) menyusul.
+
+Yang **belum** ada di S1 (menyusul): CRUD Space penuh sampai 10,
+ekspor ke Download publik, freeze, kunci app.
 
 ## Arsitektur
 
@@ -86,6 +93,23 @@ CI: `.github/workflows/android.yml` — `cargo test` + `assembleDebug` tiap push
 6. Tutup app sepenuhnya, buka lagi.
 7. **LULUS** bila: semua Space yang sudah login tetap login, dan chip
    di dashboard menunjukkan "Aktif" untuk semuanya.
+
+## Tes File Manager di HP (bahasa bayi)
+
+1. Buka **Claude 1**, unduh satu file (mis. lampiran dari Claude). Tunggu
+   notifikasi "Unduhan selesai" dari Android.
+2. Di top bar Browser, tombol **⬇** sekarang menunjukkan angka **1**.
+   Tap tombol itu → File Manager terbuka di folder Claude 1.
+3. **LULUS** bila: file yang barusan diunduh ada di daftar, lengkap dengan
+   ukuran dan tanggalnya.
+4. Tap **"Pindah…"** di file itu → pilih **_Inbox-Bersama**.
+   **LULUS** bila: muncul pesan "Dipindah ke _Inbox-Bersama", dan file
+   hilang dari folder Claude 1.
+5. Buka folder **_Inbox-Bersama** dari daftar folder. **LULUS** bila:
+   file itu ada di sana.
+6. Kembali ke Dashboard, tap kartu **File Manager**. **LULUS** bila:
+   9 folder tampil (Claude 1–6, AI Studio, _Inbox-Bersama,
+   _Arsip-Episode), masing-masing dengan jumlah file yang benar.
 
 ## Keamanan
 

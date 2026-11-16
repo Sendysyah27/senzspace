@@ -52,5 +52,11 @@
             android:process=":aistudio"
             android:exported="false" />
 
+        <!-- File Manager: jalan di proses utama (bukan proses Space) —
+             ia membaca/menulis folder kerja semua Space. -->
+        <activity
+            android:name=".FileManagerActivity"
+            android:exported="false" />
+
     </application>
 </manifest>

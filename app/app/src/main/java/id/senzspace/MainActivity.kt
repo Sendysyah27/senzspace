@@ -45,8 +45,12 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
+        FileStore.ensure(this)
         for (s in spaces) {
             findViewById<View>(s.buttonId).setOnClickListener { openSpace(s) }
+        }
+        findViewById<View>(R.id.btnFileManager).setOnClickListener {
+            startActivity(Intent(this, FileManagerActivity::class.java))
         }
     }
 

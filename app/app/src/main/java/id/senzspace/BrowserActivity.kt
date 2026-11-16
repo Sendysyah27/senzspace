@@ -38,8 +38,10 @@ abstract class BrowserActivity : AppCompatActivity() {
     private lateinit var webView: WebView
     private lateinit var debugView: TextView
     private lateinit var rootLayout: LinearLayout
+    private lateinit var downloadBtn: android.widget.Button
     private var popupView: WebView? = null
     private var currentUrl = ""
+    private var spaceName = "Space"
     private val debugLines = ArrayDeque<String>()
 
     /** Log diagnostik S0.2: tampil di layar (bawah) supaya Sendy bisa
@@ -140,6 +142,7 @@ abstract class BrowserActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
 
         val name = intent.getStringExtra(MainActivity.EXTRA_SPACE_NAME) ?: "Space"
+        spaceName = name
         val color = intent.getStringExtra(MainActivity.EXTRA_SPACE_COLOR) ?: "#5B5BD6"
         val url = intent.getStringExtra(MainActivity.EXTRA_URL) ?: "https://claude.ai"
 
@@ -153,16 +156,41 @@ abstract class BrowserActivity : AppCompatActivity() {
         rootLayout = root
 
         // Aturan anti-salah-akun (PRD F4): nama + warna Space aktif
-        // tampil permanen di top bar.
+        // tampil permanen di top bar, plus tombol ⬇ (mockup v2 layar 02):
+        // badge jumlah file di folder Space ini; tap → File Manager.
+        val topBarLayout = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = android.view.Gravity.CENTER_VERTICAL
+            setBackgroundColor(Color.parseColor(color))
+            setPadding(24, 24, 24, 24)
+            layoutParams = ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            )
+        }
         val topBar = TextView(this).apply {
             text = "● $name  —  SenzSpace S1"
             textSize = 16f
             setTypeface(null, android.graphics.Typeface.BOLD)
-            setPadding(24, 24, 24, 24)
-            setBackgroundColor(Color.parseColor(color))
             setTextColor(Color.WHITE)
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
         }
-        root.addView(topBar)
+        downloadBtn = android.widget.Button(this).apply {
+            text = "⬇"
+            setTextColor(Color.WHITE)
+            setBackgroundColor(Color.parseColor("#00000000"))
+            textSize = 16f
+            minimumHeight = 0
+            minHeight = 0
+        }
+        downloadBtn.setOnClickListener {
+            val intent = android.content.Intent(this, FileManagerActivity::class.java)
+            intent.putExtra(FileManagerActivity.EXTRA_FOLDER, dataDirectorySuffix)
+            startActivity(intent)
+        }
+        topBarLayout.addView(topBar)
+        topBarLayout.addView(downloadBtn)
+        root.addView(topBarLayout)
 
         webView = WebView(this).apply {
             layoutParams = LinearLayout.LayoutParams(
@@ -278,6 +306,45 @@ abstract class BrowserActivity : AppCompatActivity() {
         }
         root.addView(webView)
 
+        // Unduhan per Space (PRD F6, slice File Manager): file unduhan
+        // dari WebView masuk ke folder Space ini di FileStore. Cookie sesi
+        // + User-Agent diteruskan ke DownloadManager — tanpa cookie,
+        // unduhan dari situs yang butuh login (mis. lampiran Claude)
+        // ditolak server (403).
+        webView.setDownloadListener { dlUrl, userAgent, contentDisposition, mimeType, _ ->
+            val fileName = android.webkit.URLUtil.guessFileName(
+                dlUrl, contentDisposition, mimeType
+            )
+            try {
+                val req = android.app.DownloadManager.Request(
+                    android.net.Uri.parse(dlUrl)
+                )
+                req.setMimeType(mimeType)
+                req.addRequestHeader("User-Agent", userAgent)
+                val cookie = CookieManager.getInstance().getCookie(dlUrl)
+                if (cookie != null) req.addRequestHeader("Cookie", cookie)
+                if (currentUrl.isNotEmpty()) req.addRequestHeader("Referer", currentUrl)
+                req.setTitle(fileName)
+                req.setNotificationVisibility(
+                    android.app.DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED
+                )
+                req.setDestinationInExternalFilesDir(
+                    this, FileStore.ROOT, "$dataDirectorySuffix/$fileName"
+                )
+                val dm = getSystemService(DOWNLOAD_SERVICE) as android.app.DownloadManager
+                dm.enqueue(req)
+                Toast.makeText(
+                    this,
+                    "Mengunduh $fileName ke folder $spaceName",
+                    Toast.LENGTH_SHORT
+                ).show()
+                logEvent("UNDUH: $fileName")
+            } catch (e: Exception) {
+                Toast.makeText(this, "Gagal mengunduh: ${e.message}", Toast.LENGTH_LONG).show()
+                logEvent("UNDUH GAGAL: $fileName")
+            }
+        }
+
         // Panel log diagnostik S0.2 (sementara, sampai gerbang login lulus).
         debugView = TextView(this).apply {
             layoutParams = LinearLayout.LayoutParams(
@@ -303,6 +370,22 @@ abstract class BrowserActivity : AppCompatActivity() {
         if (savedInstanceState == null) {
             webView.loadUrl(url)
         }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        refreshDownloadCount()
+    }
+
+    /** Badge ⬇ di top bar = jumlah file di folder Space ini. */
+    private fun refreshDownloadCount() {
+        if (!::downloadBtn.isInitialized) return
+        val n = try {
+            FileStore.count(this, dataDirectorySuffix)
+        } catch (e: Exception) {
+            0
+        }
+        downloadBtn.text = if (n > 0) "⬇ $n" else "⬇"
     }
 
     override fun onPause() {
