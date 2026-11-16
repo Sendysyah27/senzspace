@@ -275,6 +275,30 @@ landscape lama — update Figma menyusul).
    tidak berkedip-kedip tiap 2 detik dan teks "live …" hanya
    berubah bila waktunya berubah.
 
+## Tes unduh blob v0.1.11 di HP (bahasa bayi)
+
+Akar masalah (temuan HP 23:08): lampiran Claude disajikan sebagai URL
+`blob:` dan DownloadManager tidak bisa menangani skema itu ("Can not
+handle uri: blob:…"). Sekarang isi blob diambil lewat halaman lalu
+ditulis langsung ke folder Space.
+
+1. Install APK v0.1.11-s1blobfix (nimpa, tanpa uninstall).
+2. Buka **Claude 4** → chat "Produksi episode m…" (yang ada file
+   PROJECT STATE .md + Scene .html). Tap tombol unduh di file
+   **PROJECT STATE**. **LULUS** bila: muncul toast "Tersimpan di
+   folder Claude 4: PROJECT STATE.md" (bukan "Gagal mengunduh").
+3. Tap tombol unduh di file **Scene**. **LULUS** bila: toast
+   "Tersimpan di folder Claude 4: Scene.html".
+4. Tap **Download all**. **LULUS** bila: file .zip tersimpan di
+   folder Claude 4.
+5. Buka File Manager → folder **Claude 4**. **LULUS** bila: ketiga
+   file ada di sana dan bisa dibuka (tap file .md → terbuka di
+   viewer; tap .html → terbuka di browser).
+6. **Top bar di jendela kecil**: buka Claude 4 dalam jendela
+   mengambang (pop-up view) atau split-screen. **LULUS** bila:
+   nama Space tetap SATU baris (dipotong "…") dan keempat tombol
+   (⌄ ↻ ⌂ ⬇) tetap kelihatan — tidak wrap 4 baris seperti dulu.
+
 ## Kontrol app dari Jhon (via Termux bridge)
 
 SenzSpace menulis statusnya ke file JSON di HP (hanya status yang

@@ -81,6 +81,20 @@ object FileStore {
         return folders + files
     }
 
+    /** Nama file yang belum dipakai di folder (bentrok → tambah (1), (2)). */
+    fun uniqueFile(dir: File, name: String): File {
+        var dest = File(dir, name)
+        if (!dest.exists()) return dest
+        val base = dest.nameWithoutExtension
+        val ext = dest.extension.let { if (it.isEmpty()) "" else ".$it" }
+        var i = 1
+        while (dest.exists()) {
+            dest = File(dir, "$base ($i)$ext")
+            i++
+        }
+        return dest
+    }
+
     /** Salin file ke folder tujuan (nama bentrok → tambah (1), (2), dst). */
     fun copy(ctx: Context, file: File, destKey: String): File? {
         val destDir = folderDir(ctx, destKey)

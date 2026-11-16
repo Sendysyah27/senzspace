@@ -64,6 +64,7 @@ abstract class BrowserActivity : AppCompatActivity() {
     private var spaceName = "Space"
     private var homeUrl = "https://claude.ai"
     private var activityDestroyed = false
+    private var pendingBlobFileName = ""
 
     // Multi Live v2 (S1, perintah Sendy 21:58 WIB — "bener bener direct
     // live"): tile Beranda harus menampilkan halaman web yang sedang
@@ -347,6 +348,11 @@ abstract class BrowserActivity : AppCompatActivity() {
             textSize = 16f
             setTypeface(null, android.graphics.Typeface.BOLD)
             setTextColor(Color.WHITE)
+            // Satu baris, dipotong "…" bila sempit (jendela mengambang /
+            // split-screen): nama yang wrap 4 baris (kejadian HP 23:08)
+            // mendorong tombol keluar layar.
+            maxLines = 1
+            ellipsize = android.text.TextUtils.TruncateAt.END
             layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
         }
         fun topBarBtn(label: String): android.widget.Button =
@@ -498,43 +504,30 @@ abstract class BrowserActivity : AppCompatActivity() {
         // memanggil SenzLive.onChanged() tanpa argumen — tidak ada data
         // halaman yang keluar, cuma sinyal "halaman berubah".
         webView.addJavascriptInterface(LiveBridge(), "SenzLive")
+        // Jembatan unduh blob (v0.1.11): isi file yang diunduh halaman
+        // (mis. lampiran Claude) dikirim halaman sebagai base64.
+        webView.addJavascriptInterface(BlobDownloadBridge(), "SenzBlob")
 
         // Unduhan per Space (PRD F6, slice File Manager): file unduhan
         // dari WebView masuk ke folder Space ini di FileStore. Cookie sesi
         // + User-Agent diteruskan ke DownloadManager — tanpa cookie,
         // unduhan dari situs yang butuh login (mis. lampiran Claude)
         // ditolak server (403).
+        // AKAR GAGAL 23:08: Claude menyajikan lampiran sebagai URL
+        // blob: (blob:https://claude.ai/...) dan DownloadManager TIDAK
+        // BISA menangani skema blob: ("Can not handle uri: blob:…").
+        // Jadi blob: diambil isinya lewat JS (XHR + FileReader → base64)
+        // lalu ditulis langsung ke folder Space; data: didekode langsung.
         webView.setDownloadListener { dlUrl, userAgent, contentDisposition, mimeType, _ ->
             val fileName = android.webkit.URLUtil.guessFileName(
                 dlUrl, contentDisposition, mimeType
             )
-            try {
-                val req = android.app.DownloadManager.Request(
-                    android.net.Uri.parse(dlUrl)
+            when {
+                dlUrl.startsWith("blob:") -> downloadBlob(dlUrl, fileName)
+                dlUrl.startsWith("data:") -> downloadDataUrl(dlUrl, fileName)
+                else -> downloadViaManager(
+                    dlUrl, userAgent, contentDisposition, mimeType, fileName
                 )
-                req.setMimeType(mimeType)
-                req.addRequestHeader("User-Agent", userAgent)
-                val cookie = CookieManager.getInstance().getCookie(dlUrl)
-                if (cookie != null) req.addRequestHeader("Cookie", cookie)
-                if (currentUrl.isNotEmpty()) req.addRequestHeader("Referer", currentUrl)
-                req.setTitle(fileName)
-                req.setNotificationVisibility(
-                    android.app.DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED
-                )
-                req.setDestinationInExternalFilesDir(
-                    this, FileStore.ROOT, "$dataDirectorySuffix/$fileName"
-                )
-                val dm = getSystemService(DOWNLOAD_SERVICE) as android.app.DownloadManager
-                dm.enqueue(req)
-                Toast.makeText(
-                    this,
-                    "Mengunduh $fileName ke folder $spaceName",
-                    Toast.LENGTH_SHORT
-                ).show()
-                logEvent("UNDUH: $fileName")
-            } catch (e: Exception) {
-                Toast.makeText(this, "Gagal mengunduh: ${e.message}", Toast.LENGTH_LONG).show()
-                logEvent("UNDUH GAGAL: $fileName")
             }
         }
 
@@ -622,6 +615,148 @@ abstract class BrowserActivity : AppCompatActivity() {
                 .use { it.write(flag.toByteArray()) }
         } catch (e: Exception) {
             // Status chip boleh gagal diam-diam; login tetap jalan.
+        }
+    }
+
+    // ---------- Unduhan (F6): http(s) via DownloadManager, blob:/data:
+    // langsung ditulis ke folder Space ----------
+
+    private fun downloadViaManager(
+        dlUrl: String, userAgent: String, contentDisposition: String,
+        mimeType: String, fileName: String
+    ) {
+        try {
+            val req = android.app.DownloadManager.Request(
+                android.net.Uri.parse(dlUrl)
+            )
+            req.setMimeType(mimeType)
+            req.addRequestHeader("User-Agent", userAgent)
+            val cookie = CookieManager.getInstance().getCookie(dlUrl)
+            if (cookie != null) req.addRequestHeader("Cookie", cookie)
+            if (currentUrl.isNotEmpty()) req.addRequestHeader("Referer", currentUrl)
+            req.setTitle(fileName)
+            req.setNotificationVisibility(
+                android.app.DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED
+            )
+            req.setDestinationInExternalFilesDir(
+                this, FileStore.ROOT, "$dataDirectorySuffix/$fileName"
+            )
+            val dm = getSystemService(DOWNLOAD_SERVICE) as android.app.DownloadManager
+            dm.enqueue(req)
+            Toast.makeText(
+                this,
+                "Mengunduh $fileName ke folder $spaceName",
+                Toast.LENGTH_SHORT
+            ).show()
+            logEvent("UNDUH: $fileName")
+        } catch (e: Exception) {
+            Toast.makeText(this, "Gagal mengunduh: ${e.message}", Toast.LENGTH_LONG).show()
+            logEvent("UNDUH GAGAL: $fileName")
+        }
+    }
+
+    /** Ambil isi blob: URL lewat JS halaman (XHR responseType blob →
+     *  FileReader → base64). Hanya SATU unduhan blob dalam satu waktu;
+     *  unduhan kedua yang datang selagi yang pertama jalan akan
+     *  menimpa nama pending-nya (jarang terjadi di Claude). */
+    private fun downloadBlob(dlUrl: String, fileName: String) {
+        if (!::webView.isInitialized) return
+        pendingBlobFileName = fileName
+        val escaped = dlUrl.replace("\\", "\\\\").replace("'", "\\'")
+        val js = "(function(){try{" +
+            "var xhr=new XMLHttpRequest();" +
+            "xhr.open('GET','$escaped',true);" +
+            "xhr.responseType='blob';" +
+            "xhr.onload=function(){var r=new FileReader();" +
+            "r.onloadend=function(){var s=r.result||'';var i=s.indexOf(',');" +
+            "window.SenzBlob.onBlobData(i>=0?s.substring(i+1):s);};" +
+            "r.onerror=function(){window.SenzBlob.onBlobError();};" +
+            "r.readAsDataURL(xhr.response);};" +
+            "xhr.onerror=function(){window.SenzBlob.onBlobError();};" +
+            "xhr.send();}catch(e){window.SenzBlob.onBlobError();}})();"
+        try {
+            webView.evaluateJavascript(js, null)
+        } catch (e: Exception) {
+            Toast.makeText(this, "Gagal mengunduh: ${e.message}", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    private fun downloadDataUrl(dlUrl: String, fileName: String) {
+        try {
+            val comma = dlUrl.indexOf(',')
+            val meta = dlUrl.substring(5, comma)
+            val dataPart = dlUrl.substring(comma + 1)
+            val bytes = if (meta.contains(";base64")) {
+                android.util.Base64.decode(dataPart, android.util.Base64.DEFAULT)
+            } else {
+                java.net.URLDecoder.decode(dataPart, "UTF-8").toByteArray(Charsets.UTF_8)
+            }
+            saveDownloadedBytes(fileName, bytes)
+        } catch (e: Exception) {
+            Toast.makeText(this, "Gagal mengunduh: ${e.message}", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    /** Tulis byte hasil unduhan (blob/data) ke folder Space ini.
+     *  Nama bentrok → tambah (1), (2) — sama seperti pindah file. */
+    private fun saveDownloadedBytes(fileName: String, bytes: ByteArray) {
+        Thread {
+            try {
+                val dir = FileStore.folderDir(this, dataDirectorySuffix)
+                dir.mkdirs()
+                val dest = FileStore.uniqueFile(dir, fileName)
+                java.io.FileOutputStream(dest).use { it.write(bytes) }
+                runOnUiThread {
+                    Toast.makeText(
+                        this,
+                        "Tersimpan di folder $spaceName: ${dest.name}",
+                        Toast.LENGTH_LONG
+                    ).show()
+                    refreshDownloadCount()
+                }
+            } catch (e: Exception) {
+                runOnUiThread {
+                    Toast.makeText(
+                        this, "Gagal menyimpan file: ${e.message}", Toast.LENGTH_LONG
+                    ).show()
+                }
+            }
+        }.start()
+    }
+
+    /** Jembatan unduh blob: halaman mengirim isi file sebagai base64.
+     *  Dipanggil dari thread binder — decode + tulis di thread pekerja. */
+    private inner class BlobDownloadBridge {
+        @android.webkit.JavascriptInterface
+        fun onBlobData(base64: String) {
+            val fileName = pendingBlobFileName.ifEmpty { "download" }
+            Thread {
+                try {
+                    val bytes = android.util.Base64.decode(
+                        base64, android.util.Base64.DEFAULT
+                    )
+                    saveDownloadedBytes(fileName, bytes)
+                } catch (e: Exception) {
+                    runOnUiThread {
+                        Toast.makeText(
+                            this@BrowserActivity,
+                            "Gagal mengunduh: ${e.message}",
+                            Toast.LENGTH_LONG
+                        ).show()
+                    }
+                }
+            }.start()
+        }
+
+        @android.webkit.JavascriptInterface
+        fun onBlobError() {
+            runOnUiThread {
+                Toast.makeText(
+                    this@BrowserActivity,
+                    "Gagal mengunduh file (blob tidak bisa dibaca)",
+                    Toast.LENGTH_LONG
+                ).show()
+            }
         }
     }
 
