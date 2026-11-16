@@ -41,11 +41,15 @@ status di Dashboard yang jujur ("Aktif" hijau kalau Space sedang login,
 Bersama (PRD F7) dan unduhan per Space (PRD F6). Tiap Space punya folder
 unduhan sendiri; tombol ⬇ di top bar Browser membuka File Manager di folder
 Space itu dan menunjukkan jumlah file; file bisa dipindah ke folder Space
-lain / _Inbox-Bersama / _Arsip-Episode, atau dihapus. Ekspor ke folder
-publik Download (D5) dan kunci app (D4) menyusul.
+lain / _Inbox-Bersama / _Arsip-Episode, atau dihapus.
+
+**S1 lanjutan, slice Ekspor (v0.1.3-s1ex):** tombol Ekspor per file (D5) —
+menyalin file ke folder publik **Download/SenzSpace** di HP lewat MediaStore,
+jadi bisa dibuka pengelola file HP / dilampirkan ke app lain. Folder kerja
+utama tetap di dalam app; ekspor hanya saat pengguna mengetuk Ekspor.
 
 Yang **belum** ada di S1 (menyusul): CRUD Space penuh sampai 10,
-ekspor ke Download publik, freeze, kunci app.
+freeze, kunci app.
 
 ## Arsitektur
 
@@ -110,6 +114,17 @@ CI: `.github/workflows/android.yml` — `cargo test` + `assembleDebug` tiap push
 6. Kembali ke Dashboard, tap kartu **File Manager**. **LULUS** bila:
    9 folder tampil (Claude 1–6, AI Studio, _Inbox-Bersama,
    _Arsip-Episode), masing-masing dengan jumlah file yang benar.
+
+## Tes Ekspor di HP (bahasa bayi)
+
+1. Di File Manager, buka folder yang berisi file (mis. _Inbox-Bersama).
+2. Tap **"Ekspor"** di salah satu file. **LULUS** bila: muncul pesan
+   "Diekspor ke Download/SenzSpace/<nama file>".
+3. Buka pengelola file HP (Files), masuk ke folder **Download →
+   SenzSpace**. **LULUS** bila: file itu ada di sana dan bisa dibuka /
+   dibagikan ke app lain.
+4. File aslinya tetap ada di folder SenzSpace di dalam app — Ekspor itu
+   menyalin, bukan memindah. **LULUS** bila: file masih ada di File Manager.
 
 ## Keamanan
 

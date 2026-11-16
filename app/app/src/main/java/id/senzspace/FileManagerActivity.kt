@@ -148,7 +148,8 @@ class FileManagerActivity : AppCompatActivity() {
         }
         val hint = TextView(this).apply {
             text = "File unduhan dari tiap Space masuk ke folder Space-nya. " +
-                "Pindah file ke _Inbox-Bersama supaya bisa dipakai Space lain."
+                "Pindah file ke _Inbox-Bersama supaya bisa dipakai Space lain. " +
+                "Tombol Ekspor menyalin file ke folder Download/SenzSpace di HP."
             textSize = 12f
             setTextColor(Color.parseColor("#8A94A6"))
             setPadding(4, 32, 4, 0)
@@ -248,8 +249,31 @@ class FileManagerActivity : AppCompatActivity() {
             ).apply { leftMargin = 16 }
         }
         delBtn.setOnClickListener { showDeleteDialog(file) }
+        val expBtn = Button(this).apply {
+            text = "Ekspor"
+            minimumHeight = 64
+            setTextColor(Color.WHITE)
+            setBackgroundColor(Color.parseColor("#0EA5A5"))
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply { leftMargin = 16 }
+        }
+        expBtn.setOnClickListener {
+            val name = FileStore.exportToDownloads(this, file)
+            if (name != null) {
+                Toast.makeText(
+                    this,
+                    "Diekspor ke Download/SenzSpace/$name",
+                    Toast.LENGTH_LONG
+                ).show()
+            } else {
+                Toast.makeText(this, "Gagal mengekspor file", Toast.LENGTH_LONG).show()
+            }
+        }
         actions.addView(moveBtn)
         actions.addView(delBtn)
+        actions.addView(expBtn)
 
         inner.addView(top)
         inner.addView(meta)

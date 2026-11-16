@@ -76,6 +76,59 @@ object FileStore {
 
     fun delete(file: File): Boolean = file.delete()
 
+    /** Ekspor file ke folder publik Download/SenzSpace (D5) — sadar dipilih
+     *  pengguna per file; folder kerja utama tetap di dalam app.
+     *  Android 10+: MediaStore (tanpa izin tulis). Di bawah itu: tulis
+     *  langsung ke folder publik. Kembalikan nama file bila berhasil. */
+    fun exportToDownloads(ctx: Context, file: File): String? {
+        return try {
+            if (android.os.Build.VERSION.SDK_INT >= 29) {
+                val mime = android.webkit.MimeTypeMap.getSingleton()
+                    .getMimeTypeFromExtension(file.extension.lowercase())
+                    ?: "application/octet-stream"
+                val values = android.content.ContentValues().apply {
+                    put(android.provider.MediaStore.Downloads.DISPLAY_NAME, file.name)
+                    put(android.provider.MediaStore.Downloads.MIME_TYPE, mime)
+                    put(
+                        android.provider.MediaStore.Downloads.RELATIVE_PATH,
+                        "Download/SenzSpace"
+                    )
+                }
+                val resolver = ctx.contentResolver
+                val uri = resolver.insert(
+                    android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI,
+                    values
+                ) ?: return null
+                resolver.openOutputStream(uri)?.use { out ->
+                    file.inputStream().use { it.copyTo(out) }
+                }
+                file.name
+            } else {
+                val destDir = File(
+                    android.os.Environment.getExternalStoragePublicDirectory(
+                        android.os.Environment.DIRECTORY_DOWNLOADS
+                    ),
+                    "SenzSpace"
+                )
+                destDir.mkdirs()
+                var dest = File(destDir, file.name)
+                if (dest.exists()) {
+                    val base = file.nameWithoutExtension
+                    val ext = file.extension.let { if (it.isEmpty()) "" else ".$it" }
+                    var i = 1
+                    while (dest.exists()) {
+                        dest = File(destDir, "$base ($i)$ext")
+                        i++
+                    }
+                }
+                file.copyTo(dest, overwrite = false)
+                dest.name
+            }
+        } catch (e: Exception) {
+            null
+        }
+    }
+
     fun formatSize(bytes: Long): String {
         return when {
             bytes < 1024 -> "$bytes B"
