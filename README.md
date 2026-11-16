@@ -237,6 +237,54 @@ landscape lama — update Figma menyusul).
     `space1.jpg` (dan seterusnya). Kalau folder kosong, kirim
     kabar ke Jhon (tangkapan layar WebView belum jalan).
 
+## Tes v0.1.10-s1proper di HP (bahasa bayi)
+
+1. Install APK v0.1.10-s1proper (nimpa, tanpa uninstall).
+2. **Top bar Space**: buka Claude 1. **LULUS** bila: di bar atas
+   ada 4 tombol: **⌄** (minimize → balik ke Beranda, Space tetap
+   jalan), **↻** (muat ulang halaman), **⌂** (kembali ke halaman
+   awal Space), **⬇** (unduhan).
+3. **Tile tidak hitam lagi**: di Beranda, semua tile menampilkan
+   sapaan Claude di tengah tile ("What shall we think through?").
+   **LULUS** bila: tidak ada tile hitam polos (dulu Claude 3–6
+   hitam karena tangkapan ngambil bagian atas halaman).
+4. **Notifikasi gabung**: tarik panel notifikasi. **LULUS** bila:
+   hanya ada SATU baris "SenzSpace • Space berjalan — N Space
+   berjalan"; geser baris itu ke bawah (atau tap panah) →
+   kelihatan semua Space (Claude 1–6 + AI Studio) di dalamnya.
+5. **Chip Limit**: Claude 4 sedang kena limit 5 jam (reset
+   10:30 PM). **LULUS** bila: tile Claude 4 menampilkan chip
+   kuning **"Limit • 10:30 PM"** dan tulisan bawah "limit, reset
+   10:30 PM" — tanpa perlu buka Space-nya.
+6. **Pengaturan lengkap**: buka Pengaturan. **LULUS** bila: ada
+   bagian **Multi Live** (Refresh: 2 detik — tap untuk ganti
+   2/5/10 detik; Guard anti-kill on/off), **Baterai** (status
+   Dikecualikan/Dibatasi + tombol "Minta pengecualian baterai"),
+   **Perawatan** (info ukuran folder kerja + tombol "Bersihkan
+   thumbnail live"), plus Kunci App seperti dulu.
+7. **File Manager native**: buka File Manager. **LULUS** bila:
+   barisnya ringkas (ikon + nama + ukuran/tanggal + ⋮), tap
+   file → terbuka di app lain (mis. gambar di Galeri); tahan
+   file → muncul bar bawah (Pindah / Salin / Ekspor / Bagikan /
+   Hapus); tombol ⋮ → menu (Buka, Bagikan, Pindah, Salin, Ganti
+   nama, Detail, Ekspor, Hapus); ada kolom **Cari file…**,
+   tombol **⇅ Terbaru** (tap → pilih urutan), dan **＋ Folder**
+   (buat subfolder, mis. di _Arsip-Episode). Tap subfolder →
+   masuk ke dalamnya; tombol Back HP naik satu level.
+8. **Stabil**: di Beranda, biarkan 1 menit. **LULUS** bila: tile
+   tidak berkedip-kedip tiap 2 detik dan teks "live …" hanya
+   berubah bila waktunya berubah.
+
+## Kontrol app dari Jhon (via Termux bridge)
+
+SenzSpace menulis statusnya ke file JSON di HP (hanya status yang
+tampil di Beranda — tanpa sesi/cookie/token):
+`Android/data/id.senzspace.debug/files/SenzSpace/_status/senzspace-status.json`
+
+- Baca status: `termux-exec "cat /sdcard/Android/data/id.senzspace.debug/files/SenzSpace/_status/senzspace-status.json"`
+- Buka Space dari Jhon: `termux-exec "am start -n id.senzspace.debug/.Space1Activity"` (ganti Space1 dengan Space2…Space6, AiStudioActivity, Space8…Space10)
+- Buka Beranda: `termux-exec "am start -n id.senzspace.debug/.MainActivity"`
+
 ## Keamanan
 
 Tidak ada password yang disimpan sebagai teks biasa. Login dilakukan Sendy

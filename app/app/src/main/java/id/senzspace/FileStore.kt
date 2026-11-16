@@ -29,7 +29,10 @@ object FileStore {
         Folder("space10", "Space 10", "#FB7185"),
         Folder("_inbox", "_Inbox-Bersama", "#8A94A6"),
         Folder("_arsip", "_Arsip-Episode", "#8A94A6"),
-        Folder("_log-crash", "_Log-Crash", "#8A94A6")
+        Folder("_log-crash", "_Log-Crash", "#8A94A6"),
+        // Thumbnail live Multi Live — kelihatan di File Manager supaya
+        // bisa dicek langsung bila tile Beranda abu-abu (debug).
+        Folder(LIVE, "_Live (thumbnail)", "#8A94A6")
     )
 
     fun folderByKey(key: String): Folder? = FOLDERS.find { it.key == key }
@@ -67,6 +70,80 @@ object FileStore {
             ?.sortedByDescending { it.lastModified() } ?: emptyList()
     }
 
+    /** Entri satu folder (subfolder dulu, lalu file) untuk File Manager
+     *  native v2: folder bisa dibuka (drill-down), file bisa dibuka /
+     *  dibagikan / dipindah / disalin / diganti nama. */
+    fun listEntries(dir: File): List<File> {
+        if (!dir.exists()) return emptyList()
+        val all = dir.listFiles() ?: return emptyList()
+        val folders = all.filter { it.isDirectory }.sortedBy { it.name.lowercase() }
+        val files = all.filter { it.isFile }.sortedByDescending { it.lastModified() }
+        return folders + files
+    }
+
+    /** Salin file ke folder tujuan (nama bentrok → tambah (1), (2), dst). */
+    fun copy(ctx: Context, file: File, destKey: String): File? {
+        val destDir = folderDir(ctx, destKey)
+        destDir.mkdirs()
+        var dest = File(destDir, file.name)
+        if (dest.exists()) {
+            val base = file.nameWithoutExtension
+            val ext = file.extension.let { if (it.isEmpty()) "" else ".$it" }
+            var i = 1
+            while (dest.exists()) {
+                dest = File(destDir, "$base ($i)$ext")
+                i++
+            }
+        }
+        return try {
+            if (file.isDirectory) file.copyRecursively(dest) else file.copyTo(dest, overwrite = false)
+            dest
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    /** Ganti nama file di tempat (nama bentrok → tambah (1), (2), dst). */
+    fun rename(file: File, newName: String): File? {
+        val clean = newName.trim()
+        if (clean.isEmpty() || clean.contains("/") || clean.contains("\\")) return null
+        var dest = File(file.parentFile, clean)
+        if (dest.exists() && dest != file) {
+            val base = dest.nameWithoutExtension
+            val ext = dest.extension.let { if (it.isEmpty()) "" else ".$it" }
+            var i = 1
+            while (dest.exists()) {
+                dest = File(file.parentFile, "$base ($i)$ext")
+                i++
+            }
+        }
+        return if (file.renameTo(dest)) dest else null
+    }
+
+    /** Buat subfolder di dalam folder kerja (mis. per episode di _Arsip). */
+    fun newFolder(parent: File, name: String): File? {
+        val clean = name.trim()
+        if (clean.isEmpty() || clean.contains("/") || clean.contains("\\")) return null
+        val dir = File(parent, clean)
+        if (dir.exists()) return null
+        return if (dir.mkdirs()) dir else null
+    }
+
+    /** Total ukuran semua file di bawah satu folder (rekursif, untuk
+     *  info penyimpanan di Pengaturan). */
+    fun totalBytesRecursive(dir: File): Long {
+        if (!dir.exists()) return 0L
+        var total = 0L
+        dir.walkTopDown().forEach { if (it.isFile) total += it.length() }
+        return total
+    }
+
+    fun mimeType(file: File): String {
+        return android.webkit.MimeTypeMap.getSingleton()
+            .getMimeTypeFromExtension(file.extension.lowercase())
+            ?: "application/octet-stream"
+    }
+
     fun count(ctx: Context, key: String): Int = listFiles(ctx, key).size
 
     fun totalBytes(ctx: Context, key: String): Long =
@@ -89,7 +166,9 @@ object FileStore {
         return if (file.renameTo(dest)) dest else null
     }
 
-    fun delete(file: File): Boolean = file.delete()
+    /** Hapus file atau folder beserta isinya (rekursif untuk folder). */
+    fun delete(file: File): Boolean =
+        if (file.isDirectory) file.deleteRecursively() else file.delete()
 
     /** Ekspor file ke folder publik Download/SenzSpace (D5) — sadar dipilih
      *  pengguna per file; folder kerja utama tetap di dalam app.

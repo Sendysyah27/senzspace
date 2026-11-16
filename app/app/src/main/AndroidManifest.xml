@@ -9,6 +9,10 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- Guard anti-kill lengkap (v0.1.10): minta user mengecualikan app
+         dari optimasi baterai supaya Doze tidak menidurkan Space.
+         Izinnya lewat dialog sistem di Pengaturan (tidak bisa diam-diam). -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
     <application
         android:allowBackup="true"
@@ -88,6 +92,19 @@
         <activity
             android:name=".AddSpaceActivity"
             android:exported="false" />
+
+        <!-- FileProvider (File Manager native v2): Buka / Bagikan file ke
+             app lain lewat URI content:// — file di external-files dir
+             tidak bisa dilempar mentah sebagai file:// (Android 7+). -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
 
         <!-- Guard anti-kill Multi Live: satu foreground service per proses
              :spaceN (START_STICKY). Tipe specialUse + penjelasan pemakaian

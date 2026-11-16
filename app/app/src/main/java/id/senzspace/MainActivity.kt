@@ -48,9 +48,71 @@ class MainActivity : AppCompatActivity() {
         private const val MODE_LIST = "list"
         private const val LIVE_REFRESH_MS = 2000L
         private const val LIVE_FRESH_SEC = 60L
+        private const val KEY_INTERVAL = "live_interval_ms"
     }
 
     private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
+
+    /** Interval refresh Multi Live (Pengaturan, default 2 detik) —
+     *  dipakai Beranda dan tiap Space supaya seirama. */
+    private fun liveIntervalMs(): Long {
+        return try {
+            getSharedPreferences(PREFS_UI, MODE_PRIVATE)
+                .getLong(KEY_INTERVAL, 2000L).coerceIn(1000L, 10000L)
+        } catch (e: Exception) {
+            2000L
+        }
+    }
+
+    // Status JSON untuk kontrol/monitor dari luar app (Jhon via Termux
+    // bridge): ditulis ke SenzSpace/_status/senzspace-status.json tiap ada
+    // perubahan (throttle 10 detik). Isinya: per Space (login, limit +
+    // jam reset, mtime thumbnail terakhir, jumlah file). TIDAK berisi
+    // sesi/cookie/token — hanya status yang memang tampil di Beranda.
+    private var lastStatusJson: String? = null
+    private var lastStatusWriteMs = 0L
+
+    private fun writeStatusJson(spaces: List<SpaceRegistry.SpaceEntry>) {
+        val now = System.currentTimeMillis()
+        if (now - lastStatusWriteMs < 10000L && lastStatusJson != null) return
+        try {
+            val sb = StringBuilder()
+            sb.append("{\"updated\":").append(now).append(",\"spaces\":[")
+            var first = true
+            for (entry in spaces) {
+                val suffix = SpaceRegistry.suffixForSlot(entry.slot)
+                val loggedIn = SpaceStatus.readLogin(this, suffix)
+                val limit = SpaceStatus.readLimit(this, suffix)
+                val thumb = FileStore.liveThumbFile(this, suffix)
+                val mod = if (thumb.exists()) thumb.lastModified() else 0L
+                val files = try { FileStore.count(this, suffix) } catch (e: Exception) { 0 }
+                if (!first) sb.append(",")
+                first = false
+                sb.append("{\"slot\":").append(entry.slot)
+                    .append(",\"name\":\"").append(jsonEscape(entry.name)).append("\"")
+                    .append(",\"suffix\":\"").append(suffix).append("\"")
+                    .append(",\"loggedIn\":").append(loggedIn)
+                    .append(",\"limit\":")
+                    .append(if (limit == null) "null" else "\"" + jsonEscape(limit) + "\"")
+                    .append(",\"liveThumbMod\":").append(mod)
+                    .append(",\"files\":").append(files).append("}")
+            }
+            sb.append("]}")
+            val json = sb.toString()
+            if (json == lastStatusJson) return
+            lastStatusJson = json
+            lastStatusWriteMs = now
+            val dir = java.io.File(FileStore.rootDir(this), "_status")
+            dir.mkdirs()
+            java.io.File(dir, "senzspace-status.json").writeText(json)
+        } catch (e: Exception) {
+            // Status JSON boleh gagal; Beranda tetap jalan.
+        }
+    }
+
+    private fun jsonEscape(s: String): String =
+        s.replace("\\", "\\\\").replace("\"", "\\\"")
+            .replace("\n", "\\n").replace("\r", "\\r")
 
     private lateinit var spaceList: LinearLayout
     private lateinit var liveGrid: GridLayout
@@ -69,7 +131,9 @@ class MainActivity : AppCompatActivity() {
         val badge: TextView,
         val status: TextView,
         val sub: TextView,
-        var lastMod: Long = 0L
+        var lastMod: Long = 0L,
+        var lastSub: String = "",
+        var lastStatus: String = ""
     )
 
     private val liveHandler = Handler(Looper.getMainLooper())
@@ -78,7 +142,7 @@ class MainActivity : AppCompatActivity() {
         override fun run() {
             if (!liveTicking) return
             if (mode() == MODE_LIVE) refreshLiveTiles()
-            liveHandler.postDelayed(this, LIVE_REFRESH_MS)
+            liveHandler.postDelayed(this, liveIntervalMs())
         }
     }
 
@@ -133,7 +197,7 @@ class MainActivity : AppCompatActivity() {
         renderDashboard()
         if (mode() == MODE_LIVE && !liveTicking) {
             liveTicking = true
-            liveHandler.postDelayed(liveTick, LIVE_REFRESH_MS)
+            liveHandler.postDelayed(liveTick, liveIntervalMs())
         }
     }
 
@@ -520,20 +584,38 @@ class MainActivity : AppCompatActivity() {
     private fun refreshLiveTiles() {
         val spaces = SpaceRegistry.load(this)
         val now = System.currentTimeMillis()
+        var liveCount = 0
         for (entry in spaces) {
             val tile = liveTiles[entry.slot] ?: continue
             val suffix = SpaceRegistry.suffixForSlot(entry.slot)
-            val loggedIn = try {
-                openFileInput("space_$suffix.txt").bufferedReader().readText().trim() == "1"
-            } catch (e: Exception) {
-                false
+            val loggedIn = SpaceStatus.readLogin(this, suffix)
+            val limit = SpaceStatus.readLimit(this, suffix)
+            // Chip status: Limit (amber) mengalahkan Aktif — akun Claude
+            // yang kena limit 5 jam harus kelihatan tanpa buka Space-nya.
+            val statusText = when {
+                limit != null -> if (limit == "LIMIT") "Limit" else "Limit • $limit"
+                loggedIn -> "Aktif"
+                else -> "Belum login"
             }
-            tile.status.apply {
-                text = if (loggedIn) "Aktif" else "Belum login"
-                setTextColor(Color.parseColor(if (loggedIn) "#34D399" else "#8A94A6"))
-                setBackgroundResource(
-                    if (loggedIn) R.drawable.chip_live_bg else R.drawable.chip_bg
-                )
+            if (statusText != tile.lastStatus) {
+                tile.lastStatus = statusText
+                tile.status.apply {
+                    text = statusText
+                    when {
+                        limit != null -> {
+                            setTextColor(Color.parseColor("#FBBF24"))
+                            setBackgroundResource(R.drawable.chip_bg)
+                        }
+                        loggedIn -> {
+                            setTextColor(Color.parseColor("#34D399"))
+                            setBackgroundResource(R.drawable.chip_live_bg)
+                        }
+                        else -> {
+                            setTextColor(Color.parseColor("#8A94A6"))
+                            setBackgroundResource(R.drawable.chip_bg)
+                        }
+                    }
+                }
             }
             val site = entry.url.removePrefix("https://").removePrefix("http://")
             val fileCount = try { FileStore.count(this, suffix) } catch (e: Exception) { 0 }
@@ -541,26 +623,49 @@ class MainActivity : AppCompatActivity() {
             val mod = if (thumbFile.exists()) thumbFile.lastModified() else 0L
             if (mod > 0 && mod != tile.lastMod) {
                 tile.lastMod = mod
-                try {
-                    val bmp = BitmapFactory.decodeFile(thumbFile.absolutePath)
-                    if (bmp != null) {
-                        tile.preview.setImageBitmap(bmp)
-                        tile.preview.visibility = View.VISIBLE
-                        tile.placeholder.visibility = View.GONE
+                // Stabilitas Beranda: decode JPEG di thread latar supaya
+                // tick 2 detik tidak nge-jank UI; pasang hanya bila file
+                // belum berubah lagi selama decode (anti kedip/flicker).
+                val path = thumbFile.absolutePath
+                val expectMod = mod
+                Thread {
+                    val bmp = try {
+                        BitmapFactory.decodeFile(path)
+                    } catch (e: Exception) {
+                        null
                     }
-                } catch (e: Exception) {
-                    // Thumbnail rusak — placeholder tetap tampil.
-                }
+                    if (bmp != null) {
+                        liveHandler.post {
+                            if (tile.lastMod == expectMod) {
+                                tile.preview.setImageBitmap(bmp)
+                                tile.preview.visibility = View.VISIBLE
+                                tile.placeholder.visibility = View.GONE
+                            } else {
+                                bmp.recycle()
+                            }
+                        }
+                    }
+                }.start()
             }
             val ageSec = if (mod > 0) (now - mod) / 1000 else -1
             val fresh = ageSec in 0 until LIVE_FRESH_SEC
+            if (fresh) liveCount++
             tile.badge.visibility = if (fresh) View.VISIBLE else View.GONE
-            tile.sub.text = if (mod > 0) {
-                "$site • live ${ageText(ageSec)}"
-            } else {
-                "$site • $fileCount file baru"
+            val subText = when {
+                limit != null -> "$site • limit, reset ${if (limit == "LIMIT") "segera" else limit}"
+                mod > 0 -> "$site • live ${ageText(ageSec)}"
+                else -> "$site • $fileCount file baru"
+            }
+            // Teks sub hanya ditulis bila berubah — kalau tidak, tiap tick
+            // 2 detik memicu layout ulang semua tile (kedip + boros).
+            if (subText != tile.lastSub) {
+                tile.lastSub = subText
+                tile.sub.text = subText
             }
         }
+        // Ringkasan notifikasi grup + status JSON untuk kontrol luar.
+        KeepAliveService.refreshSummary(this, liveCount)
+        writeStatusJson(spaces)
     }
 
     private fun ageText(ageSec: Long): String = when {
@@ -628,14 +733,19 @@ class MainActivity : AppCompatActivity() {
         for (entry in spaces) {
             val view = statusViews[entry.slot] ?: continue
             val suffix = SpaceRegistry.suffixForSlot(entry.slot)
-            val loggedIn = try {
-                openFileInput("space_$suffix.txt").bufferedReader().readText().trim() == "1"
-            } catch (e: Exception) {
-                false
-            }
+            val loggedIn = SpaceStatus.readLogin(this, suffix)
+            val limit = SpaceStatus.readLimit(this, suffix)
             view.apply {
-                text = if (loggedIn) "Aktif" else "Belum login"
-                setTextColor(Color.parseColor(if (loggedIn) "#4ADE80" else "#8A94A6"))
+                text = when {
+                    limit != null -> if (limit == "LIMIT") "Limit" else "Limit • $limit"
+                    loggedIn -> "Aktif"
+                    else -> "Belum login"
+                }
+                setTextColor(Color.parseColor(when {
+                    limit != null -> "#FBBF24"
+                    loggedIn -> "#4ADE80"
+                    else -> "#8A94A6"
+                }))
             }
         }
     }

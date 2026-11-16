@@ -62,6 +62,7 @@ abstract class BrowserActivity : AppCompatActivity() {
     private var popupView: WebView? = null
     private var currentUrl = ""
     private var spaceName = "Space"
+    private var homeUrl = "https://claude.ai"
     private var activityDestroyed = false
 
     // Multi Live v2 (S1, perintah Sendy 21:58 WIB — "bener bener direct
@@ -82,18 +83,31 @@ abstract class BrowserActivity : AppCompatActivity() {
     private var liveRunning = false
     private var isForeground = false
     private var lastCaptureMs = 0L
+
+    /** Interval tangkap live (Pengaturan → "Refresh Multi Live",
+     *  default 2 detik). Dibaca segar tiap tick supaya ganti pengaturan
+     *  langsung terasa tanpa buka-tutup Space. */
+    private fun liveIntervalMs(): Long {
+        return try {
+            getSharedPreferences("senzspace_ui", MODE_PRIVATE)
+                .getLong("live_interval_ms", 2000L).coerceIn(1000L, 10000L)
+        } catch (e: Exception) {
+            2000L
+        }
+    }
+
     private val liveRunnable = object : Runnable {
         override fun run() {
             if (!liveRunning) return
             if (!isForeground) captureLiveThumbnail()
-            liveHandler.postDelayed(this, 2000)
+            liveHandler.postDelayed(this, liveIntervalMs())
         }
     }
 
     private fun startLiveCapture() {
         if (liveRunning) return
         liveRunning = true
-        liveHandler.postDelayed(liveRunnable, 2000)
+        liveHandler.postDelayed(liveRunnable, liveIntervalMs())
     }
 
     private fun stopLiveCapture() {
@@ -110,14 +124,20 @@ abstract class BrowserActivity : AppCompatActivity() {
             val w = webView.width
             val h = webView.height
             if (w <= 0 || h <= 0 || webView.contentHeight <= 0) return
-            // Vertikal 3:4 — gambar bagian atas halaman (greeting, tombol,
-            // kolom chat), skala lebar pas 240px, potong sisanya.
+            // Vertikal 3:4 — ambil PITA TENGAH viewport (bukan atas):
+            // sapaan Claude ("What shall we think through?") adanya di
+            // tengah layar; tangkapan atas (v0.1.9) bikin tile Claude 3–6
+            // hitam polos (bukti screenshot HP 22:21). Skala lebar pas
+            // 240px, geser vertikal supaya tengah viewport yang kepotong.
             val tw = 240
             val th = 320
             val bmp = Bitmap.createBitmap(tw, th, Bitmap.Config.RGB_565)
             val canvas = Canvas(bmp)
             val scale = tw.toFloat() / w
             canvas.scale(scale, scale)
+            val scaledH = h * scale
+            val offsetY = ((scaledH - th) / 2f).coerceAtLeast(0f) / scale
+            canvas.translate(0f, -offsetY)
             webView.draw(canvas)
             val file = FileStore.liveThumbFile(this, dataDirectorySuffix)
             file.parentFile?.mkdirs()
@@ -133,13 +153,30 @@ abstract class BrowserActivity : AppCompatActivity() {
         }
     }
 
-    /** Jembatan JS untuk MutationObserver: halaman memanggil onChanged()
-     *  tiap DOM berubah. Dipanggil dari thread binder — lempar ke UI. */
+    /** Jembatan JS untuk Multi Live v2: halaman memanggil onChanged()
+     *  tiap DOM berubah, onLimit/onLimitCleared tiap status limit Claude
+     *  berubah. Dipanggil dari thread binder — lempar ke UI. Tidak ada
+     *  isi halaman yang keluar: onChanged tanpa argumen, onLimit hanya
+     *  membawa jam reset ("10:30 PM") untuk chip Beranda. */
     private inner class LiveBridge {
         @android.webkit.JavascriptInterface
         fun onChanged() {
             liveHandler.post {
                 if (!isForeground) captureLiveThumbnail()
+            }
+        }
+
+        @android.webkit.JavascriptInterface
+        fun onLimit(reset: String) {
+            liveHandler.post {
+                SpaceStatus.writeLimit(this@BrowserActivity, dataDirectorySuffix, reset)
+            }
+        }
+
+        @android.webkit.JavascriptInterface
+        fun onLimitCleared() {
+            liveHandler.post {
+                SpaceStatus.clearLimit(this@BrowserActivity, dataDirectorySuffix)
             }
         }
     }
@@ -153,7 +190,19 @@ abstract class BrowserActivity : AppCompatActivity() {
                     "clearTimeout(t);t=setTimeout(function(){" +
                     "window.SenzLive.onChanged();},400);});" +
                     "if(document.body){ob.observe(document.body," +
-                    "{childList:true,subtree:true,characterData:true});}})();",
+                    "{childList:true,subtree:true,characterData:true});}" +
+                    // Deteksi limit 5 jam Claude: modal "You hit your 5-hour
+                    // message limit. It resets at 10:30 PM" — cek tiap 5 dtk,
+                    // lapor hanya bila status berubah (biar chip Beranda
+                    // jujur tanpa harus buka tiap Space).
+                    "window.__senzLimitState='';" +
+                    "function checkLimit(){try{var txt=document.body?document.body.innerText:'';" +
+                    "var hit=txt.indexOf('5-hour message limit')>=0;" +
+                    "var m=txt.match(/resets at ([0-9:]+ [AP]M)/);" +
+                    "var reset=m?m[1]:'';var st=hit?('LIMIT:'+reset):'OK';" +
+                    "if(window.__senzLimitState!==st){window.__senzLimitState=st;" +
+                    "if(hit){window.SenzLive.onLimit(reset);}else{window.SenzLive.onLimitCleared();}}" +
+                    "}catch(e){}};checkLimit();setInterval(checkLimit,5000);})();",
                 null
             )
         } catch (e: Exception) {
@@ -264,6 +313,7 @@ abstract class BrowserActivity : AppCompatActivity() {
         spaceName = name
         val color = intent.getStringExtra(MainActivity.EXTRA_SPACE_COLOR) ?: "#5B5BD6"
         val url = intent.getStringExtra(MainActivity.EXTRA_URL) ?: "https://claude.ai"
+        homeUrl = url
 
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -275,8 +325,13 @@ abstract class BrowserActivity : AppCompatActivity() {
         rootLayout = root
 
         // Aturan anti-salah-akun (PRD F4): nama + warna Space aktif
-        // tampil permanen di top bar, plus tombol ⬇ (mockup v2 layar 02):
-        // badge jumlah file di folder Space ini; tap → File Manager.
+        // tampil permanen di top bar. Fungsi top bar (lengkap, v0.1.10):
+        // ⌄ Minimize = kembali ke Beranda, Space tetap berjalan;
+        // ↻ Muat ulang halaman; ⌂ Beranda Space (URL awal Space ini);
+        // ⬇ Unduhan (badge jumlah file; tap → File Manager folder ini).
+        // Sengaja TIDAK ada tombol Tutup/Matikan Space di sini — Space
+        // harus tetap hidup untuk Multi Live + guard anti-kill; yang mau
+        // menghapus Space pakai tahan-lama di Beranda.
         val topBarLayout = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = android.view.Gravity.CENTER_VERTICAL
@@ -294,20 +349,31 @@ abstract class BrowserActivity : AppCompatActivity() {
             setTextColor(Color.WHITE)
             layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
         }
-        downloadBtn = android.widget.Button(this).apply {
-            text = "⬇"
-            setTextColor(Color.WHITE)
-            setBackgroundColor(Color.parseColor("#00000000"))
-            textSize = 16f
-            minimumHeight = 0
-            minHeight = 0
-        }
+        fun topBarBtn(label: String): android.widget.Button =
+            android.widget.Button(this).apply {
+                text = label
+                setTextColor(Color.WHITE)
+                setBackgroundColor(Color.parseColor("#00000000"))
+                textSize = 16f
+                minimumHeight = 0
+                minHeight = 0
+            }
+        val minimizeBtn = topBarBtn("⌄")
+        minimizeBtn.setOnClickListener { goToDashboard() }
+        val reloadBtn = topBarBtn("↻")
+        reloadBtn.setOnClickListener { if (::webView.isInitialized) webView.reload() }
+        val homeBtn = topBarBtn("⌂")
+        homeBtn.setOnClickListener { if (::webView.isInitialized) webView.loadUrl(homeUrl) }
+        downloadBtn = topBarBtn("⬇")
         downloadBtn.setOnClickListener {
             val intent = android.content.Intent(this, FileManagerActivity::class.java)
             intent.putExtra(FileManagerActivity.EXTRA_FOLDER, dataDirectorySuffix)
             startActivity(intent)
         }
         topBarLayout.addView(topBar)
+        topBarLayout.addView(minimizeBtn)
+        topBarLayout.addView(reloadBtn)
+        topBarLayout.addView(homeBtn)
         topBarLayout.addView(downloadBtn)
         root.addView(topBarLayout)
 
@@ -485,8 +551,16 @@ abstract class BrowserActivity : AppCompatActivity() {
         }
         startLiveCapture()
         // Guard anti-kill: service foreground di proses Space ini supaya
-        // sistem tidak mematikan Space yang lama tidak dibuka.
-        KeepAlive.start(this, dataDirectorySuffix, spaceName)
+        // sistem tidak mematikan Space yang lama tidak dibuka. Hormati
+        // pengaturan (Pengaturan → Guard anti-kill): bila dimatikan user,
+        // jangan nyalakan lagi diam-diam.
+        val guardOn = try {
+            getSharedPreferences("senzspace_ui", MODE_PRIVATE)
+                .getBoolean("guard_enabled", true)
+        } catch (e: Exception) {
+            true
+        }
+        if (guardOn) KeepAlive.start(this, dataDirectorySuffix, spaceName)
     }
 
     override fun onResume() {

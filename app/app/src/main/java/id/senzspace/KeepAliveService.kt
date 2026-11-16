@@ -28,8 +28,87 @@ open class KeepAliveService : Service() {
     companion object {
         const val CHANNEL_ID = "senzspace_keepalive"
         const val GROUP_KEY = "senzspace_live"
+        const val SUMMARY_ID = 1000
         const val EXTRA_SUFFIX = "extra_suffix"
         const val EXTRA_SPACE_NAME = "extra_space_name"
+        private var lastSummaryText: String? = null
+
+        /** Notifikasi ringkasan grup: SATU baris di panel ("SenzSpace •
+         *  N Space berjalan") yang bisa dibuka (swipe down) untuk melihat
+         *  semua Space. liveCount < 0 = jumlah tidak diketahui (teks umum).
+         *  Hanya ditulis ulang bila teksnya berubah (hemat baterai).
+         *  Dipanggil MainActivity tiap refresh + tiap service saat start. */
+        fun postSummary(ctx: Context, liveCount: Int) {
+            try {
+                if (Build.VERSION.SDK_INT >= 33 &&
+                    ctx.checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) !=
+                    PackageManager.PERMISSION_GRANTED
+                ) return
+                val text = if (liveCount < 0) {
+                    "Space berjalan • Multi Live aktif"
+                } else {
+                    "$liveCount Space berjalan • Multi Live aktif"
+                }
+                if (text == lastSummaryText) return
+                lastSummaryText = text
+                val mgr = ctx.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+                if (Build.VERSION.SDK_INT >= 26 &&
+                    mgr.getNotificationChannel(CHANNEL_ID) == null
+                ) {
+                    mgr.createNotificationChannel(
+                        NotificationChannel(
+                            CHANNEL_ID,
+                            "Space berjalan",
+                            NotificationManager.IMPORTANCE_LOW
+                        ).apply {
+                            description = "Menjaga tiap Space SenzSpace tetap hidup untuk Multi Live"
+                        }
+                    )
+                }
+                val openIntent = Intent(ctx, MainActivity::class.java).apply {
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or
+                        Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
+                }
+                val pending = PendingIntent.getActivity(
+                    ctx, SUMMARY_ID, openIntent,
+                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+                )
+                val summary: Notification = NotificationCompat.Builder(ctx, CHANNEL_ID)
+                    .setSmallIcon(android.R.drawable.ic_dialog_info)
+                    .setContentTitle("SenzSpace • Space berjalan")
+                    .setContentText("$text • geser ke bawah untuk melihat semua Space")
+                    .setContentIntent(pending)
+                    .setGroup(GROUP_KEY)
+                    .setGroupSummary(true)
+                    .setOngoing(true)
+                    .build()
+                mgr.notify(SUMMARY_ID, summary)
+            } catch (e: Exception) {
+            }
+        }
+
+        fun cancelSummary(ctx: Context) {
+            try {
+                lastSummaryText = null
+                val mgr = ctx.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+                mgr.cancel(SUMMARY_ID)
+            } catch (e: Exception) {
+            }
+        }
+
+        /** Segarkan ringkasan dari Beranda: tampil bila ada service Space
+         *  yang hidup (dicek dari notifikasi anak yang aktif), sembunyi
+         *  bila tidak ada Space yang berjalan. */
+        fun refreshSummary(ctx: Context, liveCount: Int) {
+            try {
+                val mgr = ctx.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+                val anyChild = if (Build.VERSION.SDK_INT >= 23) {
+                    mgr.activeNotifications.any { it.id in 1101..1110 }
+                } else liveCount > 0
+                if (anyChild) postSummary(ctx, liveCount) else cancelSummary(ctx)
+            } catch (e: Exception) {
+            }
+        }
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -81,10 +160,31 @@ open class KeepAliveService : Service() {
             ) {
                 startForeground(notifId, notif)
             }
+            // Gabung notifikasi (perintah Sendy 22:29): tanpa ringkasan
+            // grup, Android menampilkan 7 baris terpisah. Pastikan satu
+            // notifikasi ringkasan (ID 1000) ada supaya panel hanya
+            // menampilkan SATU baris yang bisa dibuka (swipe down) untuk
+            // melihat semua Space yang berjalan.
+            ensureSummary()
         } catch (e: Exception) {
             // Guard gagal diam-diam; Space tetap jalan sebagai cached process.
         }
         return START_STICKY
+    }
+
+    private fun ensureSummary() {
+        try {
+            if (Build.VERSION.SDK_INT >= 33 &&
+                checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) !=
+                PackageManager.PERMISSION_GRANTED
+            ) return
+            val mgr = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
+            val hasSummary = if (Build.VERSION.SDK_INT >= 23) {
+                mgr.activeNotifications.any { it.id == SUMMARY_ID }
+            } else false
+            if (!hasSummary) postSummary(this, -1)
+        } catch (e: Exception) {
+        }
     }
 
     private fun ensureChannel() {
