@@ -54,16 +54,13 @@ default — pengaktifan dipilih pengguna di Pengaturan. PIN disimpan sebagai
 hash SHA-256 (bukan teks biasa); setelah 5× salah, app jeda 30 detik.
 Kunci berlaku tiap app dibuka / kembali dari latar.
 
-**Perbaikan v0.1.5-s1fix (temuan HP 20:35–20:45 WIB):**
-- Chip AI Studio tetap "Belum login" walau sudah login — penyebab: halaman
-  kerja AI Studio (Playground TTS) ber-URL root "/", di luar aturan path
-  lama. Aturan baru: login bila ada cookie sesi Google (SID/SAPISID) di
-  cookie jar WebView, atau URL kerja.
-- FC masih muncul saat login akun 3–6 — penyebab: `onDestroy()` menghancurkan
-  WebView utama sementara pop-up login masih hidup. Urutan aman: hancurkan
-  pop-up dulu, lepas dari parent, baru hancurkan WebView utama.
-- Penangkap crash baru: tiap crash menulis jejak ke folder **_Log-Crash**
-  di File Manager (bisa diekspor), karena logcat HP tidak bisa ditarik.
+**Perbaikan v0.1.7-s1fix2 (temuan HP 20:53–20:57 WIB):** FC saat
+keluar-masuk Space — akar sebenarnya: `setDataDirectorySuffix()` hanya
+boleh dipanggil sekali per proses; proses `:spaceN` tetap hidup setelah
+Activity keluar, jadi masuk lagi memanggilnya kedua kali → crash.
+Penjaga static sekali-per-proses. (Fix S0.4 pop-up tetap berlaku untuk
+jalurnya.) PIN kunci app TERVERIFIKASI Sendy 20:57 WIB ("pin aman pin
+beranda pin space aktif") — kunci jalan di dashboard maupun Space aktif.
 
 **S1 lanjutan, slice CRUD Space (v0.1.6-s1crud):** tambah / ubah nama /
 hapus Space, maks 10 (D1–D2, mockup v2 layar 04). Kartu "＋ Space baru" di

@@ -35,6 +35,20 @@ abstract class BrowserActivity : AppCompatActivity() {
 
     protected abstract val dataDirectorySuffix: String
 
+    companion object {
+        // setDataDirectorySuffix() HANYA boleh dipanggil sekali seumur hidup
+        // satu proses Android — panggilan kedua melempar IllegalStateException.
+        // Proses :spaceN TETAP HIDUP setelah Activity keluar (Android
+        // menyimpan proses kosong), jadi masuk lagi ke Space yang sama
+        // memanggil onCreate kedua kali di proses yang sama. Tanpa penjaga
+        // ini, keluar-masuk Space = FC — kejadian HP 20:53-20:57 di SEMUA
+        // Space (bukan cuma Space 7). Static ini hidup per proses (tiap
+        // proses punya classloader sendiri), dan tiap proses hanya punya
+        // satu suffix — jadi sekali setel sudah cukup selamanya.
+        @Volatile
+        private var dataDirectorySuffixSet = false
+    }
+
     private lateinit var webView: WebView
     private lateinit var debugView: TextView
     private lateinit var rootLayout: LinearLayout
@@ -138,8 +152,18 @@ abstract class BrowserActivity : AppCompatActivity() {
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
         CrashLog.install(this)
-        // WAJIB sebelum WebView pertama dibuat di proses ini.
-        WebView.setDataDirectorySuffix(dataDirectorySuffix)
+        // WAJIB sebelum WebView pertama dibuat di proses ini — DAN hanya
+        // sekali per proses (lihat companion: penjaga dataDirectorySuffixSet).
+        if (!dataDirectorySuffixSet) {
+            try {
+                WebView.setDataDirectorySuffix(dataDirectorySuffix)
+                dataDirectorySuffixSet = true
+            } catch (e: IllegalStateException) {
+                // Suffix sudah disetel (mis. proses dipakai ulang) — lanjut
+                // dengan suffix yang sudah ada, itu sudah benar.
+                dataDirectorySuffixSet = true
+            }
+        }
         if (BuildConfig.DEBUG) {
             WebView.setWebContentsDebuggingEnabled(true)
         }
