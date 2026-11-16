@@ -48,8 +48,13 @@ menyalin file ke folder publik **Download/SenzSpace** di HP lewat MediaStore,
 jadi bisa dibuka pengelola file HP / dilampirkan ke app lain. Folder kerja
 utama tetap di dalam app; ekspor hanya saat pengguna mengetuk Ekspor.
 
-Yang **belum** ada di S1 (menyusul): CRUD Space penuh sampai 10,
-freeze, kunci app.
+**S1 lanjutan, slice Kunci App (v0.1.4-s1lock):** kunci app PIN 4 digit +
+biometrik (D4, mockup v2 layar 06) + layar Pengaturan. Kunci MATI secara
+default — pengaktifan dipilih pengguna di Pengaturan. PIN disimpan sebagai
+hash SHA-256 (bukan teks biasa); setelah 5× salah, app jeda 30 detik.
+Kunci berlaku tiap app dibuka / kembali dari latar.
+
+Yang **belum** ada di S1 (menyusul): CRUD Space penuh sampai 10, freeze.
 
 ## Arsitektur
 
