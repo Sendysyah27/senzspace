@@ -46,6 +46,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        CrashLog.install(this)
         setContentView(R.layout.activity_main)
         FileStore.ensure(this)
         for (s in spaces) {

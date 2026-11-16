@@ -54,6 +54,17 @@ default — pengaktifan dipilih pengguna di Pengaturan. PIN disimpan sebagai
 hash SHA-256 (bukan teks biasa); setelah 5× salah, app jeda 30 detik.
 Kunci berlaku tiap app dibuka / kembali dari latar.
 
+**Perbaikan v0.1.5-s1fix (temuan HP 20:35–20:45 WIB):**
+- Chip AI Studio tetap "Belum login" walau sudah login — penyebab: halaman
+  kerja AI Studio (Playground TTS) ber-URL root "/", di luar aturan path
+  lama. Aturan baru: login bila ada cookie sesi Google (SID/SAPISID) di
+  cookie jar WebView, atau URL kerja.
+- FC masih muncul saat login akun 3–6 — penyebab: `onDestroy()` menghancurkan
+  WebView utama sementara pop-up login masih hidup. Urutan aman: hancurkan
+  pop-up dulu, lepas dari parent, baru hancurkan WebView utama.
+- Penangkap crash baru: tiap crash menulis jejak ke folder **_Log-Crash**
+  di File Manager (bisa diekspor), karena logcat HP tidak bisa ditarik.
+
 Yang **belum** ada di S1 (menyusul): CRUD Space penuh sampai 10, freeze.
 
 ## Arsitektur
@@ -148,6 +159,19 @@ CI: `.github/workflows/android.yml` — `cargo test` + `assembleDebug` tiap push
    selama jeda.
 6. Matikan kunci: Pengaturan → matikan saklar → masukkan PIN yang benar.
    **LULUS** bila: saklar mati dan buka app lagi sudah tidak minta PIN.
+
+## Tes perbaikan FC + badge AI Studio di HP (bahasa bayi)
+
+1. Install APK v0.1.5-s1fix (nimpa, tanpa uninstall).
+2. Buka **AI Studio** (yang kemarin sudah login). Kembali ke dashboard.
+   **LULUS** bila: chip AI Studio sekarang **"Aktif"** (hijau), bukan
+   "Belum login" lagi.
+3. Login/logout ulang akun Claude di Space mana pun (buka pop-up Google,
+   tutup, kembali ke beranda). **LULUS** bila: tidak ada lagi dialog
+   "SenzSpace has stopped".
+4. Kalau FC muncul lagi: buka **File Manager → _Log-Crash** — di sana ada
+   file `crash-<tanggal>.txt`. Tap **Ekspor** di file itu, kirim ke Jhon.
+   **LULUS** bila: file log-nya ada dan isinya kebaca.
 
 ## Keamanan
 

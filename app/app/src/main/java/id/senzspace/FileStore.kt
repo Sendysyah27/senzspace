@@ -24,7 +24,8 @@ object FileStore {
         Folder("space6", "Claude 6", "#D66BA5"),
         Folder("aistudio", "AI Studio", "#38BDF8"),
         Folder("_inbox", "_Inbox-Bersama", "#8A94A6"),
-        Folder("_arsip", "_Arsip-Episode", "#8A94A6")
+        Folder("_arsip", "_Arsip-Episode", "#8A94A6"),
+        Folder("_log-crash", "_Log-Crash", "#8A94A6")
     )
 
     fun folderByKey(key: String): Folder? = FOLDERS.find { it.key == key }

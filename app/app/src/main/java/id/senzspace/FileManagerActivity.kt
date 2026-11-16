@@ -34,6 +34,7 @@ class FileManagerActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        CrashLog.install(this)
         FileStore.ensure(this)
         currentFolder = intent.getStringExtra(EXTRA_FOLDER)
 

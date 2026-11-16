@@ -43,6 +43,7 @@ abstract class BrowserActivity : AppCompatActivity() {
     private var popupView: WebView? = null
     private var currentUrl = ""
     private var spaceName = "Space"
+    private var activityDestroyed = false
     private val debugLines = ArrayDeque<String>()
 
     /** Log diagnostik S0.2: tampil di layar (bawah) supaya Sendy bisa
@@ -126,6 +127,7 @@ abstract class BrowserActivity : AppCompatActivity() {
         val popup = popupView ?: return
         popupView = null
         rootLayout.post {
+            if (activityDestroyed) return@post
             rootLayout.removeView(popup)
             popup.destroy()
             webView.visibility = android.view.View.VISIBLE
@@ -135,6 +137,7 @@ abstract class BrowserActivity : AppCompatActivity() {
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
+        CrashLog.install(this)
         // WAJIB sebelum WebView pertama dibuat di proses ini.
         WebView.setDataDirectorySuffix(dataDirectorySuffix)
         if (BuildConfig.DEBUG) {
@@ -435,7 +438,29 @@ abstract class BrowserActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
-        if (::webView.isInitialized) webView.destroy()
+        // Perbaikan FC 20:35 WIB: onDestroy lama menghancurkan WebView utama
+        // sementara pop-up login masih hidup — pop-up itu pegang referensi ke
+        // WebView utama (WebViewTransport) dan destroy() utama lebih dulu
+        // bikin crash native. Urutan aman: hancurkan pop-up dulu, lepas
+        // keduanya dari parent, baru hancurkan WebView utama.
+        activityDestroyed = true
+        try {
+            popupView?.let {
+                popupView = null
+                rootLayout.removeView(it)
+                it.destroy()
+            }
+        } catch (e: Exception) {
+            // Jangan ikut crash saat bersih-bersih.
+        }
+        if (::webView.isInitialized) {
+            try {
+                rootLayout.removeView(webView)
+                webView.destroy()
+            } catch (e: Exception) {
+                // Jangan ikut crash saat bersih-bersih.
+            }
+        }
         super.onDestroy()
     }
 }
@@ -474,15 +499,26 @@ class Space6Activity : BrowserActivity() {
 class AiStudioActivity : BrowserActivity() {
     override val dataDirectorySuffix: String = "aistudio"
 
-    // AI Studio: login ditandai URL kerja (/prompts, /app); halaman "/" saat
-    // logout tampil sebagai landing — itu BUKAN login.
+    // AI Studio (perbaikan 20:45 WIB): halaman kerja sesudah login bisa
+    // ber-URL root "/" — mis. Playground TTS di screenshot HP 20:39
+    // (aistudio.google.com/, konten login penuh) — jadi aturan path
+    // "/prompts | /app | /library" TIDAK cukup dan chip tetap
+    // "Belum login" walau sudah login. Aturan baru: login bila ada cookie
+    // sesi Google (SID/SAPISID) di cookie jar WebView ini, ATAU URL kerja.
+    // Cookie jar WebView terpisah dari Chrome — SID di sini artinya login
+    // lewat WebView ini, bukan tebakan.
     override fun isLoggedIn(url: String): Boolean {
         return try {
             val u = android.net.Uri.parse(url)
             val path = u.path ?: ""
-            u.host == "aistudio.google.com" &&
-                (path.contains("/prompts") || path.contains("/app") ||
-                    path.contains("/library"))
+            if (u.host != "aistudio.google.com") return false
+            if (path.contains("/prompts") || path.contains("/app") ||
+                path.contains("/library")
+            ) return true
+            val cookie = CookieManager.getInstance()
+                .getCookie("https://aistudio.google.com/") ?: ""
+            cookie.contains("SID=") || cookie.contains("SAPISID=") ||
+                cookie.contains("__Secure-1PSID=")
         } catch (e: Exception) {
             false
         }
