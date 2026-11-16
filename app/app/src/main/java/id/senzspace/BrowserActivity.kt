@@ -887,20 +887,27 @@ abstract class BrowserActivity : AppCompatActivity() {
         id: Long, title: String, uri: android.net.Uri?
     ) {
         Thread {
+            // uri nullable: amankan ke variabel non-null dulu (smart cast
+            // tidak menembus when(uri?.scheme) di dalam lambda Thread).
+            val u = uri
+            if (u == null) {
+                logBlobDiag("PINDAH GAGAL baca: $title (uri=null)")
+                return@Thread
+            }
             try {
-                val bytes: ByteArray? = when (uri?.scheme) {
-                    "file" -> uri.path?.let { java.io.File(it).readBytes() }
-                    "content" -> contentResolver.openInputStream(uri)?.use {
+                val bytes: ByteArray? = when (u.scheme) {
+                    "file" -> u.path?.let { java.io.File(it).readBytes() }
+                    "content" -> contentResolver.openInputStream(u)?.use {
                         it.readBytes()
                     }
                     else -> null
                 }
                 if (bytes != null) {
                     try {
-                        if (uri.scheme == "file") {
-                            uri.path?.let { java.io.File(it).delete() }
+                        if (u.scheme == "file") {
+                            u.path?.let { java.io.File(it).delete() }
                         } else {
-                            contentResolver.delete(uri, null, null)
+                            contentResolver.delete(u, null, null)
                         }
                     } catch (e: Exception) {
                     }
@@ -910,7 +917,7 @@ abstract class BrowserActivity : AppCompatActivity() {
                     )
                     saveDownloadedBytes(title, bytes)
                 } else {
-                    logBlobDiag("PINDAH GAGAL baca: $title (uri=$uri)")
+                    logBlobDiag("PINDAH GAGAL baca: $title (uri=$u)")
                 }
             } catch (e: Exception) {
                 logBlobDiag("PINDAH GAGAL: $title (${e.message})")
