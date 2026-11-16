@@ -26,19 +26,18 @@ layanan Claude / Google. Kalau platform memaksa login ulang, app menampilkan
 statusnya dengan jelas — bukan menyembunyikannya. Tidak ada otomasi klik / bot
 yang mengoperasikan Claude tanpa Sendy, dan tidak ada pengakalan limit.
 
-## Status: Slice S0 — Prototipe Gerbang (ADR-01)
+## Status: Slice S1 — 7 Space hidup (LULUS S0, ADR-01)
 
-S0 membuktikan dua hal sebelum MVP dikunci:
+S0 **LULUS PENUH 16 Nov 2026 20:24 WIB** (di HP Sendy): 2 Space login akun
+berbeda tanpa saling mengeluarkan, login Google jalan, sesi bertahan setelah
+tutup-buka app. Bukti dicatat di `docs/ADR-01.md`.
 
-1. **Isolasi:** 2 Space bisa login ke situs yang sama dengan 2 akun berbeda
-   secara bersamaan, tanpa saling mengeluarkan.
-2. **Login pihak ketiga:** login Google (pop-up / redirect) jalan di WebView,
-   dan sesi tetap login setelah app ditutup lalu dibuka lagi / HP di-restart.
+S1 menghidupkan ketujuh Space preset (Claude 1–6 + AI Studio), masing-masing
+di proses Android terpisah dengan direktori data WebView sendiri, plus chip
+status di Dashboard yang jujur ("Aktif" hijau kalau Space sedang login,
+"Belum login" kalau belum) — status ditulis tiap halaman selesai dimuat.
 
-Bukti S0 lulus = demo di HP Sendy, bukan klaim di README.
-Hasil prototipe dicatat di `docs/ADR-01.md`.
-
-Yang **belum** ada di S0 (masuk S1–S4): CRUD Space penuh sampai 10,
+Yang **belum** ada di S1 (masuk S1 lanjutan): CRUD Space penuh sampai 10,
 File Manager + Inbox Bersama, Download Manager, freeze, kunci app.
 
 ## Arsitektur
@@ -72,18 +71,21 @@ gradle :app:assembleDebug --no-daemon
 
 CI: `.github/workflows/android.yml` — `cargo test` + `assembleDebug` tiap push.
 
-## Tes S0 di HP (bahasa bayi)
+## Tes S1 di HP (bahasa bayi)
 
-1. Install APK debug. Buka SenzSpace.
-2. Tap **Space 1 — Claude 1**. Login akun Claude pertama. Biarkan terbuka.
-3. Kembali ke dashboard. Tap **Space 2 — Claude 2**. Login akun Claude kedua.
-4. **LULUS** bila: kedua Space menampilkan akun yang berbeda, dan pindah
-   Space 1 → Space 2 tidak mengeluarkan akun yang lain.
-5. Tutup app sepenuhnya, buka lagi besok / restart HP.
-6. **LULUS** bila: kedua Space masih login, tanpa login ulang
-   (kecuali platform sendiri yang memaksa login ulang).
-7. Tes login Google: buka Space AI Studio, login Google. **LULUS** bila
-   login selesai di dalam app, tanpa error WebView.
+1. Install APK debug (nimpa, tanpa uninstall). Buka SenzSpace.
+2. Dashboard sekarang menampilkan **7 kartu aktif**: Claude 1–6 + AI Studio.
+   Masing-masing punya titik warna sendiri + chip status.
+3. Tap **Claude 1** — harusnya masih login dari S0. Kembali ke dashboard:
+   chip Claude 1 berubah jadi **"Aktif"** (hijau).
+4. Tap **Claude 3, 4, 5, 6** satu per satu, login akun Claude yang berbeda
+   di tiap Space. **LULUS** bila: tiap Space menampilkan akunnya sendiri,
+   dan pindah Space tidak mengeluarkan akun Space lain.
+5. Tap **AI Studio**, login Google. **LULUS** bila: AI Studio kebuka
+   (halaman kerja, bukan halaman login) dan chip-nya jadi "Aktif".
+6. Tutup app sepenuhnya, buka lagi.
+7. **LULUS** bila: semua Space yang sudah login tetap login, dan chip
+   di dashboard menunjukkan "Aktif" untuk semuanya.
 
 ## Keamanan
 
