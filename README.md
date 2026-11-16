@@ -479,6 +479,25 @@ dalam kotak pembuat blob dan mengirim isinya via postMessage.
    membuktikan perangkap menangkap iframe-nya; baris "dl url=…"
    + "GAGAL: …" bila masih gagal).
 
+## Tes nama unduhan v0.1.19 di HP (bahasa bayi)
+
+v0.1.18 berhasil mengunduh (isi file benar, bisa diputar setelah
+rename) TAPI nama file salah: AI Studio jadi UUID + `.txt`, Claude 4
+jadi UUID + `.bin`. Akar: nama tebakan WebView (UUID + ekstensi
+salah) dipakai, nama asli dari tombol unduh situs tidak dipakai.
+v0.1.19: nama asli dari situs MENANG atas tebakan; bila nama asli
+tidak ketemu, ekstensi diperbaiki dari isi file (WAV/MP3/PDF/ZIP/
+PNG/JPG/MP4).
+
+1. Install APK v0.1.19-s1blobname (nimpa, tanpa uninstall).
+2. AI Studio → generate suara → tap unduh. **LULUS** bila toast
+   berbunyi "Tersimpan di folder AI Studio: Generated Audio … .wav"
+   (nama asli + .wav, BUKAN UUID + .txt) dan file bisa langsung
+   diputar tanpa rename.
+3. Claude 4 → unduh lampiran (mis. PROJECT STATE .md).
+   **LULUS** bila nama file asli + ekstensi benar (mis.
+   "PROJECT STATE.md", BUKAN UUID + .bin).
+
 ## Kontrol app dari Jhon (via Termux bridge)
 
 SenzSpace menulis statusnya ke file JSON di HP (hanya status yang

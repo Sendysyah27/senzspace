@@ -882,6 +882,10 @@ abstract class BrowserActivity : AppCompatActivity() {
             "window.__senzBlobDone=false;" +
             "var name='';" +
             "try{name=(window.__senzBlobName&&window.__senzBlobName(url))||'';}catch(e){}" +
+            "if(!name){try{var as=document.querySelectorAll('a[download]');" +
+            "for(var ai=0;ai<as.length;ai++){" +
+            "if(as[ai].href===url&&as[ai].getAttribute('download'))" +
+            "{name=as[ai].getAttribute('download');break;}}}catch(e){}}" +
             "var cached='';" +
             "try{cached=(window.__senzBlobGet&&window.__senzBlobGet(url))||'';}catch(e){}" +
             "try{window.SenzBlob.onBlobDiag('dl url='+url.slice(0,60)+',iframes='+document.querySelectorAll('iframe').length+',hit='+(cached!==''));}catch(e){}" +
@@ -935,21 +939,20 @@ abstract class BrowserActivity : AppCompatActivity() {
     private inner class BlobDownloadBridge {
         @android.webkit.JavascriptInterface
         fun onBlobData(base64: String, fileName: String) {
-            var name = pendingBlobFileName.ifEmpty { "download" }
-            // Pakai nama asli dari anchor (mis. "audio.wav") bila nama
-            // tebakan generik (tanpa ekstensi / "download").
-            if ((name == "download" || !name.contains(".")) &&
-                fileName.isNotBlank()
-            ) {
-                name = fileName
-            }
-            val finalName = name
+            // Nama asli dari atribut download anchor (mis.
+            // "Generated Audio ... .wav", "PROJECT STATE.md") MENANG
+            // atas nama tebakan WebView (UUID + .bin/.txt) — tebakan
+            // itulah yang bikin unduhan Claude 4 jadi .bin dan AI
+            // Studio jadi .txt di v0.1.18 (isi file tetap benar).
+            val guessed = pendingBlobFileName.ifEmpty { "download" }
+            var name = if (fileName.isNotBlank()) fileName else guessed
             Thread {
                 try {
                     val bytes = android.util.Base64.decode(
                         base64, android.util.Base64.DEFAULT
                     )
-                    saveDownloadedBytes(finalName, bytes)
+                    name = fixExtension(name, bytes)
+                    saveDownloadedBytes(name, bytes)
                 } catch (e: Exception) {
                     runOnUiThread {
                         Toast.makeText(
@@ -960,6 +963,36 @@ abstract class BrowserActivity : AppCompatActivity() {
                     }
                 }
             }.start()
+        }
+
+        /** Perbaiki ekstensi dari isi file (magic bytes) bila nama
+         *  tidak punya ekstensi yang benar: .bin/.txt dari tebakan
+         *  WebView diganti bila isinya WAV/MP3/PDF/ZIP/PNG/JPG/MP4.
+         *  Nama asli dari anchor (mis. .wav/.md) tidak diubah. */
+        private fun fixExtension(name: String, bytes: ByteArray): String {
+            val sniffed = sniffExtension(bytes) ?: return name
+            val dot = name.lastIndexOf('.')
+            val ext = if (dot >= 0) name.substring(dot + 1).lowercase() else ""
+            if (ext == sniffed) return name
+            if (ext.isEmpty() || ext == "bin" || ext == "txt") {
+                val base = if (dot >= 0) name.substring(0, dot) else name
+                return "$base.$sniffed"
+            }
+            return name
+        }
+
+        private fun sniffExtension(b: ByteArray): String? {
+            fun eq(off: Int, vararg vs: Int) =
+                b.size > off + vs.size - 1 &&
+                    vs.withIndex().all { (i, v) -> b[off + i] == v.toByte() }
+            if (eq(0, 0x52, 0x49, 0x46, 0x46) && eq(8, 0x57, 0x41, 0x56, 0x45)) return "wav"
+            if (eq(0, 0x49, 0x44, 0x33) || eq(0, 0xFF, 0xFB)) return "mp3"
+            if (eq(0, 0x25, 0x50, 0x44, 0x46)) return "pdf"
+            if (eq(0, 0x50, 0x4B, 0x03, 0x04)) return "zip"
+            if (eq(0, 0x89, 0x50, 0x4E, 0x47)) return "png"
+            if (eq(0, 0xFF, 0xD8, 0xFF)) return "jpg"
+            if (eq(4, 0x66, 0x74, 0x79, 0x70)) return "mp4"
+            return null
         }
 
         /** Diagnosis dari halaman — ditulis ke _Log-Blob. */
@@ -981,7 +1014,8 @@ abstract class BrowserActivity : AppCompatActivity() {
         }
     }
 
-    /** Skrip penangkap blob (v0.1.17) — disisipkan ke SETIAP dokumen
+    /** Skrip penangkap blob (v0.1.17, nama diperbaiki v0.1.19) —
+     *  disisipkan ke SETIAP dokumen
      *  (frame utama + iframe) lewat shouldInterceptRequest, jadi
      *  berjalan di konteks yang SAMA dengan pembuat blob — termasuk
      *  iframe sandboxed blob:null/. Isi blob di-cache base64; antar
@@ -1030,6 +1064,9 @@ abstract class BrowserActivity : AppCompatActivity() {
             "try{var h=this.href||'';var d=this.getAttribute('download');" +
             "if(h.indexOf('blob:')===0&&d){window.__senzBlobNames[h]=d;}}catch(e){}" +
             "return _click.call(this);};" +
+            "try{var _dd=Object.getOwnPropertyDescriptor(HTMLAnchorElement.prototype,'download');" +
+            "if(_dd&&_dd.set){var _ds=_dd.set;" +
+            "Object.defineProperty(HTMLAnchorElement.prototype,'download',{configurable:true,enumerable:_dd.enumerable,get:_dd.get,set:function(v){try{var h=this.href||'';if(h.indexOf('blob:')===0&&v){window.__senzBlobNames[h]=String(v);}}catch(e){}return _ds.call(this,v);}});}}catch(e){}" +
             "window.addEventListener('message',function(ev){" +
             "try{var m=ev.data||{};" +
             "if(m&&m.type==='senz-get-blob'&&m.url){" +
@@ -1040,7 +1077,9 @@ abstract class BrowserActivity : AppCompatActivity() {
             "else if(data&&window.SenzBlob){window.SenzBlob.onBlobData(data,name);}" +
             "}else if(m&&m.type==='senz-blob-data'&&window.parent===window){" +
             "if(m.url===window.__senzPendingBlobUrl&&m.data&&!window.__senzBlobDone){" +
-            "window.__senzBlobDone=true;window.SenzBlob.onBlobData(m.data,m.name||'');}" +
+            "var nm=m.name||'';" +
+            "try{nm=nm||window.__senzBlobName(m.url)||'';}catch(e){}" +
+            "window.__senzBlobDone=true;window.SenzBlob.onBlobData(m.data,nm);}" +
             "}}catch(e){}});" +
             "}catch(e){}})();"
         // Perangkap iframe (v0.1.18) — HANYA di frame utama. Menangkap
