@@ -55,8 +55,13 @@ open class KeepAliveService : Service() {
         try {
             ensureChannel()
             val openIntent = Intent(this, MainActivity::class.java).apply {
-                flags = Intent.FLAG_ACTIVITY_NEW_TASK or
-                    Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
+                // Jangan pakai `flags = ...` di sini: Intent.setFlags()
+                // mengembalikan Intent (bukan void), jadi Kotlin hanya
+                // menyediakan `flags` sebagai val — pakai addFlags().
+                addFlags(
+                    Intent.FLAG_ACTIVITY_NEW_TASK or
+                        Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
+                )
             }
             val pending = PendingIntent.getActivity(
                 this, notifId, openIntent,
