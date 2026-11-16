@@ -39,6 +39,7 @@ abstract class BrowserActivity : AppCompatActivity() {
     private lateinit var debugView: TextView
     private lateinit var rootLayout: LinearLayout
     private lateinit var downloadBtn: android.widget.Button
+    private val lockLauncher = LockGate.register(this)
     private var popupView: WebView? = null
     private var currentUrl = ""
     private var spaceName = "Space"
@@ -374,7 +375,13 @@ abstract class BrowserActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
+        LockGate.check(this, lockLauncher)
         refreshDownloadCount()
+    }
+
+    override fun onStop() {
+        super.onStop()
+        LockGate.onStopped()
     }
 
     /** Badge ⬇ di top bar = jumlah file di folder Space ini. */

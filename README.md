@@ -126,6 +126,24 @@ CI: `.github/workflows/android.yml` — `cargo test` + `assembleDebug` tiap push
 4. File aslinya tetap ada di folder SenzSpace di dalam app — Ekspor itu
    menyalin, bukan memindah. **LULUS** bila: file masih ada di File Manager.
 
+## Tes Kunci App di HP (bahasa bayi)
+
+1. Buka **Pengaturan** (kartu ⚙️ di dashboard). Saklar "Kunci App (PIN)"
+   harusnya **MATI** — kunci tidak aktif sendiri.
+2. Nyalakan saklar → layar "Buat PIN" muncul. Masukkan PIN 4 angka,
+   lalu ulangi PIN yang sama. **LULUS** bila: muncul "PIN dibuat —
+   kunci app aktif".
+3. Tutup app sepenuhnya, buka lagi. **LULUS** bila: layar kunci muncul
+   dan dashboard TIDAK kelihatan sebelum PIN benar.
+4. Masukkan PIN yang benar. **LULUS** bila: dashboard kebuka normal.
+   (Kalau HP kamu punya sidik jari/wajah terdaftar, tombol biometrik
+   juga muncul — coba, harusnya langsung kebuka.)
+5. Tutup app, buka lagi, masukkan PIN **salah** 5×. **LULUS** bila:
+   muncul "5× salah — jeda 30 detik" dan keypad tidak bisa ditekan
+   selama jeda.
+6. Matikan kunci: Pengaturan → matikan saklar → masukkan PIN yang benar.
+   **LULUS** bila: saklar mati dan buka app lagi sudah tidak minta PIN.
+
 ## Keamanan
 
 Tidak ada password yang disimpan sebagai teks biasa. Login dilakukan Sendy

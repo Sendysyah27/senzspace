@@ -30,6 +30,7 @@ class FileManagerActivity : AppCompatActivity() {
 
     private var currentFolder: String? = null
     private lateinit var content: LinearLayout
+    private val lockLauncher = LockGate.register(this)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -85,7 +86,13 @@ class FileManagerActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
+        LockGate.check(this, lockLauncher)
         render()
+    }
+
+    override fun onStop() {
+        super.onStop()
+        LockGate.onStopped()
     }
 
     private fun render() {

@@ -42,6 +42,8 @@ class MainActivity : AppCompatActivity() {
         SpaceDef(R.id.btnSpace7, R.id.tvStatus7, AiStudioActivity::class.java, "AI Studio", "#38BDF8", "https://aistudio.google.com", "aistudio")
     )
 
+    private val lockLauncher = LockGate.register(this)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
@@ -52,11 +54,20 @@ class MainActivity : AppCompatActivity() {
         findViewById<View>(R.id.btnFileManager).setOnClickListener {
             startActivity(Intent(this, FileManagerActivity::class.java))
         }
+        findViewById<View>(R.id.btnSettings).setOnClickListener {
+            startActivity(Intent(this, SettingsActivity::class.java))
+        }
     }
 
     override fun onResume() {
         super.onResume()
+        LockGate.check(this, lockLauncher)
         refreshStatusChips()
+    }
+
+    override fun onStop() {
+        super.onStop()
+        LockGate.onStopped()
     }
 
     private fun refreshStatusChips() {
