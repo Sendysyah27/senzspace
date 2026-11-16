@@ -270,6 +270,24 @@ class SettingsActivity : AppCompatActivity() {
         }
         root.addView(version)
 
+        lockSwitch.setOnCheckedChangeListener { _, checked ->
+            if (checked == LockStore.isEnabled(this)) return@setOnCheckedChangeListener
+            if (checked) {
+                // Hidupkan: buat PIN dulu.
+                expectingLockResult = true
+                val intent = android.content.Intent(this, LockActivity::class.java)
+                intent.putExtra(LockActivity.EXTRA_MODE, LockActivity.MODE_SETUP)
+                lockLauncher.launch(intent)
+            } else {
+                // Matikan: verifikasi PIN dulu.
+                pendingAction = "disable"
+                expectingLockResult = true
+                val intent = android.content.Intent(this, LockActivity::class.java)
+                intent.putExtra(LockActivity.EXTRA_MODE, LockActivity.MODE_VERIFY)
+                lockLauncher.launch(intent)
+            }
+        }
+
         setContentView(scroll)
         refresh()
     }
@@ -345,27 +363,6 @@ class SettingsActivity : AppCompatActivity() {
                 Toast.makeText(this, "Tidak bisa membuka pengaturan baterai", Toast.LENGTH_LONG).show()
             }
         }
-    }
-
-        lockSwitch.setOnCheckedChangeListener { _, checked ->
-            if (checked == LockStore.isEnabled(this)) return@setOnCheckedChangeListener
-            if (checked) {
-                // Hidupkan: buat PIN dulu.
-                expectingLockResult = true
-                val intent = android.content.Intent(this, LockActivity::class.java)
-                intent.putExtra(LockActivity.EXTRA_MODE, LockActivity.MODE_SETUP)
-                lockLauncher.launch(intent)
-            } else {
-                // Matikan: verifikasi PIN dulu.
-                pendingAction = "disable"
-                expectingLockResult = true
-                val intent = android.content.Intent(this, LockActivity::class.java)
-                intent.putExtra(LockActivity.EXTRA_MODE, LockActivity.MODE_VERIFY)
-                lockLauncher.launch(intent)
-            }
-        }
-
-        refresh()
     }
 
     override fun onResume() {
