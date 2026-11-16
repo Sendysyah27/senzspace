@@ -74,7 +74,7 @@ open class KeepAliveService : Service() {
                     PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
                 )
                 val summary: Notification = NotificationCompat.Builder(ctx, CHANNEL_ID)
-                    .setSmallIcon(android.R.drawable.ic_dialog_info)
+                    .setSmallIcon(R.drawable.ic_notification)
                     .setContentTitle("SenzSpace • Space berjalan")
                     .setContentText("$text • geser ke bawah untuk melihat semua Space")
                     .setContentIntent(pending)
@@ -147,7 +147,7 @@ open class KeepAliveService : Service() {
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
             )
             val notif: Notification = NotificationCompat.Builder(this, CHANNEL_ID)
-                .setSmallIcon(android.R.drawable.ic_dialog_info)
+                .setSmallIcon(R.drawable.ic_notification)
                 .setContentTitle("SenzSpace — $name berjalan")
                 .setContentText("Multi Live aktif • sesi tetap hidup")
                 .setContentIntent(pending)

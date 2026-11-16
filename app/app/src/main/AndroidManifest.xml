@@ -81,6 +81,12 @@
             android:name=".FileManagerActivity"
             android:exported="false" />
 
+        <!-- Pratinjau file (Fungsi View, v0.1.13): gambar/teks/video
+             dibuka di dalam app; proses utama. -->
+        <activity
+            android:name=".FileViewerActivity"
+            android:exported="false" />
+
         <!-- Kunci App (D4) + Pengaturan: proses utama. -->
         <activity
             android:name=".LockActivity"

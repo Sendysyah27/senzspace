@@ -329,14 +329,16 @@ class FileManagerActivity : AppCompatActivity() {
                 minimumHeight = dp(56)
                 setPadding(dp(12), dp(8), dp(12), dp(8))
             }
-            row.addView(TextView(this).apply {
-                text = "●"
-                textSize = 12f
-                setTextColor(Color.parseColor(folder.color))
-            })
-            row.addView(TextView(this).apply {
-                text = "  📁  "
-                textSize = 18f
+            // Ikon folder vektor (v0.1.13) — tint warna Space-nya,
+            // menggantikan titik "●" + emoji 📁 (dua elemen jadi satu).
+            row.addView(android.widget.ImageView(this).apply {
+                setImageResource(R.drawable.ic_nav_folder)
+                imageTintList = android.content.res.ColorStateList.valueOf(
+                    Color.parseColor(folder.color)
+                )
+                layoutParams = LinearLayout.LayoutParams(dp(24), dp(24)).apply {
+                    rightMargin = dp(12)
+                }
             })
             row.addView(TextView(this).apply {
                 text = displayName
@@ -419,15 +421,26 @@ class FileManagerActivity : AppCompatActivity() {
             setPadding(dp(12), dp(8), dp(12), dp(8))
             if (isSelected) setBackgroundColor(Color.parseColor("#1B2A44"))
         }
-        // Ikon tipe 40dp
+        // Ikon tipe 40dp — vektor garis minimalis (v0.1.13), bukan emoji.
         val iconBox = LinearLayout(this).apply {
             gravity = Gravity.CENTER
             layoutParams = LinearLayout.LayoutParams(dp(40), dp(40))
             setBackgroundColor(Color.parseColor("#1B2A44"))
         }
-        iconBox.addView(TextView(this).apply {
-            text = if (isFolder) "📁" else FileStore.iconFor(entry)
-            textSize = 20f
+        iconBox.addView(android.widget.ImageView(this).apply {
+            if (isFolder) {
+                setImageResource(R.drawable.ic_nav_folder)
+                // Subfolder: kuning folder klasik.
+                imageTintList = android.content.res.ColorStateList.valueOf(
+                    Color.parseColor("#E5B567")
+                )
+            } else {
+                setImageResource(FileStore.iconResFor(entry))
+                imageTintList = android.content.res.ColorStateList.valueOf(
+                    Color.parseColor("#8A94A6")
+                )
+            }
+            layoutParams = LinearLayout.LayoutParams(dp(24), dp(24))
         })
         row.addView(iconBox)
         // Nama + meta
@@ -481,6 +494,8 @@ class FileManagerActivity : AppCompatActivity() {
             } else if (isFolder) {
                 pathStack.addLast(entry)
                 render()
+            } else if (FileStore.isPreviewable(entry)) {
+                viewFile(entry)
             } else {
                 openFile(entry)
             }
@@ -503,6 +518,9 @@ class FileManagerActivity : AppCompatActivity() {
         val menu = PopupMenu(this, anchor)
         val isFolder = entry.isDirectory
         if (!isFolder) {
+            // Lihat = pratinjau di dalam app (gambar/teks/video); untuk
+            // tipe lain viewer menampilkan tombol Buka ke app lain.
+            menu.menu.add("Lihat").setOnMenuItemClickListener { viewFile(entry); true }
             menu.menu.add("Buka").setOnMenuItemClickListener { openFile(entry); true }
             menu.menu.add("Bagikan").setOnMenuItemClickListener { shareFiles(listOf(entry)); true }
         }
@@ -538,6 +556,13 @@ class FileManagerActivity : AppCompatActivity() {
     }
 
     // ---------- Aksi file ----------
+
+    /** Lihat = pratinjau di dalam app (FileViewerActivity). */
+    private fun viewFile(file: File) {
+        val intent = Intent(this, FileViewerActivity::class.java)
+        intent.putExtra(FileViewerActivity.EXTRA_FILE, file.absolutePath)
+        startActivity(intent)
+    }
 
     private fun openFile(file: File) {
         try {

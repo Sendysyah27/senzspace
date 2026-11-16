@@ -147,43 +147,87 @@
         android:layout_height="1dp"
         android:background="@color/senz_card_stroke" />
 
-    <!-- Bottom nav tetap -->
+    <!-- Bottom nav tetap — ikon SVG garis minimalis (Feather/Lucide),
+         TRANSPARAN tanpa background/pill (perintah Sendy 23:35).
+         Item aktif (Beranda) tint indigo, sisanya muted. -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="56dp"
-        android:background="@color/senz_bg"
+        android:background="@android:color/transparent"
         android:gravity="center_vertical"
         android:orientation="horizontal">
 
-        <TextView
+        <LinearLayout
             android:id="@+id/navHome"
             android:layout_width="0dp"
             android:layout_height="match_parent"
             android:layout_weight="1"
+            android:background="@android:color/transparent"
             android:gravity="center"
-            android:text="Beranda"
-            android:textColor="@color/senz_accent"
-            android:textSize="11sp"
-            android:textStyle="bold" />
+            android:orientation="vertical">
 
-        <TextView
+            <ImageView
+                android:layout_width="24dp"
+                android:layout_height="24dp"
+                android:src="@drawable/ic_home"
+                android:tint="@color/senz_accent" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="2dp"
+                android:text="Beranda"
+                android:textColor="@color/senz_accent"
+                android:textSize="11sp"
+                android:textStyle="bold" />
+        </LinearLayout>
+
+        <LinearLayout
             android:id="@+id/navFiles"
             android:layout_width="0dp"
             android:layout_height="match_parent"
             android:layout_weight="1"
+            android:background="@android:color/transparent"
             android:gravity="center"
-            android:text="File Manager"
-            android:textColor="@color/senz_muted"
-            android:textSize="11sp" />
+            android:orientation="vertical">
 
-        <TextView
+            <ImageView
+                android:layout_width="24dp"
+                android:layout_height="24dp"
+                android:src="@drawable/ic_nav_folder"
+                android:tint="@color/senz_muted" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="2dp"
+                android:text="File Manager"
+                android:textColor="@color/senz_muted"
+                android:textSize="11sp" />
+        </LinearLayout>
+
+        <LinearLayout
             android:id="@+id/navSettings"
             android:layout_width="0dp"
             android:layout_height="match_parent"
             android:layout_weight="1"
+            android:background="@android:color/transparent"
             android:gravity="center"
-            android:text="Pengaturan"
-            android:textColor="@color/senz_muted"
-            android:textSize="11sp" />
+            android:orientation="vertical">
+
+            <ImageView
+                android:layout_width="24dp"
+                android:layout_height="24dp"
+                android:src="@drawable/ic_nav_settings"
+                android:tint="@color/senz_muted" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="2dp"
+                android:text="Pengaturan"
+                android:textColor="@color/senz_muted"
+                android:textSize="11sp" />
+        </LinearLayout>
     </LinearLayout>
 </LinearLayout>

@@ -320,6 +320,32 @@ ditulis langsung ke folder Space.
    lagi huruf "S" lama. (Ikon lama mungkin masih muncul di cache
    launcher; kalau begitu, restart HP sekali lalu cek lagi.)
 
+## Tes v0.1.13-s1view-icons di HP (bahasa bayi)
+
+1. Install APK v0.1.13-s1view-icons (nimpa, tanpa uninstall).
+2. **Navbar**: di Beranda, **LULUS** bila: bawah layar ada 3 ikon
+   garis — rumah (Beranda, indigo), folder (File Manager, abu),
+   gear (Pengaturan, abu) — masing-masing dengan label di bawahnya,
+   TANPA kotak/pill background di belakangnya.
+3. **Ikon notifikasi**: buka 1 Space, tarik panel notifikasi.
+   **LULUS** bila: ikon kecil di baris "SenzSpace — … berjalan"
+   adalah 4 kotak kecil (bukan lagi huruf "i" dalam lingkaran).
+4. **Ikon File Manager**: buka File Manager. **LULUS** bila: tiap
+   folder punya ikon folder garis (warnanya warna Space-nya),
+   tiap file punya ikon garis sesuai jenisnya (gambar / video /
+   musik / arsip / kode / file) — bukan lagi emoji 📁🖼️🎬.
+5. **Fungsi View (Lihat)**: di folder Claude 4 (atau _Inbox-Bersama
+   yang ada file MP4 10,4 MB), tap file **gambar** (mis. thumbnail
+   PNG). **LULUS** bila: gambar terbuka DI DALAM app (layar gelap,
+   nama file di atas, tombol ✕ + Buka) — tanpa keluar ke Galeri.
+   Tap file **teks** (.md/.srt). **LULUS** bila: isinya kebaca di
+   dalam app (huruf monospace). Tap file **video** (.mp4).
+   **LULUS** bila: video muter di dalam app dengan kontrol
+   putar/jeda. Tap **⋮** di file → **LULUS** bila: menu paling atas
+   ada **Lihat** (di atas Buka). Tap file .zip → **LULUS** bila:
+   muncul "Tidak bisa dilihat di sini" + tombol "Buka dengan app
+   lain".
+
 ## Kontrol app dari Jhon (via Termux bridge)
 
 SenzSpace menulis statusnya ke file JSON di HP (hanya status yang

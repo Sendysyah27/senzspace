@@ -251,15 +251,27 @@ object FileStore {
         return sdf.format(java.util.Date(millis))
     }
 
-    fun iconFor(file: File): String {
+    /** Ikon vektor minimalis per tipe file (ganti emoji, v0.1.13).
+     *  Stroke putih di XML; warna akhir diatur tint di pemanggil. */
+    fun iconResFor(file: File): Int {
         return when (file.extension.lowercase()) {
-            "jpg", "jpeg", "png", "webp", "gif" -> "🖼️"
-            "mp4", "mov", "webm" -> "🎬"
-            "mp3", "wav", "ogg", "m4a" -> "🎵"
-            "pdf" -> "📕"
-            "zip", "rar", "7z" -> "📦"
-            "md", "txt", "srt", "json", "csv" -> "📝"
-            else -> "📄"
+            "jpg", "jpeg", "png", "webp", "gif" -> R.drawable.ic_fm_image
+            "mp4", "mov", "webm" -> R.drawable.ic_fm_video
+            "mp3", "wav", "ogg", "m4a" -> R.drawable.ic_fm_audio
+            "zip", "rar", "7z" -> R.drawable.ic_fm_archive
+            "md", "txt", "srt", "json", "csv", "html", "htm" -> R.drawable.ic_fm_code
+            else -> R.drawable.ic_fm_file
+        }
+    }
+
+    /** Bisa dilihat di dalam app (Fungsi View, v0.1.13)? Gambar, teks,
+     *  dan video bisa; audio/PDF/zip/dll dilempar ke app lain (Buka). */
+    fun isPreviewable(file: File): Boolean {
+        return when (file.extension.lowercase()) {
+            "jpg", "jpeg", "png", "webp", "gif",
+            "md", "txt", "srt", "json", "csv", "html", "htm",
+            "mp4", "mov", "webm" -> true
+            else -> false
         }
     }
 }
