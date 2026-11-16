@@ -424,6 +424,33 @@ dipindah, supaya unduhan Chrome tidak ikut tercuri).
 6. Kalau masih gagal: File Manager → **_Log-Blob** →
    `blob-debug.txt` (baris "PINDAH …" / "PINDAH GAGAL …").
 
+## Tes unduh AI Studio v0.1.17 di HP (bahasa bayi)
+
+v0.1.16 malah bikin tombol unduh MATI TOTAL (temuan HP 01:19) —
+pelajaran: TANPA DownloadListener, WebView TIDAK mengunduh apa-apa
+(Chromium di WebView tidak punya download manager bawaan seperti
+Chrome; app yang wajib menangani unduhan). v0.1.17 mengembalikan
+listener + menyerang akar yang sebenarnya: skrip penangkap blob
+sekarang disisipkan ke SETIAP dokumen (frame utama + iframe) lewat
+shouldInterceptRequest — jadi skripnya berjalan DI DALAM iframe
+sandboxed pembuat blob, meng-cache isinya, dan mengirimnya ke frame
+utama via postMessage (tetap jalan lintas origin), terus ke folder
+Space. Pengawas unduhan v0.1.16 dihapus (tidak dibutuhkan lagi).
+
+1. Install APK v0.1.17-s1iframeinject (nimpa, tanpa uninstall).
+2. Buka **AI Studio** → Playground → generate suara sampai muncul
+   player audio.
+3. Tap tombol **unduh** di bawah player. **LULUS** bila: tombol
+   merespon + muncul toast "Tersimpan di folder AI Studio: …".
+4. Buka File Manager → folder **AI Studio**. **LULUS** bila: file
+   audio ada di sana dan bisa diputar.
+5. Ulangi tes unduh blob di **Claude 4** (PROJECT STATE .md).
+   **LULUS** bila: masih tersimpan di folder Claude 4 seperti
+   v0.1.11.
+6. Kalau masih gagal: File Manager → **_Log-Blob** →
+   `blob-debug.txt` (baris "INJECT: …" membuktikan skrip masuk ke
+   dokumen; baris "dl url=…" + "GAGAL: …" bila masih gagal).
+
 ## Kontrol app dari Jhon (via Termux bridge)
 
 SenzSpace menulis statusnya ke file JSON di HP (hanya status yang

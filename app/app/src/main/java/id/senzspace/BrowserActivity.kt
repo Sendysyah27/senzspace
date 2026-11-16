@@ -69,14 +69,32 @@ abstract class BrowserActivity : AppCompatActivity() {
     private var spaceName = "Space"
     private var homeUrl = "https://claude.ai"
     private var activityDestroyed = false
-    /** ID unduhan DownloadManager yang sudah dipindah ke folder Space
-     *  (per proses — supaya satu file tidak dipindah dua kali). */
-    private val movedDownloadIds = java.util.Collections.synchronizedSet(
-        mutableSetOf<Long>()
+    private var pendingBlobFileName = ""
+
+    /** Listener unduhan (PRD F6): blob: → jembatan JS, data: → decode
+     *  langsung, http(s) → DownloadManager + cookie sesi. */
+    private val downloadListener = android.webkit.DownloadListener { dlUrl, userAgent, contentDisposition, mimeType, _ ->
+        val fileName = android.webkit.URLUtil.guessFileName(
+            dlUrl, contentDisposition, mimeType
+        )
+        when {
+            dlUrl.startsWith("blob:") -> downloadBlob(dlUrl, fileName)
+            dlUrl.startsWith("data:") -> downloadDataUrl(dlUrl, fileName)
+            else -> downloadViaManager(
+                dlUrl, userAgent, contentDisposition, mimeType, fileName
+            )
+        }
+    }
+
+    /** Ekstensi subresource statis — shouldInterceptRequest TIDAK
+     *  mengambilnya (WebView muat sendiri seperti biasa). Dokumen
+     *  (.html/.htm sengaja TIDAK ada di sini) tetap diambil untuk
+     *  disisipi skrip penangkap blob. */
+    private val STATIC_EXTS = setOf(
+        "js", "mjs", "css", "png", "jpg", "jpeg", "gif", "webp", "svg",
+        "ico", "woff", "woff2", "ttf", "otf", "mp3", "wav", "ogg",
+        "mp4", "webm", "mov", "json", "xml", "map", "txt", "pdf", "zip"
     )
-    @Volatile
-    private var downloadWatcherRunning = false
-    private var downloadWatcherStartedAt = 0L
 
     /** Callback unduhan file-chooser yang sedang menunggu pilihan user.
      *  WAJIB dipanggil tepat sekali (dengan array URI atau null). */
@@ -560,6 +578,13 @@ abstract class BrowserActivity : AppCompatActivity() {
                     if (!isForeground) captureLiveThumbnail()
                 }
 
+                override fun shouldInterceptRequest(
+                    view: WebView,
+                    request: WebResourceRequest
+                ): android.webkit.WebResourceResponse? {
+                    return interceptDocument(request)
+                }
+
                 override fun onReceivedHttpError(
                     view: WebView,
                     request: WebResourceRequest,
@@ -679,18 +704,17 @@ abstract class BrowserActivity : AppCompatActivity() {
         // memanggil SenzLive.onChanged() tanpa argumen — tidak ada data
         // halaman yang keluar, cuma sinyal "halaman berubah".
         webView.addJavascriptInterface(LiveBridge(), "SenzLive")
-        // Unduhan per Space (PRD F6) — v0.1.16: TANPA DownloadListener.
-        // Bukti log _Log-Blob 01:02 WIB: URL unduhan audio AI Studio
-        // adalah blob:null/<uuid> — blob itu dibuat di dalam iframe
-        // sandboxed (origin "null", kotak terkunci) dan HANYA bisa dibaca
-        // dari dalam kotak itu sendiri. Kode apa pun dari frame utama
-        // (XHR, cache, klik-ulang anchor) pasti gagal; listener yang
-        // membajak unduhan justru MEMATIKAN satu-satunya jalur yang
-        // bekerja: unduhan native Chromium dari klik user di dalam
-        // iframe. Jadi listener dilepas total — Chromium mengunduh
-        // sendiri ke Download publik (cookie sesi ikut, karena ini
-        // network stack WebView sendiri), lalu startDownloadWatcher()
-        // memindahkan file yang selesai ke folder Space ini.
+        // Jembatan unduh blob (v0.1.11): isi file dikirim halaman
+        // sebagai base64 — sekarang datang dari frame mana pun (frame
+        // utama atau iframe) lewat postMessage, lihat blobInjectScript.
+        webView.addJavascriptInterface(BlobDownloadBridge(), "SenzBlob")
+
+        // Unduhan per Space (PRD F6): listener WAJIB ada — pelajaran
+        // v0.1.16: TANPA DownloadListener, WebView TIDAK mengunduh
+        // apa-apa (tombol unduh mati total, temuan HP 01:19). Chromium
+        // di WebView tidak punya download manager bawaan seperti Chrome;
+        // app yang harus menangani unduhan lewat listener ini.
+        webView.setDownloadListener(downloadListener)
 
         setContentView(root)
 
@@ -704,7 +728,6 @@ abstract class BrowserActivity : AppCompatActivity() {
             webView.loadUrl(url)
         }
         startLiveCapture()
-        startDownloadWatcher()
         // Guard anti-kill: service foreground di proses Space ini supaya
         // sistem tidak mematikan Space yang lama tidak dibuka. Hormati
         // pengaturan (Pengaturan → Guard anti-kill): bila dimatikan user,
@@ -805,124 +828,312 @@ abstract class BrowserActivity : AppCompatActivity() {
         }.start()
     }
 
-    /** Pengawas unduhan (v0.1.16) — pengganti SELURUH sistem unduh JS
-     *  (listener + XHR + cache blob + fallback klik-ulang).
-     *  Cara kerja: thread ini memindai DownloadManager tiap 2 detik
-     *  SELAMA Space ini di depan (isForeground; kalau di belakang,
-     *  jeda 10 detik). Unduhan SELESAI yang baru — id belum pernah
-     *  dipindah + selesai setelah watcher mulai — dibaca isinya lalu
-     *  ditulis ke folder Space ini dan salinan publiknya dihapus.
-     *  Hanya unduhan yang selesai selagi Space ini di depan yang
-     *  dipindah, supaya unduhan dari app lain (mis. Chrome) tidak
-     *  ikut tercuri. */
-    private fun startDownloadWatcher() {
-        if (downloadWatcherRunning) return
-        downloadWatcherRunning = true
-        downloadWatcherStartedAt = System.currentTimeMillis()
-        Thread {
-            val dm = try {
-                getSystemService(DOWNLOAD_SERVICE) as android.app.DownloadManager
-            } catch (e: Exception) {
-                null
-            }
-            while (downloadWatcherRunning && dm != null) {
-                try {
-                    if (isForeground && !activityDestroyed) {
-                        val c = dm.query(android.app.DownloadManager.Query())
-                        c?.use {
-                            val idIdx = it.getColumnIndex(
-                                android.app.DownloadManager.COLUMN_ID
-                            )
-                            val titleIdx = it.getColumnIndex(
-                                android.app.DownloadManager.COLUMN_TITLE
-                            )
-                            val statusIdx = it.getColumnIndex(
-                                android.app.DownloadManager.COLUMN_STATUS
-                            )
-                            val uriIdx = it.getColumnIndex(
-                                android.app.DownloadManager.COLUMN_LOCAL_URI
-                            )
-                            val timeIdx = it.getColumnIndex(
-                                android.app.DownloadManager.COLUMN_LAST_MODIFIED_TIMESTAMP
-                            )
-                            while (it.moveToNext()) {
-                                val id = if (idIdx >= 0) it.getLong(idIdx) else -1L
-                                val title = if (titleIdx >= 0) {
-                                    it.getString(titleIdx)
-                                } else ""
-                                val status = if (statusIdx >= 0) {
-                                    it.getInt(statusIdx)
-                                } else -1
-                                val whenMs = if (timeIdx >= 0) {
-                                    it.getLong(timeIdx)
-                                } else 0L
-                                if (id < 0 || title.isBlank()) continue
-                                if (status != android.app.DownloadManager.STATUS_SUCCESSFUL) continue
-                                if (whenMs < downloadWatcherStartedAt - 5_000) continue
-                                if (!movedDownloadIds.add(id)) continue
-                                val uriStr = if (uriIdx >= 0) {
-                                    it.getString(uriIdx)
-                                } else null
-                                val uri = uriStr?.let { u ->
-                                    android.net.Uri.parse(u)
-                                }
-                                moveDownloadedFile(id, title, uri)
-                            }
-                        }
-                    }
-                } catch (e: Exception) {
-                }
-                try {
-                    Thread.sleep(if (isForeground) 2000 else 10000)
-                } catch (e: Exception) {
-                }
-            }
-        }.start()
+    /** Unduhan http(s) via DownloadManager: cookie sesi + User-Agent
+     *  + Referer diteruskan — tanpa cookie, unduhan dari situs yang
+     *  butuh login (mis. lampiran Claude) ditolak server (403).
+     *  Tujuan langsung folder Space ini (bukan Download publik). */
+    private fun downloadViaManager(
+        dlUrl: String, userAgent: String, contentDisposition: String,
+        mimeType: String, fileName: String
+    ) {
+        try {
+            val req = android.app.DownloadManager.Request(
+                android.net.Uri.parse(dlUrl)
+            )
+            req.setMimeType(mimeType)
+            req.addRequestHeader("User-Agent", userAgent)
+            val cookie = CookieManager.getInstance().getCookie(dlUrl)
+            if (cookie != null) req.addRequestHeader("Cookie", cookie)
+            if (currentUrl.isNotEmpty()) req.addRequestHeader("Referer", currentUrl)
+            req.setTitle(fileName)
+            req.setNotificationVisibility(
+                android.app.DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED
+            )
+            req.setDestinationInExternalFilesDir(
+                this, FileStore.ROOT, "$dataDirectorySuffix/$fileName"
+            )
+            val dm = getSystemService(DOWNLOAD_SERVICE) as android.app.DownloadManager
+            dm.enqueue(req)
+            Toast.makeText(
+                this,
+                "Mengunduh $fileName ke folder $spaceName",
+                Toast.LENGTH_SHORT
+            ).show()
+            logEvent("UNDUH: $fileName")
+        } catch (e: Exception) {
+            Toast.makeText(this, "Gagal mengunduh: ${e.message}", Toast.LENGTH_LONG).show()
+            logEvent("UNDUH GAGAL: $fileName")
+        }
     }
 
-    /** Baca file hasil unduhan native (file:// atau content://) lalu
-     *  tulis ke folder Space ini via saveDownloadedBytes + hapus
-     *  salinan publiknya. */
-    private fun moveDownloadedFile(
-        id: Long, title: String, uri: android.net.Uri?
-    ) {
-        Thread {
-            // uri nullable: amankan ke variabel non-null dulu (smart cast
-            // tidak menembus when(uri?.scheme) di dalam lambda Thread).
-            val u = uri
-            if (u == null) {
-                logBlobDiag("PINDAH GAGAL baca: $title (uri=null)")
-                return@Thread
+    /** Ambil isi blob (v0.1.17): 1) cache frame utama (Claude,
+     *  blob:https://...), 2) tanya semua iframe via postMessage
+     *  (AI Studio, blob:null/... — cache hidup di iframe pembuat,
+     *  dipasang lewat injeksi dokumen), 3) kalau 6 detik tidak ada
+     *  jawaban, XHR terakhir, lalu gagal. Bendera __senzBlobDone
+     *  mencegah simpan ganda bila dua jalur sama-sama berhasil. */
+    private fun downloadBlob(dlUrl: String, fileName: String) {
+        if (!::webView.isInitialized) return
+        pendingBlobFileName = fileName
+        val escaped = dlUrl.replace("\\", "\\\\").replace("'", "\\'")
+        val js = "(function(){try{" +
+            "var url='$escaped';" +
+            "window.__senzPendingBlobUrl=url;" +
+            "window.__senzBlobDone=false;" +
+            "var name='';" +
+            "try{name=(window.__senzBlobName&&window.__senzBlobName(url))||'';}catch(e){}" +
+            "var cached='';" +
+            "try{cached=(window.__senzBlobGet&&window.__senzBlobGet(url))||'';}catch(e){}" +
+            "try{window.SenzBlob.onBlobDiag('dl url='+url.slice(0,60)+',iframes='+document.querySelectorAll('iframe').length+',hit='+(cached!==''));}catch(e){}" +
+            "if(cached){window.__senzBlobDone=true;window.SenzBlob.onBlobData(cached,name);return;}" +
+            "var fs=document.querySelectorAll('iframe');" +
+            "for(var i=0;i<fs.length;i++){" +
+            "try{fs[i].contentWindow.postMessage({type:'senz-get-blob',url:url},'*');}catch(e){}}" +
+            "setTimeout(function(){try{" +
+            "if(window.__senzBlobDone)return;" +
+            "var xhr=new XMLHttpRequest();" +
+            "xhr.open('GET',url,true);" +
+            "xhr.responseType='blob';" +
+            "xhr.timeout=30000;" +
+            "xhr.onload=function(){var r=new FileReader();" +
+            "r.onloadend=function(){if(window.__senzBlobDone)return;" +
+            "window.__senzBlobDone=true;var s=r.result||'';var i=s.indexOf(',');" +
+            "window.SenzBlob.onBlobData(i>=0?s.substring(i+1):s,name);};" +
+            "r.onerror=function(){window.SenzBlob.onBlobError('reader-error');};" +
+            "r.readAsDataURL(xhr.response);};" +
+            "xhr.onerror=function(){window.SenzBlob.onBlobError('xhr-error status='+xhr.status);};" +
+            "xhr.ontimeout=function(){window.SenzBlob.onBlobError('xhr-timeout');};" +
+            "xhr.send();}catch(e){window.SenzBlob.onBlobError('js-exception '+e.message);}},6000);" +
+            "}catch(e){window.SenzBlob.onBlobError('js-exception '+e.message);}})();"
+        try {
+            webView.evaluateJavascript(js, null)
+        } catch (e: Exception) {
+            Toast.makeText(this, "Gagal mengunduh: ${e.message}", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    private fun downloadDataUrl(dlUrl: String, fileName: String) {
+        try {
+            val comma = dlUrl.indexOf(',')
+            val meta = dlUrl.substring(5, comma)
+            val dataPart = dlUrl.substring(comma + 1)
+            val bytes = if (meta.contains(";base64")) {
+                android.util.Base64.decode(dataPart, android.util.Base64.DEFAULT)
+            } else {
+                java.net.URLDecoder.decode(dataPart, "UTF-8").toByteArray(Charsets.UTF_8)
             }
-            try {
-                val bytes: ByteArray? = when (u.scheme) {
-                    "file" -> u.path?.let { java.io.File(it).readBytes() }
-                    "content" -> contentResolver.openInputStream(u)?.use {
-                        it.readBytes()
-                    }
-                    else -> null
-                }
-                if (bytes != null) {
-                    try {
-                        if (u.scheme == "file") {
-                            u.path?.let { java.io.File(it).delete() }
-                        } else {
-                            contentResolver.delete(u, null, null)
-                        }
-                    } catch (e: Exception) {
-                    }
-                    logBlobDiag(
-                        "PINDAH: $title (${bytes.size} B) dari " +
-                            "DownloadManager ke folder $spaceName"
+            saveDownloadedBytes(fileName, bytes)
+        } catch (e: Exception) {
+            Toast.makeText(this, "Gagal mengunduh: ${e.message}", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    /** Jembatan unduh blob: halaman (frame mana pun, lewat postMessage)
+     *  mengirim isi file sebagai base64 + nama asli dari atribut
+     *  download anchor (bisa kosong). Dipanggil dari thread binder —
+     *  decode + tulis di thread pekerja. */
+    private inner class BlobDownloadBridge {
+        @android.webkit.JavascriptInterface
+        fun onBlobData(base64: String, fileName: String) {
+            var name = pendingBlobFileName.ifEmpty { "download" }
+            // Pakai nama asli dari anchor (mis. "audio.wav") bila nama
+            // tebakan generik (tanpa ekstensi / "download").
+            if ((name == "download" || !name.contains(".")) &&
+                fileName.isNotBlank()
+            ) {
+                name = fileName
+            }
+            val finalName = name
+            Thread {
+                try {
+                    val bytes = android.util.Base64.decode(
+                        base64, android.util.Base64.DEFAULT
                     )
-                    saveDownloadedBytes(title, bytes)
-                } else {
-                    logBlobDiag("PINDAH GAGAL baca: $title (uri=$u)")
+                    saveDownloadedBytes(finalName, bytes)
+                } catch (e: Exception) {
+                    runOnUiThread {
+                        Toast.makeText(
+                            this@BrowserActivity,
+                            "Gagal mengunduh: ${e.message}",
+                            Toast.LENGTH_LONG
+                        ).show()
+                    }
                 }
-            } catch (e: Exception) {
-                logBlobDiag("PINDAH GAGAL: $title (${e.message})")
+            }.start()
+        }
+
+        /** Diagnosis dari halaman — ditulis ke _Log-Blob. */
+        @android.webkit.JavascriptInterface
+        fun onBlobDiag(info: String) {
+            logBlobDiag(info)
+        }
+
+        @android.webkit.JavascriptInterface
+        fun onBlobError(reason: String) {
+            logBlobDiag("GAGAL: $reason")
+            runOnUiThread {
+                Toast.makeText(
+                    this@BrowserActivity,
+                    "Gagal mengunduh file (blob tidak bisa dibaca) — coba tekan lagi tombol unduhnya",
+                    Toast.LENGTH_LONG
+                ).show()
             }
-        }.start()
+        }
+    }
+
+    /** Skrip penangkap blob (v0.1.17) — disisipkan ke SETIAP dokumen
+     *  (frame utama + iframe) lewat shouldInterceptRequest, jadi
+     *  berjalan di konteks yang SAMA dengan pembuat blob — termasuk
+     *  iframe sandboxed blob:null/. Isi blob di-cache base64; antar
+     *  frame bicara via postMessage (tetap jalan lintas origin);
+     *  frame utama meneruskan jawaban ke jembatan native SenzBlob. */
+    private fun blobInjectScript(): String {
+        return "(function(){try{" +
+            "if(window.__senzBlobCache)return;" +
+            "window.__senzBlobCache={};" +
+            "window.__senzBlobNames={};" +
+            "window.__senzBlobDone=false;" +
+            "window.__senzBlobGet=function(u){return window.__senzBlobCache[u]||'';};" +
+            "window.__senzBlobName=function(u){return window.__senzBlobNames[u]||'';};" +
+            "var _create=URL.createObjectURL.bind(URL);" +
+            "URL.createObjectURL=function(b){" +
+            "var u=_create(b);" +
+            "try{if(b&&b.size&&b.size<30*1024*1024){" +
+            "var keys=Object.keys(window.__senzBlobCache);" +
+            "if(keys.length>=5){delete window.__senzBlobCache[keys[0]];}" +
+            "var r=new FileReader();" +
+            "r.onloadend=function(){var s=r.result||'';var i=s.indexOf(',');" +
+            "window.__senzBlobCache[u]=i>=0?s.substring(i+1):s;};" +
+            "r.readAsDataURL(b);}}catch(e){}" +
+            "return u;};" +
+            "var _revoke=URL.revokeObjectURL.bind(URL);" +
+            "URL.revokeObjectURL=function(u){" +
+            "setTimeout(function(){" +
+            "try{_revoke(u);}catch(e){}" +
+            "try{delete window.__senzBlobCache[u];}catch(e){}},60000);};" +
+            "var _click=HTMLAnchorElement.prototype.click;" +
+            "HTMLAnchorElement.prototype.click=function(){" +
+            "try{var h=this.href||'';var d=this.getAttribute('download');" +
+            "if(h.indexOf('blob:')===0&&d){window.__senzBlobNames[h]=d;}}catch(e){}" +
+            "return _click.call(this);};" +
+            "window.addEventListener('message',function(ev){" +
+            "try{var m=ev.data||{};" +
+            "if(m&&m.type==='senz-get-blob'&&m.url){" +
+            "var data=window.__senzBlobGet(m.url)||'';" +
+            "var name=window.__senzBlobName(m.url)||'';" +
+            "var reply={type:'senz-blob-data',url:m.url,data:data,name:name};" +
+            "if(window.parent&&window.parent!==window){window.parent.postMessage(reply,'*');}" +
+            "else if(data&&window.SenzBlob){window.SenzBlob.onBlobData(data,name);}" +
+            "}else if(m&&m.type==='senz-blob-data'&&window.parent===window){" +
+            "if(m.url===window.__senzPendingBlobUrl&&m.data&&!window.__senzBlobDone){" +
+            "window.__senzBlobDone=true;window.SenzBlob.onBlobData(m.data,m.name||'');}" +
+            "}}catch(e){}});" +
+            "}catch(e){}})();"
+    }
+
+    /** Sisipkan skrip penangkap blob ke HTML: sebelum </body> (fallback:
+     *  tempel di akhir). Hapus juga <meta> CSP supaya skrip inline
+     *  tidak diblokir. */
+    private fun injectBlobScript(html: String): String {
+        var out = html
+        try {
+            out = out.replace(
+                Regex(
+                    "<meta[^>]*http-equiv\\s*=\\s*[\"'']?Content-Security-Policy[\"'']?[^>]*>",
+                    RegexOption.IGNORE_CASE
+                ),
+                ""
+            )
+            val script = "<script>" + blobInjectScript() + "</script>"
+            val idx = out.lastIndexOf("</body>", ignoreCase = true)
+            out = if (idx >= 0) {
+                out.substring(0, idx) + script + out.substring(idx)
+            } else {
+                out + script
+            }
+        } catch (e: Exception) {
+        }
+        return out
+    }
+
+    /** Inti v0.1.17: ambil dokumen HTML (frame utama + iframe), sisipkan
+     *  skrip penangkap blob, kembalikan tanpa header CSP.
+     *  Dipanggil dari shouldInterceptRequest (thread IO WebView).
+     *  Hanya GET tanpa Range + URL yang kelihatan seperti dokumen
+     *  (tanpa ekstensi statis) yang diambil; sisanya null (WebView
+     *  muat sendiri seperti biasa). Gagal apa pun → null (halaman
+     *  tetap jalan, cuma tanpa injeksi). */
+    private fun interceptDocument(
+        request: WebResourceRequest
+    ): android.webkit.WebResourceResponse? {
+        try {
+            if (request.method != "GET") return null
+            if (request.requestHeaders.containsKey("Range")) return null
+            val urlStr = request.url.toString()
+            if (!urlStr.startsWith("http://") &&
+                !urlStr.startsWith("https://")
+            ) return null
+            val path = request.url.path ?: ""
+            val last = path.substringAfterLast('/', "")
+            if (last.contains('.')) {
+                val ext = last.substringAfterLast('.', "").lowercase()
+                if (ext in STATIC_EXTS) return null
+            }
+            val skipHeaders = setOf(
+                "If-None-Match", "If-Modified-Since", "If-Range", "Range",
+                "Accept-Encoding", "Content-Length", "Host", "Connection"
+            )
+            val conn = (java.net.URL(urlStr).openConnection()
+                as java.net.HttpURLConnection).apply {
+                connectTimeout = 15000
+                readTimeout = 15000
+                instanceFollowRedirects = true
+                requestMethod = "GET"
+                for ((k, v) in request.requestHeaders) {
+                    if (skipHeaders.any { it.equals(k, true) }) continue
+                    setRequestProperty(k, v)
+                }
+                val cookie = CookieManager.getInstance().getCookie(urlStr)
+                if (cookie != null) setRequestProperty("Cookie", cookie)
+            }
+            val code = conn.responseCode
+            if (code < 200 || code >= 400) return null
+            val contentType = conn.contentType ?: ""
+            if (conn.contentLengthLong > 2 * 1024 * 1024) return null
+            val bytes = try {
+                conn.inputStream.readBytes()
+            } catch (e: Exception) {
+                return null
+            }
+            val headers = mutableMapOf<String, String>()
+            for ((k, vs) in conn.headerFields) {
+                if (k == null) continue
+                if (k.equals("Content-Security-Policy", true) ||
+                    k.equals("Content-Security-Policy-Report-Only", true) ||
+                    k.equals("Content-Length", true)
+                ) continue
+                headers[k] = vs?.joinToString(", ") ?: ""
+            }
+            val mime = contentType.substringBefore(';').trim()
+                .ifEmpty { "text/html" }
+            val charset = if (contentType.contains("charset=")) {
+                contentType.substringAfter("charset=")
+                    .substringBefore(';').trim()
+            } else "UTF-8"
+            var body = bytes
+            if (mime.contains("text/html")) {
+                val html = String(bytes, charset(charset))
+                val injected = injectBlobScript(html)
+                body = injected.toByteArray(charset(charset))
+                logBlobDiag("INJECT: $urlStr (${body.size} B)")
+            }
+            return android.webkit.WebResourceResponse(
+                mime, charset, code, conn.responseMessage ?: "OK",
+                headers, java.io.ByteArrayInputStream(body)
+            )
+        } catch (e: Exception) {
+            return null
+        }
     }
 
     /** Tulis byte hasil unduhan ke folder Space ini.
@@ -972,7 +1183,6 @@ abstract class BrowserActivity : AppCompatActivity() {
         // bikin crash native. Urutan aman: hancurkan pop-up dulu, lepas
         // keduanya dari parent, baru hancurkan WebView utama.
         activityDestroyed = true
-        downloadWatcherRunning = false
         stopLiveCapture()
         try {
             popupView?.let {
