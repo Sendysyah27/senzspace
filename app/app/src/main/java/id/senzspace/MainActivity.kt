@@ -40,6 +40,7 @@ class MainActivity : AppCompatActivity() {
     companion object {
         const val MAX_SPACES = 10
         const val EXTRA_URL = "extra_url"
+        const val EXTRA_CLEAR_DATA = "extra_clear_data"
         const val EXTRA_SPACE_NAME = "extra_space_name"
         const val EXTRA_SPACE_COLOR = "extra_space_color"
         private const val PREFS_UI = "senzspace_ui"
@@ -697,6 +698,7 @@ class MainActivity : AppCompatActivity() {
                     "Ubah nama",
                     if (frozen) "Nyalakan Live" else "Matikan Live",
                     "Buka berdampingan",
+                    "Bersihkan data Space",
                     "Hapus Space"
                 )
             ) { _, which ->
@@ -713,7 +715,8 @@ class MainActivity : AppCompatActivity() {
                         renderDashboard()
                     }
                     2 -> showSplitPicker(entry)
-                    3 -> showDeleteDialog(entry)
+                    3 -> showClearDataDialog(entry)
+                    4 -> showDeleteDialog(entry)
                 }
             }
             .setNegativeButton("Batal", null)
@@ -772,6 +775,27 @@ class MainActivity : AppCompatActivity() {
             .show()
     }
 
+    /** Bersihkan data Space (v0.1.30): cookie + storage + cache proses
+     *  Space ini dihapus, lalu halaman awal dimuat ulang. Obat untuk
+     *  cookie rusak (temuan HP 17 Nov 11:36: Google 400 terus di Space 7
+     *  meski Space sudah dihapus-buat lagi — penghapusan folder data saat
+     *  proses :spaceN masih hidup tidak selalu berhasil, cookie rusak
+     *  bertahan). File unduhan TIDAK dihapus. */
+    private fun showClearDataDialog(entry: SpaceRegistry.SpaceEntry) {
+        AlertDialog.Builder(this)
+            .setTitle("Bersihkan data \"${entry.name}\"?")
+            .setMessage(
+                "Cookie + data login Space ini dihapus, lalu halaman awal " +
+                    "dimuat ulang. Kamu harus login lagi di Space ini. " +
+                    "File unduhan di folder Space ini TETAP ada."
+            )
+            .setPositiveButton("Bersihkan") { _, _ ->
+                openSpace(entry, clearData = true)
+            }
+            .setNegativeButton("Batal", null)
+            .show()
+    }
+
     private fun showDeleteDialog(entry: SpaceRegistry.SpaceEntry) {
         AlertDialog.Builder(this)
             .setTitle("Hapus \"${entry.name}\"?")
@@ -815,11 +839,20 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun openSpace(entry: SpaceRegistry.SpaceEntry) {
+    private fun openSpace(entry: SpaceRegistry.SpaceEntry, clearData: Boolean = false) {
         // Multi Live: pakai instance Space yang sudah jalan (REORDER_TO_FRONT)
         // — jangan bikin WebView kedua untuk Space yang sama.
+        // Bersihkan data: FLAG_ACTIVITY_CLEAR_TOP (bukan REORDER) supaya
+        // instance lama DIHANCURKAN dan onCreate jalan lagi dengan extra
+        // clear — REORDER saja tidak memanggil onCreate/onNewIntent baru
+        // (tidak ada onNewIntent di BrowserActivity), extra akan diabaikan.
         val intent = Intent(this, SpaceRegistry.activityForSlot(entry.slot)).apply {
-            flags = Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
+            if (clearData) {
+                flags = Intent.FLAG_ACTIVITY_CLEAR_TOP
+                putExtra(EXTRA_CLEAR_DATA, true)
+            } else {
+                flags = Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
+            }
             putExtra(EXTRA_SPACE_NAME, entry.name)
             putExtra(EXTRA_SPACE_COLOR, entry.color)
             putExtra(EXTRA_URL, entry.url)

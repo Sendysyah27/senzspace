@@ -455,6 +455,29 @@ muncul (Ubah nama / Matikan Live / Hapus Space).
    "Beku" juga. Hapus Space yang beku → Space baru di slot yang sama
    tidak ikut beku.
 
+## Tes Bersihkan Data Space v0.1.30 di HP (bahasa bayi)
+
+Latar: Google 400 TERUS di Space 7 (11:36) meski Space sudah
+dihapus-buat lagi dan v0.1.29 sudah dipasang. Tersangka: cookie
+.google.com yang RUSAK di toko cookie Space itu — cookie rusak
+bikin Google menolak request dengan 400, dan penghapusan folder
+data saat proses Space masih hidup tidak selalu berhasil, jadi
+cookie rusak bertahan. Obat: menu baru "Bersihkan data Space"
+(tahan lama kartu) — cookie + storage + cache dihapus DI DALAM
+proses Space itu sendiri, lalu halaman awal dimuat ulang.
+
+1. Install APK v0.1.30-s1cleardata (NIMPA — JANGAN uninstall).
+   Tutup total app dulu (hapus dari recent apps), lalu buka lagi.
+2. Di Beranda, TAHAN LAMA kartu Space 7 (STUDIO) → pilih
+   **"Bersihkan data Space"** → tap **"Bersihkan"**.
+   **LULUS** bila: muncul toast "Data Space dibersihkan" dan
+   halaman Google AI Studio / halaman login Google muncul
+   (bukan lagi halaman error 400).
+3. Login akun Google seperti biasa.
+   **LULUS** bila: masuk ke halaman AI Studio (Playground).
+4. (Opsional, bila sempat) tes unduhan audio AI Studio sekali —
+   **LULUS** bila file .wav tersimpan dengan nama asli.
+
 ## Tes Login AI Studio v0.1.29 di HP (bahasa bayi)
 
 Latar: login Google di Space 7 gagal dengan dialog "Something went

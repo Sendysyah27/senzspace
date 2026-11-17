@@ -786,7 +786,11 @@ abstract class BrowserActivity : AppCompatActivity() {
         // TERBUKTI bikin callback OAuth kehilangan opener → blank putih.
 
         if (savedInstanceState == null) {
-            webView.loadUrl(url)
+            if (intent.getBooleanExtra(MainActivity.EXTRA_CLEAR_DATA, false)) {
+                clearSpaceDataAndLoad(url)
+            } else {
+                webView.loadUrl(url)
+            }
         }
         startLiveCapture()
         // Guard anti-kill: service foreground di proses Space ini supaya
@@ -800,6 +804,55 @@ abstract class BrowserActivity : AppCompatActivity() {
             true
         }
         if (guardOn) KeepAlive.start(this, dataDirectorySuffix, spaceName)
+    }
+
+    /** Bersihkan data Space ini (v0.1.30) lalu muat halaman awal.
+     *  Dijalankan DI DALAM proses Space (:spaceN) — CookieManager tiap
+     *  proses punya toko cookie sendiri (dataDirectorySuffix), jadi
+     *  MainActivity (proses utama) TIDAK BISA membersihkannya; hanya
+     *  Space ini sendiri yang bisa. Menghapus: semua cookie (termasuk
+     *  cookie .google.com yang rusak → Google 400), WebStorage
+     *  (localStorage/IndexedDB), cache WebView, plus file status login
+     *  + limit Space ini supaya chip Beranda jujur lagi. File unduhan
+     *  TIDAK disentuh. removeAllCookies bersifat async — halaman awal
+     *  dimuat di callback-nya; pengaman 3 detik bila callback telat. */
+    private fun clearSpaceDataAndLoad(home: String) {
+        try {
+            android.webkit.CookieManager.getInstance().removeAllCookies {
+                try {
+                    android.webkit.WebStorage.getInstance().deleteAllData()
+                } catch (_: Exception) {
+                }
+                try {
+                    if (::webView.isInitialized) webView.clearCache(true)
+                } catch (_: Exception) {
+                }
+                try {
+                    java.io.File(filesDir, "space_${dataDirectorySuffix}.txt").delete()
+                    java.io.File(filesDir, "space_${dataDirectorySuffix}_limit.txt").delete()
+                } catch (_: Exception) {
+                }
+                try {
+                    android.webkit.CookieManager.getInstance().flush()
+                } catch (_: Exception) {
+                }
+                runOnUiThread {
+                    Toast.makeText(
+                        this,
+                        "Data Space dibersihkan — memuat ulang",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                    if (::webView.isInitialized) webView.loadUrl(home)
+                }
+            }
+        } catch (_: Exception) {
+            if (::webView.isInitialized) webView.loadUrl(home)
+        }
+        rootLayout.postDelayed({
+            if (::webView.isInitialized && webView.url == null) {
+                webView.loadUrl(home)
+            }
+        }, 3000)
     }
 
     /** Teruskan sentuhan yang MULAI di top bar ke detektor geser
