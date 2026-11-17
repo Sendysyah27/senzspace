@@ -24,13 +24,13 @@ import java.io.File
 // File Manager native v2 (S1, PRD F7 — perintah Sendy 22:31 "kaku, kurang
 // native, tambahkan fungsi tool yang lengkap").
 // Pola app file manager Android pada umumnya:
-// - Baris ringkas 56dp (ikon + nama + meta + tombol ⋮), bukan kartu besar
+// - Baris ringkas 56dp (ikon + nama + meta + tombol menu), bukan kartu besar
 //   dengan 3 tombol per file.
 // - Navigasi drill-down dengan breadcrumb + tombol Back naik satu level
 //   (folder bisa berisi subfolder, mis. per episode di _Arsip).
 // - Tap file = Buka (viewer sistem via FileProvider); tahan = pilih banyak
 //   (action bar bawah: Pindah / Salin / Ekspor / Bagikan / Hapus).
-// - Menu ⋮ per file: Buka, Bagikan, Pindah, Salin, Ganti nama, Detail,
+// - Menu per file: Buka, Bagikan, Pindah, Salin, Ganti nama, Detail,
 //   Ekspor, Hapus.
 // - Cari (filter nama), Urut (Nama / Terbaru / Terlama / Terbesar —
 //   tersimpan), Buat folder, Detail file (ukuran, tanggal, path).
@@ -61,7 +61,7 @@ class FileManagerActivity : AppCompatActivity() {
 
     private lateinit var content: LinearLayout
     private lateinit var crumbBar: TextView
-    private lateinit var backBtn: TextView
+    private lateinit var backBtn: android.widget.ImageButton
     private lateinit var toolbarRow: LinearLayout
     private lateinit var searchBox: EditText
     private lateinit var sortBtn: TextView
@@ -129,12 +129,18 @@ class FileManagerActivity : AppCompatActivity() {
             gravity = Gravity.CENTER_VERTICAL
             setPadding(dp(16), dp(4), dp(16), dp(4))
         }
-        backBtn = TextView(this).apply {
-            text = "‹ "
-            textSize = 20f
-            typeface = Typeface.DEFAULT_BOLD
-            setTextColor(Color.parseColor("#5B5BD6"))
-            setPadding(0, 0, dp(4), 0)
+        // v0.1.32: tombol kembali jadi ikon SVG chevron-left yang
+        // lebih besar (ikon 28dp, area sentuh 44dp) — dulu cuma
+        // huruf ‹ kecil.
+        backBtn = android.widget.ImageButton(this).apply {
+            setImageResource(R.drawable.ic_chevron_left)
+            imageTintList = android.content.res.ColorStateList.valueOf(
+                Color.parseColor("#5B5BD6")
+            )
+            setBackgroundResource(android.R.drawable.list_selector_background)
+            layoutParams = LinearLayout.LayoutParams(dp(44), dp(44))
+            scaleType = android.widget.ImageView.ScaleType.CENTER_INSIDE
+            setPadding(dp(8), dp(8), dp(8), dp(8))
         }
         backBtn.setOnClickListener { goUp() }
         crumbBar = TextView(this).apply {
@@ -157,7 +163,8 @@ class FileManagerActivity : AppCompatActivity() {
             textSize = 13f
             setTextColor(Color.parseColor("#E8ECF4"))
             setHintTextColor(Color.parseColor("#8A94A6"))
-            setBackgroundColor(Color.parseColor("#16233A"))
+            // v0.1.32: sudut membulat (radius 12dp).
+            setBackgroundResource(R.drawable.chip_rounded)
             setPadding(dp(10), dp(8), dp(10), dp(8))
             layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
             addTextChangedListener(object : TextWatcher {
@@ -170,37 +177,40 @@ class FileManagerActivity : AppCompatActivity() {
             })
         }
         sortBtn = TextView(this).apply {
-            text = "⇅ ${sortLabel()}"
+            // v0.1.32: simbol urut dihapus (tanpa simbol) + sudut membulat.
+            text = sortLabel()
             textSize = 12f
             typeface = Typeface.DEFAULT_BOLD
             setTextColor(Color.parseColor("#E8ECF4"))
-            setBackgroundColor(Color.parseColor("#16233A"))
+            setBackgroundResource(R.drawable.chip_rounded)
             setPadding(dp(10), dp(8), dp(10), dp(8))
         }
         sortBtn.setOnClickListener { showSortMenu() }
         val newFolderBtn = TextView(this).apply {
-            text = "＋ Folder"
+            // v0.1.32: tanda plus lebar diganti + biasa + sudut membulat.
+            text = "+ Folder"
             textSize = 12f
             typeface = Typeface.DEFAULT_BOLD
             setTextColor(Color.parseColor("#E8ECF4"))
-            setBackgroundColor(Color.parseColor("#5B5BD6"))
+            setBackgroundResource(R.drawable.btn_primary)
             setPadding(dp(10), dp(8), dp(10), dp(8))
         }
         newFolderBtn.setOnClickListener { showNewFolderDialog() }
         // v0.1.31: ganti tampilan Grid/Daftar + Tempel (clipboard).
         viewBtn = TextView(this).apply {
-            text = if (viewMode == "grid") "☰ Daftar" else "▦ Grid"
+            // v0.1.32: simbol grid/daftar dihapus (tanpa simbol) + sudut membulat.
+            text = if (viewMode == "grid") "Daftar" else "Grid"
             textSize = 12f
             typeface = Typeface.DEFAULT_BOLD
             setTextColor(Color.parseColor("#E8ECF4"))
-            setBackgroundColor(Color.parseColor("#16233A"))
+            setBackgroundResource(R.drawable.chip_rounded)
             setPadding(dp(10), dp(8), dp(10), dp(8))
         }
         viewBtn.setOnClickListener {
             viewMode = if (viewMode == "grid") "list" else "grid"
             getSharedPreferences(PREFS_UI, MODE_PRIVATE)
                 .edit().putString(KEY_VIEW, viewMode).apply()
-            viewBtn.text = if (viewMode == "grid") "☰ Daftar" else "▦ Grid"
+            viewBtn.text = if (viewMode == "grid") "Daftar" else "Grid"
             render()
         }
         pasteBtn = TextView(this).apply {
@@ -208,7 +218,7 @@ class FileManagerActivity : AppCompatActivity() {
             textSize = 12f
             typeface = Typeface.DEFAULT_BOLD
             setTextColor(Color.WHITE)
-            setBackgroundColor(Color.parseColor("#5B5BD6"))
+            setBackgroundResource(R.drawable.btn_primary)
             setPadding(dp(10), dp(8), dp(10), dp(8))
             visibility = View.GONE
         }
@@ -409,7 +419,7 @@ class FileManagerActivity : AppCompatActivity() {
                 setPadding(dp(12), dp(8), dp(12), dp(8))
             }
             // Ikon folder vektor (v0.1.13) — tint warna Space-nya,
-            // menggantikan titik "●" + emoji 📁 (dua elemen jadi satu).
+            // menggantikan titik "●" (dua elemen jadi satu).
             row.addView(android.widget.ImageView(this).apply {
                 setImageResource(R.drawable.ic_nav_folder)
                 imageTintList = android.content.res.ColorStateList.valueOf(
@@ -633,22 +643,26 @@ class FileManagerActivity : AppCompatActivity() {
             setTextColor(Color.parseColor("#8A94A6"))
         })
         row.addView(texts)
-        // Kanan: ceklis (mode pilih) atau ⋮ (menu)
+        // Kanan: ceklis (mode pilih) atau tombol menu
+        // v0.1.32: radio pilih dan tombol menu diganti ikon SVG (tanpa simbol teks).
         if (selected.isNotEmpty()) {
-            row.addView(TextView(this).apply {
-                text = if (isSelected) "◉" else "◯"
-                textSize = 22f
-                setTextColor(
+            row.addView(android.widget.ImageView(this).apply {
+                setImageResource(
+                    if (isSelected) R.drawable.ic_check_circle else R.drawable.ic_circle
+                )
+                imageTintList = android.content.res.ColorStateList.valueOf(
                     Color.parseColor(if (isSelected) "#5B5BD6" else "#8A94A6")
                 )
+                layoutParams = LinearLayout.LayoutParams(dp(22), dp(22))
                 setPadding(dp(8), 0, dp(4), 0)
             })
         } else {
-            val more = TextView(this).apply {
-                text = "⋮"
-                textSize = 20f
-                typeface = Typeface.DEFAULT_BOLD
-                setTextColor(Color.parseColor("#8A94A6"))
+            val more = android.widget.ImageView(this).apply {
+                setImageResource(R.drawable.ic_more_vertical)
+                imageTintList = android.content.res.ColorStateList.valueOf(
+                    Color.parseColor("#8A94A6")
+                )
+                layoutParams = LinearLayout.LayoutParams(dp(20), dp(20))
                 setPadding(dp(12), dp(4), dp(4), dp(4))
             }
             more.setOnClickListener { showEntryMenu(more, entry) }
@@ -678,7 +692,7 @@ class FileManagerActivity : AppCompatActivity() {
         render()
     }
 
-    // ---------- Menu ⋮ per entri ----------
+    // ---------- Menu per entri ----------
 
     private fun showEntryMenu(anchor: View, entry: File) {
         val menu = PopupMenu(this, anchor)
@@ -722,7 +736,7 @@ class FileManagerActivity : AppCompatActivity() {
                 sortMode = key
                 getSharedPreferences(PREFS_UI, MODE_PRIVATE)
                     .edit().putString(KEY_SORT, key).apply()
-                sortBtn.text = "⇅ ${sortLabel()}"
+                sortBtn.text = sortLabel()
                 render()
                 true
             }

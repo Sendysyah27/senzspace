@@ -62,13 +62,32 @@ class LockActivity : AppCompatActivity() {
             )
         }
 
-        val logo = TextView(this).apply {
-            text = "🔒 SenzSpace"
+        // v0.1.32: emoji kunci diganti ikon SVG minimalis (tanpa emoji).
+        val logo = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            )
+        }
+        val dens = resources.displayMetrics.density
+        logo.addView(android.widget.ImageView(this).apply {
+            setImageResource(R.drawable.ic_lock)
+            imageTintList = android.content.res.ColorStateList.valueOf(
+                Color.parseColor("#E8ECF4")
+            )
+            layoutParams = LinearLayout.LayoutParams(
+                (24 * dens).toInt(), (24 * dens).toInt()
+            )
+        })
+        logo.addView(TextView(this).apply {
+            text = "SenzSpace"
             textSize = 24f
             typeface = Typeface.DEFAULT_BOLD
             setTextColor(Color.parseColor("#E8ECF4"))
-            gravity = Gravity.CENTER
-        }
+            setPadding((10 * dens).toInt(), 0, 0, 0)
+        })
         titleView = TextView(this).apply {
             textSize = 18f
             typeface = Typeface.DEFAULT_BOLD
@@ -140,10 +159,14 @@ class LockActivity : AppCompatActivity() {
         }
 
         val bioBtn = Button(this).apply {
-            text = "🔓  Sidik jari / wajah"
+            // v0.1.32: emoji gembok-buka diganti ikon SVG unlock +
+            // tombol persegi panjang membulat.
+            text = "Sidik jari / wajah"
             textSize = 15f
             setTextColor(Color.WHITE)
-            setBackgroundColor(Color.parseColor("#5B5BD6"))
+            setBackgroundResource(R.drawable.btn_primary)
+            setCompoundDrawablesWithIntrinsicBounds(R.drawable.ic_unlock, 0, 0, 0)
+            compoundDrawablePadding = (8 * resources.displayMetrics.density).toInt()
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT

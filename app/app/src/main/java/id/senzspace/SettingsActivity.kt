@@ -128,12 +128,25 @@ class SettingsActivity : AppCompatActivity() {
             gravity = Gravity.CENTER_VERTICAL
             setPadding(0, 0, 0, 16)
         }
-        val lockLabel = TextView(this).apply {
-            text = "🔒  Kunci App (PIN)"
-            textSize = 16f
-            setTextColor(Color.parseColor("#E8ECF4"))
+        // v0.1.32: emoji kunci diganti ikon SVG minimalis (tanpa emoji).
+        val lockLabel = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
             layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
         }
+        lockLabel.addView(android.widget.ImageView(this).apply {
+            setImageResource(R.drawable.ic_lock)
+            imageTintList = android.content.res.ColorStateList.valueOf(
+                Color.parseColor("#8A94A6")
+            )
+            layoutParams = LinearLayout.LayoutParams(dp(20), dp(20))
+        })
+        lockLabel.addView(TextView(this).apply {
+            text = "Kunci App (PIN)"
+            textSize = 16f
+            setTextColor(Color.parseColor("#E8ECF4"))
+            setPadding(dp(10), 0, 0, 0)
+        })
         lockSwitch = Switch(this)
         lockRow.addView(lockLabel)
         lockRow.addView(lockSwitch)
@@ -152,7 +165,8 @@ class SettingsActivity : AppCompatActivity() {
         changePinBtn = Button(this).apply {
             text = "Ubah PIN"
             setTextColor(Color.WHITE)
-            setBackgroundColor(Color.parseColor("#5B5BD6"))
+            // v0.1.32: tombol persegi panjang membulat (radius 12dp).
+            setBackgroundResource(R.drawable.btn_primary)
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT
@@ -201,12 +215,26 @@ class SettingsActivity : AppCompatActivity() {
             gravity = Gravity.CENTER_VERTICAL
             setPadding(0, 0, 0, 8)
         }
-        guardRow.addView(TextView(this).apply {
-            text = "🛡️  Guard anti-kill"
+        // v0.1.32: emoji perisai diganti ikon SVG minimalis (tanpa emoji).
+        val guardLabel = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+        }
+        guardLabel.addView(android.widget.ImageView(this).apply {
+            setImageResource(R.drawable.ic_shield)
+            imageTintList = android.content.res.ColorStateList.valueOf(
+                Color.parseColor("#8A94A6")
+            )
+            layoutParams = LinearLayout.LayoutParams(dp(20), dp(20))
+        })
+        guardLabel.addView(TextView(this).apply {
+            text = "Guard anti-kill"
             textSize = 16f
             setTextColor(Color.parseColor("#E8ECF4"))
-            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+            setPadding(dp(10), 0, 0, 0)
         })
+        guardRow.addView(guardLabel)
         guardSwitch = Switch(this)
         guardRow.addView(guardSwitch)
         root.addView(guardRow)
@@ -266,7 +294,7 @@ class SettingsActivity : AppCompatActivity() {
         val batteryBtn = Button(this).apply {
             text = "Minta pengecualian baterai"
             setTextColor(Color.WHITE)
-            setBackgroundColor(Color.parseColor("#0EA5A5"))
+            setBackgroundResource(R.drawable.btn_teal)
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT
@@ -295,7 +323,7 @@ class SettingsActivity : AppCompatActivity() {
         val exportPickBtn = Button(this).apply {
             text = "Pilih folder ekspor"
             setTextColor(Color.WHITE)
-            setBackgroundColor(Color.parseColor("#5B5BD6"))
+            setBackgroundResource(R.drawable.btn_primary)
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT
@@ -306,7 +334,7 @@ class SettingsActivity : AppCompatActivity() {
         val exportResetBtn = Button(this).apply {
             text = "Reset ke default (Download/SenzSpace)"
             setTextColor(Color.parseColor("#E8ECF4"))
-            setBackgroundColor(Color.parseColor("#24344D"))
+            setBackgroundResource(R.drawable.btn_dark)
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT
@@ -359,7 +387,7 @@ class SettingsActivity : AppCompatActivity() {
         val clearBtn = Button(this).apply {
             text = "Bersihkan thumbnail live"
             setTextColor(Color.parseColor("#E8ECF4"))
-            setBackgroundColor(Color.parseColor("#24344D"))
+            setBackgroundResource(R.drawable.btn_dark)
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT
@@ -408,6 +436,9 @@ class SettingsActivity : AppCompatActivity() {
         setContentView(scroll)
         refresh()
     }
+
+    private fun dp(v: Int): Int =
+        (v * resources.displayMetrics.density).toInt()
 
     private fun sectionTitle(text: String): TextView {
         return TextView(this).apply {
@@ -502,7 +533,7 @@ class SettingsActivity : AppCompatActivity() {
         }
         if (::batteryStatus.isInitialized) {
             val ignored = batteryIgnored()
-            batteryStatus.text = if (ignored) "Dikecualikan ✓" else "Dibatasi"
+            batteryStatus.text = if (ignored) "Dikecualikan" else "Dibatasi"
             batteryStatus.setTextColor(
                 Color.parseColor(if (ignored) "#34D399" else "#FBBF24")
             )

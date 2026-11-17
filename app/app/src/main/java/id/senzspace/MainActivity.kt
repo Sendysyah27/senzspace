@@ -346,10 +346,13 @@ class MainActivity : AppCompatActivity() {
             gravity = Gravity.CENTER_VERTICAL
             setPadding(dp(16), dp(16), dp(16), dp(16))
         }
-        val plus = TextView(this).apply {
-            text = "＋"
-            textSize = 22f
-            setTextColor(Color.parseColor("#5B5BD6"))
+        // v0.1.32: tanda plus diganti ikon SVG minimalis (tanpa emoji/simbol).
+        val plus = android.widget.ImageView(this).apply {
+            setImageResource(R.drawable.ic_plus)
+            imageTintList = android.content.res.ColorStateList.valueOf(
+                Color.parseColor("#5B5BD6")
+            )
+            layoutParams = LinearLayout.LayoutParams(dp(22), dp(22))
         }
         val label = TextView(this).apply {
             text = "  Space baru"
@@ -693,59 +696,194 @@ class MainActivity : AppCompatActivity() {
 
     // ---------- Opsi Space (rename / beku / split / hapus, dipakai kedua mode) ----------
 
+    // v0.1.32: menu tahan lama Space didesain ulang — bukan lagi
+    // AlertDialog polos, tapi kartu #16233A sudut 18dp: header (titik
+    // warna + nama + chip status + situs + jumlah file), tiap baris
+    // punya ikon SVG + label + hint kecil, Hapus Space merah.
     private fun showSpaceOptions(entry: SpaceRegistry.SpaceEntry) {
         // v0.1.20: toggle Live per Space — tahan lama kartu live di
         // Beranda, pilih Matikan/Nyalakan Live. Yang berhenti hanya
         // update gambar live; browser + sesi Space tetap jalan.
         val suffix = SpaceRegistry.suffixForSlot(entry.slot)
         val frozen = LiveFreeze.isFrozen(this, suffix)
-        AlertDialog.Builder(this)
-            .setTitle(entry.name)
-            .setItems(
-                arrayOf(
-                    "Ubah nama",
-                    if (frozen) "Nyalakan Live" else "Matikan Live",
-                    "Buka berdampingan",
-                    "Bersihkan data Space",
-                    "Hapus Space"
-                )
-            ) { _, which ->
-                when (which) {
-                    0 -> showRenameDialog(entry)
-                    1 -> {
-                        LiveFreeze.setFrozen(this, suffix, !frozen)
-                        if (frozen) {
-                            // v0.1.31: "Nyalakan Live" MEMBUKA Space-nya —
-                            // timer tangkap thumbnail hidup di activity
-                            // Space; bila activity itu sempat mati selagi
-                            // dibekukan, hanya membuka Space yang
-                            // menghidupkannya lagi (temuan HP: live tidak
-                            // aktif lagi setelah dibekukan). Saat kembali
-                            // ke Beranda, onPause menangkap thumbnail
-                            // segar → tile live lagi.
-                            Toast.makeText(
-                                this,
-                                "\"${entry.name}\": Live dinyalakan — membuka Space",
-                                Toast.LENGTH_SHORT
-                            ).show()
-                            openSpace(entry)
-                        } else {
-                            Toast.makeText(
-                                this,
-                                "\"${entry.name}\": Live dibekukan — browser tetap jalan",
-                                Toast.LENGTH_SHORT
-                            ).show()
-                            renderDashboard()
-                        }
-                    }
-                    2 -> showSplitPicker(entry)
-                    3 -> showClearDataDialog(entry)
-                    4 -> showDeleteDialog(entry)
-                }
+        val (statusText, statusColor) = SpacePickerDialog.statusOf(this, entry)
+        val files = try {
+            FileStore.count(this, suffix)
+        } catch (e: Exception) {
+            0
+        }
+        val dialog = android.app.Dialog(this)
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = UiKit.roundedBg("#16233A", 18, this@MainActivity)
+            setPadding(dp(20), dp(20), dp(20), dp(12))
+            layoutParams = ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            )
+        }
+        // Header: titik warna + nama + chip status
+        val header = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        header.addView(View(this).apply {
+            layoutParams = LinearLayout.LayoutParams(dp(12), dp(12))
+            background = UiKit.dotBg(entry.color)
+        })
+        header.addView(TextView(this).apply {
+            text = entry.name
+            textSize = 18f
+            typeface = Typeface.DEFAULT_BOLD
+            setTextColor(Color.parseColor("#E8ECF4"))
+            setPadding(dp(10), 0, 0, 0)
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+        })
+        header.addView(TextView(this).apply {
+            text = statusText
+            textSize = 11f
+            typeface = Typeface.DEFAULT_BOLD
+            setTextColor(Color.parseColor(statusColor))
+            setBackgroundResource(R.drawable.chip_bg)
+            setPadding(dp(10), dp(4), dp(10), dp(4))
+        })
+        root.addView(header)
+        // Detail kecil: situs + jumlah file
+        root.addView(TextView(this).apply {
+            text = entry.url.removePrefix("https://").removePrefix("http://") +
+                "  •  $files file"
+            textSize = 12f
+            setTextColor(Color.parseColor("#8A94A6"))
+            setPadding(0, dp(8), 0, dp(8))
+        })
+        root.addView(View(this).apply {
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(1)
+            )
+            setBackgroundColor(Color.parseColor("#24344D"))
+        })
+        // Aksi toggle Live (dipakai baris Matikan/Nyalakan Live).
+        val toggleFreeze = {
+            LiveFreeze.setFrozen(this, suffix, !frozen)
+            if (frozen) {
+                // v0.1.31: "Nyalakan Live" MEMBUKA Space-nya —
+                // timer tangkap thumbnail hidup di activity
+                // Space; bila activity itu sempat mati selagi
+                // dibekukan, hanya membuka Space yang
+                // menghidupkannya lagi (temuan HP: live tidak
+                // aktif lagi setelah dibekukan). Saat kembali
+                // ke Beranda, onPause menangkap thumbnail
+                // segar → tile live lagi.
+                Toast.makeText(
+                    this,
+                    "\"${entry.name}\": Live dinyalakan — membuka Space",
+                    Toast.LENGTH_SHORT
+                ).show()
+                openSpace(entry)
+            } else {
+                Toast.makeText(
+                    this,
+                    "\"${entry.name}\": Live dibekukan — browser tetap jalan",
+                    Toast.LENGTH_SHORT
+                ).show()
+                renderDashboard()
             }
-            .setNegativeButton("Batal", null)
-            .show()
+        }
+        // Baris menu: (ikon, label, hint, warna, aksi)
+        val rows = listOf(
+            MenuRow(
+                R.drawable.ic_edit, "Ubah nama",
+                "Ganti nama Space ini", "#8A94A6"
+            ) { showRenameDialog(entry) },
+            MenuRow(
+                if (frozen) R.drawable.ic_play else R.drawable.ic_pause,
+                if (frozen) "Nyalakan Live" else "Matikan Live",
+                if (frozen) "Hidupkan lagi gambar live di Beranda"
+                else "Berhentikan gambar live, browser tetap jalan",
+                "#8A94A6"
+            ) { toggleFreeze() },
+            MenuRow(
+                R.drawable.ic_columns, "Buka berdampingan",
+                "Layar terbagi atas-bawah dengan Space lain", "#8A94A6"
+            ) { showSplitPicker(entry) },
+            MenuRow(
+                R.drawable.ic_database, "Bersihkan data Space",
+                "Hapus cookie + login, file unduhan aman", "#8A94A6"
+            ) { showClearDataDialog(entry) },
+            MenuRow(
+                R.drawable.ic_trash, "Hapus Space",
+                "Space + sesi login dihapus", "#F87171"
+            ) { showDeleteDialog(entry) }
+        )
+        var firstRow = true
+        for (row in rows) {
+            if (!firstRow) {
+                root.addView(View(this).apply {
+                    layoutParams = LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT, dp(1)
+                    )
+                    setBackgroundColor(Color.parseColor("#24344D"))
+                })
+            }
+            firstRow = false
+            val rowView = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                setPadding(0, dp(12), 0, dp(12))
+                isClickable = true
+                isFocusable = true
+            }
+            rowView.addView(android.widget.ImageView(this).apply {
+                setImageResource(row.iconRes)
+                imageTintList = android.content.res.ColorStateList.valueOf(
+                    Color.parseColor(row.tint)
+                )
+                layoutParams = LinearLayout.LayoutParams(dp(20), dp(20))
+            })
+            val texts = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                layoutParams = LinearLayout.LayoutParams(
+                    0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f
+                ).apply { leftMargin = dp(12) }
+            }
+            texts.addView(TextView(this).apply {
+                text = row.label
+                textSize = 15f
+                typeface = Typeface.DEFAULT_BOLD
+                setTextColor(Color.parseColor(row.tint))
+            })
+            texts.addView(TextView(this).apply {
+                text = row.hint
+                textSize = 12f
+                setTextColor(Color.parseColor("#8A94A6"))
+            })
+            rowView.addView(texts)
+            rowView.setOnClickListener { dialog.dismiss(); row.action() }
+            root.addView(rowView)
+        }
+        root.addView(TextView(this).apply {
+            text = "Batal"
+            textSize = 14f
+            typeface = Typeface.DEFAULT_BOLD
+            setTextColor(Color.parseColor("#5B5BD6"))
+            gravity = Gravity.END
+            setPadding(0, dp(12), dp(4), dp(8))
+            setOnClickListener { dialog.dismiss() }
+        })
+        dialog.setContentView(root)
+        dialog.window?.setBackgroundDrawable(
+            android.graphics.drawable.ColorDrawable(Color.TRANSPARENT)
+        )
+        dialog.show()
     }
+
+    private data class MenuRow(
+        val iconRes: Int,
+        val label: String,
+        val hint: String,
+        val tint: String,
+        val action: () -> Unit
+    )
 
     /** Split-screen (v0.1.21): pilih Space AKTIF lain untuk dibuka
      *  berdampingan dengan Space ini. Hanya yang sudah login yang
@@ -767,16 +905,18 @@ class MainActivity : AppCompatActivity() {
             ).show()
             return
         }
-        val names = others.map { it.name }.toTypedArray()
-        AlertDialog.Builder(this)
-            .setTitle("Berdampingan dengan \"${entry.name}\"")
-            .setItems(names) { _, which ->
-                // v0.1.31: slot split dikirim sebagai intent extra
-                // (EXTRA_SPLIT_WITH) — static lintas-proses tidak jalan.
-                openSpace(entry, splitWith = others[which].slot)
-            }
-            .setNegativeButton("Batal", null)
-            .show()
+        // v0.1.32: dialog kartu dengan chip status per Space
+        // (Aktif / Beku / Limit / Belum login).
+        SpacePickerDialog.show(
+            this,
+            "Berdampingan dengan \"${entry.name}\"",
+            others,
+            SpaceRegistry.suffixForSlot(entry.slot)
+        ) { picked ->
+            // v0.1.31: slot split dikirim sebagai intent extra
+            // (EXTRA_SPLIT_WITH) — static lintas-proses tidak jalan.
+            openSpace(entry, splitWith = picked.slot)
+        }
     }
 
     private fun showRenameDialog(entry: SpaceRegistry.SpaceEntry) {

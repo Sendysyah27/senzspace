@@ -58,7 +58,7 @@ class FileViewerActivity : Activity() {
             )
         }
 
-        // Bar atas: ✕ tutup | nama file | Buka (app lain)
+        // Bar atas: tutup | nama file | Buka (app lain)
         val topBar = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL

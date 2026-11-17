@@ -504,7 +504,7 @@ abstract class BrowserActivity : AppCompatActivity() {
         // tampil permanen di top bar. Fungsi top bar (lengkap, v0.1.10):
         // ⌄ Minimize = kembali ke Beranda, Space tetap berjalan;
         // ↻ Muat ulang halaman; ⌂ Beranda Space (URL awal Space ini);
-        // ⬇ Unduhan (badge jumlah file; tap → File Manager folder ini).
+        // Unduhan (badge jumlah file; tap → File Manager folder ini).
         // Sengaja TIDAK ada tombol Tutup/Matikan Space di sini — Space
         // harus tetap hidup untuk Multi Live + guard anti-kill; yang mau
         // menghapus Space pakai tahan-lama di Beranda.
@@ -531,7 +531,7 @@ abstract class BrowserActivity : AppCompatActivity() {
             layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
         }
         // Ikon top bar (v0.1.12): vektor garis minimalis gaya Feather/
-        // Lucide (bukan lagi huruf ⌄ ↻ ⌂ ⬇ yang tampilannya beda-beda
+        // Lucide (bukan lagi huruf yang tampilannya beda-beda
         // tiap HP). Tiap ikon 44dp (area sentuh nyaman) + deskripsi
         // buat pembaca layar.
         fun topBarIcon(iconRes: Int, description: String): android.widget.ImageButton =
@@ -907,7 +907,10 @@ abstract class BrowserActivity : AppCompatActivity() {
 
     /** Pindah Space lewat tombol ⇌ di top bar (ganti geser, v0.1.31).
      *  Daftar = Space AKTIF (sudah login) selain Space ini — aturan
-     *  Sendy 06:45. Bila tidak ada Space aktif lain, beri tahu. */
+     *  Sendy 06:45. Bila tidak ada Space aktif lain, beri tahu.
+     *  v0.1.32: dialog kartu SpacePickerDialog — tiap baris ada chip
+     *  status (Aktif / Beku / Limit / Belum login), jadi kelihatan
+     *  mana Space yang aktif dan mana yang belum login. */
     private fun showSwitchSpacePicker() {
         val spaces = try {
             SpaceRegistry.load(this)
@@ -922,31 +925,24 @@ abstract class BrowserActivity : AppCompatActivity() {
             SpaceStatus.readLogin(this, SpaceRegistry.suffixForSlot(it.slot))
         }
         val pool = if (active.size >= 2) active else spaces
-        val others = pool.filter {
-            SpaceRegistry.suffixForSlot(it.slot) != dataDirectorySuffix
-        }
-        if (others.isEmpty()) {
+        if (pool.none { SpaceRegistry.suffixForSlot(it.slot) != dataDirectorySuffix }) {
             android.widget.Toast.makeText(
                 this, "Tidak ada Space aktif lain", android.widget.Toast.LENGTH_SHORT
             ).show()
             return
         }
-        val names = others.map { it.name }.toTypedArray()
-        android.app.AlertDialog.Builder(this)
-            .setTitle("Pindah Space")
-            .setItems(names) { _, which ->
-                val next = others[which]
-                android.widget.Toast.makeText(this, "→ ${next.name}", android.widget.Toast.LENGTH_SHORT).show()
-                val intent = android.content.Intent(this, SpaceRegistry.activityForSlot(next.slot)).apply {
-                    flags = android.content.Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
-                    putExtra(MainActivity.EXTRA_SPACE_NAME, next.name)
-                    putExtra(MainActivity.EXTRA_SPACE_COLOR, next.color)
-                    putExtra(MainActivity.EXTRA_URL, next.url)
-                }
-                startActivity(intent)
+        SpacePickerDialog.show(
+            this, "Pindah Space", pool, dataDirectorySuffix
+        ) { next ->
+            android.widget.Toast.makeText(this, "→ ${next.name}", android.widget.Toast.LENGTH_SHORT).show()
+            val intent = android.content.Intent(this, SpaceRegistry.activityForSlot(next.slot)).apply {
+                flags = android.content.Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
+                putExtra(MainActivity.EXTRA_SPACE_NAME, next.name)
+                putExtra(MainActivity.EXTRA_SPACE_COLOR, next.color)
+                putExtra(MainActivity.EXTRA_URL, next.url)
             }
-            .setNegativeButton("Batal", null)
-            .show()
+            startActivity(intent)
+        }
     }
 
     /** Buka Space lain berdampingan (split-screen, v0.1.21):
@@ -1029,7 +1025,7 @@ abstract class BrowserActivity : AppCompatActivity() {
         LockGate.onStopped()
     }
 
-    /** Badge ⬇ di top bar = jumlah file di folder Space ini. */
+    /** Badge unduhan di top bar = jumlah file di folder Space ini. */
     private fun refreshDownloadCount() {
         if (!::downloadBtn.isInitialized || !::downloadBadge.isInitialized) return
         val n = try {

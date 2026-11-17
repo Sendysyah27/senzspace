@@ -54,3 +54,10 @@ Jangan cuma diagnosa dari kodenya.
   yang sama; insiden clear Space 8 ikut menghapus Space 7).
   (4) Timer live dihidupkan ulang di onResume (idempotent) —
   "Nyalakan Live" juga membuka Space-nya.
+- UX 32 (17 Nov, v0.1.32): NOL EMOJI di app — semua ikon harus
+  vektor SVG minimalis gaya Feather (stroke putih 2, ujung bulat).
+  Menu/dialog pakai kartu desain (UiKit.roundedBg + SpacePickerDialog),
+  bukan AlertDialog polos: header detail (titik warna + nama + chip
+  status + situs + jumlah file), baris ikon + label + hint. Tombol
+  fungsi = persegi panjang membulat radius 12dp (btn_primary /
+  btn_teal / btn_dark / chip_rounded).

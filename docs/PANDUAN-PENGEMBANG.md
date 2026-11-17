@@ -455,6 +455,50 @@ muncul (Ubah nama / Matikan Live / Hapus Space).
    "Beku" juga. Hapus Space yang beku → Space baru di slot yang sama
    tidak ikut beku.
 
+## Tes Polish UI v0.1.32 di HP (bahasa bayi)
+
+Latar: 4 screenshot Sendy (17 Nov 16:34–16:37) — Pengaturan masih
+pakai emoji (gembok, perisai) dan tombolnya kotak tajam; tombol
+File Manager kotak tajam dan tombol kembali kecil; menu tahan lama
+kartu dan dialog Pindah Space masih polos tanpa detail. Aturan
+baru: SEMUA ikon di app harus SVG minimalis, nol emoji.
+
+1. Install APK v0.1.32-s1ui32 (NIMPA — JANGAN uninstall).
+   Tutup total app dulu (hapus dari recent apps), lalu buka lagi.
+2. **Pengaturan.** Buka Pengaturan. **LULUS** bila: baris "Kunci App
+   (PIN)" pakai ikon gembok garis (bukan emoji 🔒); baris "Guard
+   anti-kill" pakai ikon perisai garis (bukan emoji 🛡️); SEMUA
+   tombol (Ubah PIN, Minta pengecualian baterai, Pilih folder
+   ekspor, Reset, Bersihkan thumbnail) sudutnya MEMBULAT
+   (persegi panjang membulat, bukan kotak tajam).
+3. **File Manager.** Buka File Manager → masuk folder Space.
+   **LULUS** bila: kotak cari + tombol "Terbaru", "+ Folder",
+   "Grid", "Tempel" semuanya sudut membulat; tombol kembali di
+   kiri breadcrumb jadi panah < BESAR (gampang ditekan);
+   TIDAK ADA lagi simbol aneh di tombol (dulu ada ⇅ ▦ ☰ ＋).
+   Tahan lama 1 file (mode pilih) → **LULUS** bila: lingkaran
+   pilih jadi ikon ceklis SVG; tombol titik-tiga di tiap baris
+   jadi ikon titik-tiga SVG.
+4. **Menu tahan lama Space.** Di Beranda, tahan lama kartu Claude
+   (misal Claude Nengz). **LULUS** bila: muncul KARTU gelap sudut
+   membulat — atasnya ada titik warna + nama Space + chip status
+   (Aktif/Beku/Limit/Belum login) + situs + jumlah file; tiap
+   baris ada ikon garis + label + penjelasan kecil (misal
+   "Bersihkan data Space — Hapus cookie + login, file unduhan
+   aman"); "Hapus Space" berwarna merah; bawah ada "Batal".
+5. **Pindah Space.** Di dalam Space, tap tombol ⇌ di top bar.
+   **LULUS** bila: muncul kartu yang sama — tiap Space ada chip
+   statusnya (mana yang Aktif hijau, mana yang Belum login
+   abu-abu, mana yang Limit kuning / Beku). Pilih satu → pindah.
+   Menu "Buka berdampingan" (tahan lama kartu) tampilannya sama.
+6. **Kunci App.** Keluar app, buka lagi (bila kunci aktif) atau
+   nyalakan kunci di Pengaturan. **LULUS** bila: logo atas pakai
+   ikon gembok garis + tulisan "SenzSpace" (bukan emoji);
+   tombol biometrik pakai ikon gembok-buka + "Sidik jari / wajah".
+7. **Sweep emoji.** Jalan-jalan ke semua layar (Beranda, Space,
+   File Manager, Pengaturan, Tambah Space, Kunci). **LULUS** bila:
+   TIDAK ADA satu pun emoji di mana pun.
+
 ## Tes Perbaikan UX v0.1.31 di HP (bahasa bayi)
 
 Latar: 10 laporan dari HP Sendy (17 Nov 15:59) — live tidak aktif
