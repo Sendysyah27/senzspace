@@ -522,6 +522,26 @@ muncul (Ubah nama / Matikan Live / Hapus Space).
    "Beku" juga. Hapus Space yang beku → Space baru di slot yang sama
    tidak ikut beku.
 
+## Tes Unduhan via WebView v0.1.24 di HP (bahasa bayi)
+
+RENCANA B: hop 0 ke claude.ai ditolak 403 walau cookie + header
+browser dikirim dari luar WebView (bukti log 07:19: "UNDUH hop 0:
+claude.ai -> 403") — server mengenali jejak TLS non-browser.
+Sekarang unduhan http(s) di-fetch LANGSUNG dari halaman (jaringan
+WebView sendiri: cookie lengkap, header browser asli, TLS Chrome),
+isi di-streaming per potongan ke folder Space (file besar aman).
+
+1. Install APK v0.1.24-s1webfetch (nimpa, tanpa uninstall).
+2. Buka Claude 3 → tap **"Unduh semua"**.
+   **LULUS** bila: toast "Tersimpan di folder Claude 3:
+   download-files.zip" + file ada di space3 (cek via ⬇ top bar).
+3. Coba juga 1 lampiran satuan (MP4 / SRT / TXT).
+   **LULUS** bila tersimpan dengan nama asli + ekstensi benar.
+4. **GAGAL** bila: masih toast "Gagal mengunduh: server menolak
+   (403)" atau alasan lain. Kalau gagal, kirim
+   `_Log-Blob/blob-debug.txt` ke Jhon — baris "UNDUH-WEB GAGAL"
+   akan nyebut alasannya.
+
 ## Tes Unduhan 403 v0.1.23 di HP (bahasa bayi)
 
 Perbaikan: v0.1.22 masih ditolak server (403) — HttpURLConnection

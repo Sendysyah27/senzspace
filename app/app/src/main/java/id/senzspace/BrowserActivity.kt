@@ -107,9 +107,10 @@ abstract class BrowserActivity : AppCompatActivity() {
     private var homeUrl = "https://claude.ai"
     private var activityDestroyed = false
     private var pendingBlobFileName = ""
+    private var pendingHttpFileName = "download"
 
     /** Listener unduhan (PRD F6): blob: → jembatan JS, data: → decode
-     *  langsung, http(s) → unduh dalam app (v0.1.22). */
+     *  langsung, http(s) → fetch WebView (v0.1.24). */
     private val downloadListener = android.webkit.DownloadListener { dlUrl, userAgent, contentDisposition, mimeType, _ ->
         val fileName = android.webkit.URLUtil.guessFileName(
             dlUrl, contentDisposition, mimeType
@@ -117,9 +118,7 @@ abstract class BrowserActivity : AppCompatActivity() {
         when {
             dlUrl.startsWith("blob:") -> downloadBlob(dlUrl, fileName)
             dlUrl.startsWith("data:") -> downloadDataUrl(dlUrl, fileName)
-            else -> downloadViaManager(
-                dlUrl, userAgent, contentDisposition, mimeType, fileName
-            )
+            else -> downloadHttpViaWebView(dlUrl, fileName)
         }
     }
 
@@ -751,6 +750,7 @@ abstract class BrowserActivity : AppCompatActivity() {
         // sebagai base64 — sekarang datang dari frame mana pun (frame
         // utama atau iframe) lewat postMessage, lihat blobInjectScript.
         webView.addJavascriptInterface(BlobDownloadBridge(), "SenzBlob")
+        webView.addJavascriptInterface(HttpDownloadBridge(), "SenzHttp")
 
         // Unduhan per Space (PRD F6): listener WAJIB ada — pelajaran
         // v0.1.16: TANPA DownloadListener, WebView TIDAK mengunduh
@@ -977,198 +977,159 @@ abstract class BrowserActivity : AppCompatActivity() {
         }.start()
     }
 
-    /** Unduhan http(s) DI DALAM app (v0.1.22) — DownloadManager sistem
-     *  TIDAK dipakai lagi: ia jalan di proses lain dan MEMBUANG cookie
-     *  sesi saat link Claude me-redirect ke server file (bukti HP
-     *  06:59: 4x "Couldn't download items" — 2x download-files.zip +
-     *  2x download-file.bin). Di sini redirect diikuti manual supaya
-     *  cookie + UA + Referer ikut di tiap hop; isi ditulis streaming
-     *  langsung ke folder Space (file besar tidak menumpuk di RAM);
-     *  nama asli diambil dari Content-Disposition respons akhir bila
-     *  ada, lalu ekstensi diperbaiki dari isi file (v0.1.19). Progress
-     *  tampil di notifikasi (channel yang sama dengan guard live).
-     *  v0.1.23: header ala browser + toples cookie antar-hop (403). */
-    private fun downloadViaManager(
-        dlUrl: String, userAgent: String, contentDisposition: String,
-        mimeType: String, fileName: String
-    ) {
-        android.widget.Toast.makeText(this, "Mengunduh $fileName…", android.widget.Toast.LENGTH_SHORT).show()
-        Thread {
-            val notifId = 2000 + (System.currentTimeMillis() % 90).toInt()
-            val nm = getSystemService(NOTIFICATION_SERVICE) as android.app.NotificationManager
-            fun progress(pct: Int, done: Boolean, label: String) {
-                try {
-                    if (done) {
-                        nm.cancel(notifId)
-                        return
-                    }
-                    val b = androidx.core.app.NotificationCompat.Builder(
-                        this, KeepAliveService.CHANNEL_ID
-                    )
-                        .setSmallIcon(R.drawable.ic_notification)
-                        .setContentTitle(label)
-                        .setOnlyAlertOnce(true)
-                        .setOngoing(true)
-                        .setProgress(100, pct, false)
-                    nm.notify(notifId, b.build())
-                } catch (e: Exception) {
-                }
-            }
-            try {
-                // Toples cookie selama redirect (v0.1.23): cookie yang
-                // diset server di tengah rantai ikut dikirim ke hop
-                // berikutnya — HttpURLConnection tidak menyimpan cookie
-                // sendiri. Tanpa ini, hop terakhir bisa ditolak 403.
-                val jar = LinkedHashMap<String, String>()
-                fun harvest(c: java.net.HttpURLConnection) {
-                    try {
-                        for ((k, vs) in c.headerFields) {
-                            if (k != null && k.equals("Set-Cookie", ignoreCase = true)) {
-                                for (v in vs) {
-                                    val nv = v.substringBefore(";").trim()
-                                    val eq = nv.indexOf('=')
-                                    if (eq > 0) jar[nv.substring(0, eq)] = nv.substring(eq + 1)
-                                }
-                            }
-                        }
-                    } catch (e: Exception) {
-                    }
-                }
-                fun cookieHeader(u: java.net.URL): String? {
-                    val base = CookieManager.getInstance().getCookie(u.toString())
-                    val parts = LinkedHashMap<String, String>()
-                    if (!base.isNullOrBlank()) {
-                        for (p in base.split(";")) {
-                            val t = p.trim()
-                            val eq = t.indexOf('=')
-                            if (eq > 0) parts[t.substring(0, eq)] = t.substring(eq + 1)
-                        }
-                    }
-                    parts.putAll(jar)
-                    if (parts.isEmpty()) return null
-                    return parts.entries.joinToString("; ") { "${it.key}=${it.value}" }
-                }
-                var url = java.net.URL(dlUrl)
-                var conn: java.net.HttpURLConnection? = null
-                var hops = 0
-                val pageHost = try { java.net.URL(currentUrl).host } catch (e: Exception) { "" }
-                while (true) {
-                    val c = url.openConnection() as java.net.HttpURLConnection
-                    c.instanceFollowRedirects = false
-                    c.connectTimeout = 15000
-                    c.readTimeout = 60000
-                    c.setRequestProperty("User-Agent", userAgent)
-                    // Header ala browser (v0.1.23): HttpURLConnection
-                    // polos tanpa header ini dicurigai bot oleh server
-                    // (403) walau cookie-nya benar.
-                    c.setRequestProperty("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
-                    c.setRequestProperty("Accept-Language", "en-US,en;q=0.9")
-                    c.setRequestProperty("Sec-Fetch-Dest", "document")
-                    c.setRequestProperty("Sec-Fetch-Mode", "navigate")
-                    c.setRequestProperty("Sec-Fetch-Site", if (url.host == pageHost) "same-origin" else "cross-site")
-                    c.setRequestProperty("Sec-Fetch-User", "?1")
-                    c.setRequestProperty("Upgrade-Insecure-Requests", "1")
-                    val cookie = cookieHeader(url)
-                    if (cookie != null) c.setRequestProperty("Cookie", cookie)
-                    if (currentUrl.isNotEmpty()) c.setRequestProperty("Referer", currentUrl)
-                    val code = c.responseCode
-                    logBlobDiag("UNDUH hop $hops: ${url.host} -> $code")
-                    harvest(c)
-                    if ((code == 301 || code == 302 || code == 303 || code == 307 || code == 308) && hops < 5) {
-                        val loc = c.getHeaderField("Location")
-                        c.disconnect()
-                        if (loc.isNullOrBlank()) throw Exception("redirect tanpa tujuan")
-                        url = java.net.URL(url, loc)
-                        hops++
-                        continue
-                    }
-                    conn = c
-                    break
-                }
-                val c = conn ?: throw Exception("tidak bisa tersambung")
-                val code = c.responseCode
-                if (code !in 200..299) {
-                    c.disconnect()
-                    throw Exception("server menolak ($code)")
-                }
-                // Nama asli dari Content-Disposition respons akhir.
-                var finalName = parseDispositionName(
-                    c.getHeaderField("Content-Disposition") ?: contentDisposition
-                ) ?: fileName
-                val total = c.contentLengthLong
-                val dir = FileStore.folderDir(this, dataDirectorySuffix)
-                dir.mkdirs()
-                // Baca 16 byte pertama dulu — cukup untuk tebak ekstensi
-                // dari isi file (WAV/MP3/PDF/ZIP/...) sebelum nama final
-                // diputuskan; sisanya streaming langsung ke disk.
-                val input = java.io.BufferedInputStream(c.inputStream)
-                val head = ByteArray(16)
-                var headLen = 0
-                while (headLen < 16) {
-                    val r = input.read(head, headLen, 16 - headLen)
-                    if (r < 0) break
-                    headLen += r
-                }
-                finalName = fixExtension(finalName, head.copyOf(headLen))
-                val dest = FileStore.uniqueFile(dir, finalName)
-                var written = headLen.toLong()
-                progress(0, false, "Mengunduh ${dest.name}…")
-                var lastPct = -1
-                java.io.FileOutputStream(dest).use { out ->
-                    if (headLen > 0) out.write(head, 0, headLen)
-                    val buf = ByteArray(64 * 1024)
-                    while (true) {
-                        val r = input.read(buf)
-                        if (r < 0) break
-                        out.write(buf, 0, r)
-                        written += r
-                        if (total > 0) {
-                            val pct = (written * 100 / total).toInt().coerceIn(0, 100)
-                            if (pct != lastPct && pct % 5 == 0) {
-                                lastPct = pct
-                                progress(pct, false, "Mengunduh ${dest.name}…")
-                            }
-                        }
-                    }
-                }
-                input.close()
-                c.disconnect()
-                progress(100, true, "")
-                logBlobDiag("UNDUH: ${dest.name} ($written B)")
-                runOnUiThread {
-                    android.widget.Toast.makeText(
-                        this,
-                        "Tersimpan di folder $spaceName: ${dest.name}",
-                        android.widget.Toast.LENGTH_LONG
-                    ).show()
-                    refreshDownloadCount()
-                }
-            } catch (e: Exception) {
-                progress(100, true, "")
-                logBlobDiag("UNDUH GAGAL: $fileName — ${e.message}")
-                runOnUiThread {
-                    android.widget.Toast.makeText(
-                        this, "Gagal mengunduh: ${e.message}", android.widget.Toast.LENGTH_LONG
-                    ).show()
-                }
-            }
-        }.start()
+    /** Unduhan http(s) lewat WebView itu sendiri (v0.1.24 — Rencana B):
+     *  hop 0 ke claude.ai ditolak 403 walau cookie + header browser
+     *  dikirim dari HttpURLConnection (bukti log 07:19: "UNDUH hop 0:
+     *  claude.ai -> 403") — server mengenali jejak TLS non-browser.
+     *  fetch() dari halaman memakai jaringan WebView sendiri: cookie
+     *  lengkap, header browser asli, TLS Chrome. Isi di-streaming
+     *  lewat SenzHttp per potongan (ReadableStream) supaya file besar
+     *  tidak menumpuk di RAM di sisi mana pun. */
+    private fun downloadHttpViaWebView(dlUrl: String, fileName: String) {
+        if (!::webView.isInitialized) return
+        pendingHttpFileName = fileName
+        val escaped = dlUrl.replace("\\", "\\\\").replace("'", "\\'")
+        val js = "(function(){try{" +
+            "if(!window.SenzHttp){return;}" +
+            "fetch('$escaped',{credentials:'include'}).then(function(r){" +
+            "if(!r.ok){window.SenzHttp.onError('server menolak ('+r.status+')');return null;}" +
+            "var cd=r.headers.get('Content-Disposition')||'';" +
+            "var nm='';" +
+            "var m=/filename\\*?=([^;]+)/.exec(cd);" +
+            "if(m){nm=decodeURIComponent(m[1].replace(/^UTF-8''/,'').replace(/\"/g,''));}" +
+            "window.SenzHttp.onMeta(r.headers.get('Content-Length')||'0',nm);" +
+            "var reader=r.body.getReader();" +
+            "var pump=function(){return reader.read().then(function(res){" +
+            "if(res.done){window.SenzHttp.onDone();return;}" +
+            "var v=res.value;var bin='';" +
+            "for(var j=0;j<v.length;j+=0x8000){" +
+            "bin+=String.fromCharCode.apply(null,v.subarray(j,j+0x8000));}" +
+            "window.SenzHttp.onChunk(btoa(bin));" +
+            "return pump();});};" +
+            "return pump();}).catch(function(e){" +
+            "window.SenzHttp.onError(''+(e&&e.message?e.message:e));});" +
+            "}catch(e){try{window.SenzHttp.onError('js '+e.message);}catch(_){}})();"
+        try {
+            webView.evaluateJavascript(js, null)
+        } catch (e: Exception) {
+            android.widget.Toast.makeText(this, "Gagal mengunduh: ${e.message}", android.widget.Toast.LENGTH_LONG).show()
+        }
     }
 
-    /** Nama file dari header Content-Disposition
-     *  (attachment; filename="..." / filename*=UTF-8''...). */
-    private fun parseDispositionName(cd: String?): String? {
-        if (cd.isNullOrBlank()) return null
-        try {
-            val m = Regex("filename\\*=UTF-8''([^;\\s]+)", RegexOption.IGNORE_CASE).find(cd)
-            if (m != null) return java.net.URLDecoder.decode(m.groupValues[1], "UTF-8")
-            val m2 = Regex("filename=\"([^\"]+)\"", RegexOption.IGNORE_CASE).find(cd)
-            if (m2 != null) return m2.groupValues[1]
-            val m3 = Regex("filename=([^;\\s]+)", RegexOption.IGNORE_CASE).find(cd)
-            if (m3 != null) return m3.groupValues[1].trim()
-        } catch (e: Exception) {
+    /** Jembatan unduhan http(s) via WebView (v0.1.24). Satu unduhan
+     *  aktif dalam satu waktu — unduhan kedua menimpa state yang
+     *  pertama (sama seperti jalur blob). */
+    private inner class HttpDownloadBridge {
+        private var out: java.io.FileOutputStream? = null
+        private var dest: java.io.File? = null
+        private var baseName = ""
+        private var total = 0L
+        private var written = 0L
+        private var lastPct = -1
+        private var notifId = 0
+
+        @JavascriptInterface
+        fun onMeta(totalStr: String, cdName: String) {
+            total = totalStr.toLongOrNull() ?: 0L
+            baseName = cdName.ifBlank { pendingHttpFileName }
+            notifId = 2000 + (System.currentTimeMillis() % 90).toInt()
+            written = 0L
+            lastPct = -1
+            out = null
+            dest = null
+            showProgress(0, "Mengunduh $baseName…")
         }
-        return null
+
+        @JavascriptInterface
+        fun onChunk(base64: String) {
+            try {
+                val bytes = android.util.Base64.decode(base64, android.util.Base64.DEFAULT)
+                if (out == null) {
+                    // Potongan pertama: tentukan nama final dari isi
+                    // (sniff) sebelum file dibuat.
+                    val finalName = fixExtension(baseName, bytes)
+                    val dir = FileStore.folderDir(this@BrowserActivity, dataDirectorySuffix)
+                    dir.mkdirs()
+                    dest = FileStore.uniqueFile(dir, finalName)
+                    out = java.io.FileOutputStream(dest)
+                }
+                out?.write(bytes)
+                written += bytes.size
+                if (total > 0) {
+                    val pct = (written * 100 / total).toInt().coerceIn(0, 100)
+                    if (pct != lastPct && pct % 5 == 0) {
+                        lastPct = pct
+                        showProgress(pct, "Mengunduh ${dest?.name ?: baseName}…")
+                    }
+                }
+            } catch (e: Exception) {
+                finishError("gagal menulis (${e.message})")
+            }
+        }
+
+        @JavascriptInterface
+        fun onDone() {
+            try { out?.close() } catch (e: Exception) {}
+            out = null
+            val d = dest
+            cancelProgress()
+            if (d == null) {
+                runOnUiThread {
+                    android.widget.Toast.makeText(this@BrowserActivity, "Gagal mengunduh: file kosong", android.widget.Toast.LENGTH_LONG).show()
+                }
+                return
+            }
+            logBlobDiag("UNDUH-WEB: ${d.name} ($written B)")
+            runOnUiThread {
+                android.widget.Toast.makeText(
+                    this@BrowserActivity,
+                    "Tersimpan di folder $spaceName: ${d.name}",
+                    android.widget.Toast.LENGTH_LONG
+                ).show()
+                refreshDownloadCount()
+            }
+        }
+
+        @JavascriptInterface
+        fun onError(reason: String) {
+            finishError(reason)
+        }
+
+        private fun finishError(reason: String) {
+            try { out?.close() } catch (e: Exception) {}
+            out = null
+            try { dest?.delete() } catch (e: Exception) {}
+            dest = null
+            cancelProgress()
+            logBlobDiag("UNDUH-WEB GAGAL: $baseName — $reason")
+            runOnUiThread {
+                android.widget.Toast.makeText(this@BrowserActivity, "Gagal mengunduh: $reason", android.widget.Toast.LENGTH_LONG).show()
+            }
+        }
+
+        private fun showProgress(pct: Int, label: String) {
+            try {
+                val b = androidx.core.app.NotificationCompat.Builder(
+                    this@BrowserActivity, KeepAliveService.CHANNEL_ID
+                )
+                    .setSmallIcon(R.drawable.ic_notification)
+                    .setContentTitle(label)
+                    .setOnlyAlertOnce(true)
+                    .setOngoing(true)
+                    .setProgress(100, pct, false)
+                val nm = getSystemService(NOTIFICATION_SERVICE) as android.app.NotificationManager
+                nm.notify(notifId, b.build())
+            } catch (e: Exception) {
+            }
+        }
+
+        private fun cancelProgress() {
+            try {
+                val nm = getSystemService(NOTIFICATION_SERVICE) as android.app.NotificationManager
+                nm.cancel(notifId)
+            } catch (e: Exception) {
+            }
+        }
     }
 
     /** Perbaiki ekstensi dari isi file (magic bytes) bila nama
