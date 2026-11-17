@@ -455,6 +455,26 @@ muncul (Ubah nama / Matikan Live / Hapus Space).
    "Beku" juga. Hapus Space yang beku → Space baru di slot yang sama
    tidak ikut beku.
 
+## Tes Login AI Studio v0.1.29 di HP (bahasa bayi)
+
+Latar: login Google di Space 7 gagal dengan dialog "Something went
+wrong" (09:14), padahal di Chrome aman dan login Google pernah
+LULUS di gate S0. Tersangka: skrip penangkap blob (trap) yang
+disisipkan ke SEMUA halaman ikut mengubah halaman login Google
+yang penuh iframe — halaman itu rusak. v0.1.29: halaman login
+Google (accounts.google.com) TIDAK lagi diambil alih — WebView
+memuatnya sendiri apa adanya, persis seperti Chrome.
+
+1. Install APK v0.1.29-s1noauthinject (NIMPA — JANGAN uninstall).
+   Tutup total app dulu (hapus dari recent apps), lalu buka lagi.
+2. Buka Space 7 (AI Studio) → login akun Google seperti biasa.
+   **LULUS** bila: masuk ke halaman AI Studio (Playground),
+   tanpa dialog "Something went wrong".
+3. Setelah login, tes unduhan audio AI Studio sekali (tombol
+   unduh di player) — **LULUS** bila file .wav tersimpan dengan
+   nama asli (bukti trap tetap jalan di halaman AI Studio-nya,
+   hanya halaman login yang dilewati).
+
 ## Tes Unduhan v0.1.28 di HP (bahasa bayi)
 
 v0.1.27 TERBUKTI JALAN (Sendy 08:29, Space 2): file

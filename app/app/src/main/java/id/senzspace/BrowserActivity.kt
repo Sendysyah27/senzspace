@@ -134,6 +134,22 @@ abstract class BrowserActivity : AppCompatActivity() {
         "mp4", "webm", "mov", "json", "xml", "map", "txt", "pdf", "zip"
     )
 
+    /** Host login Google — shouldInterceptRequest TIDAK mengambilnya.
+     *  Alasan (temuan HP 17 Nov 09:14): halaman Sign-in Google
+     *  (accounts.google.com) gagal dengan dialog "Something went
+     *  wrong" di WebView utama, padahal di Chrome aman dan login
+     *  Google pernah LULUS di gate S0 (16 Nov, sebelum trap blob
+     *  ada). Penyebab paling mungkin: interceptDocument mengambil
+     *  ulang halaman itu lewat HttpURLConnection + menyisipi skrip
+     *  trap (yang membungkus appendChild/iframe srcdoc) — halaman
+     *  login Google yang penuh iframe dinamis tidak tahan
+     *  dimodifikasi. Halaman auth tidak butuh penangkap blob
+     *  (tidak ada unduhan di sana), jadi WebView memuatnya sendiri
+     *  apa adanya, persis seperti Chrome. */
+    private val NO_INJECT_HOSTS = setOf(
+        "accounts.google.com", "myaccount.google.com"
+    )
+
     /** Callback unduhan file-chooser yang sedang menunggu pilihan user.
      *  WAJIB dipanggil tepat sekali (dengan array URI atau null). */
     private var fileChooserCallback: android.webkit.ValueCallback<Array<android.net.Uri>>? = null
@@ -1502,6 +1518,10 @@ abstract class BrowserActivity : AppCompatActivity() {
             val urlStr = request.url.toString()
             if (!urlStr.startsWith("http://") &&
                 !urlStr.startsWith("https://")
+            ) return null
+            val host = request.url.host ?: ""
+            if (host in NO_INJECT_HOSTS ||
+                host.endsWith(".accounts.google.com")
             ) return null
             val path = request.url.path ?: ""
             val last = path.substringAfterLast('/', "")
