@@ -109,7 +109,7 @@ abstract class BrowserActivity : AppCompatActivity() {
     private var pendingBlobFileName = ""
 
     /** Listener unduhan (PRD F6): blob: → jembatan JS, data: → decode
-     *  langsung, http(s) → DownloadManager + cookie sesi. */
+     *  langsung, http(s) → unduh dalam app (v0.1.22). */
     private val downloadListener = android.webkit.DownloadListener { dlUrl, userAgent, contentDisposition, mimeType, _ ->
         val fileName = android.webkit.URLUtil.guessFileName(
             dlUrl, contentDisposition, mimeType
@@ -977,42 +977,181 @@ abstract class BrowserActivity : AppCompatActivity() {
         }.start()
     }
 
-    /** Unduhan http(s) via DownloadManager: cookie sesi + User-Agent
-     *  + Referer diteruskan — tanpa cookie, unduhan dari situs yang
-     *  butuh login (mis. lampiran Claude) ditolak server (403).
-     *  Tujuan langsung folder Space ini (bukan Download publik). */
+    /** Unduhan http(s) DI DALAM app (v0.1.22) — DownloadManager sistem
+     *  TIDAK dipakai lagi: ia jalan di proses lain dan MEMBUANG cookie
+     *  sesi saat link Claude me-redirect ke server file (bukti HP
+     *  06:59: 4x "Couldn't download items" — 2x download-files.zip +
+     *  2x download-file.bin). Di sini redirect diikuti manual supaya
+     *  cookie + UA + Referer ikut di tiap hop; isi ditulis streaming
+     *  langsung ke folder Space (file besar tidak menumpuk di RAM);
+     *  nama asli diambil dari Content-Disposition respons akhir bila
+     *  ada, lalu ekstensi diperbaiki dari isi file (v0.1.19). Progress
+     *  tampil di notifikasi (channel yang sama dengan guard live). */
     private fun downloadViaManager(
         dlUrl: String, userAgent: String, contentDisposition: String,
         mimeType: String, fileName: String
     ) {
+        android.widget.Toast.makeText(this, "Mengunduh $fileName…", android.widget.Toast.LENGTH_SHORT).show()
+        Thread {
+            val notifId = 2000 + (System.currentTimeMillis() % 90).toInt()
+            val nm = getSystemService(NOTIFICATION_SERVICE) as android.app.NotificationManager
+            fun progress(pct: Int, done: Boolean, label: String) {
+                try {
+                    if (done) {
+                        nm.cancel(notifId)
+                        return
+                    }
+                    val b = androidx.core.app.NotificationCompat.Builder(
+                        this, KeepAliveService.CHANNEL_ID
+                    )
+                        .setSmallIcon(R.drawable.ic_notification)
+                        .setContentTitle(label)
+                        .setOnlyAlertOnce(true)
+                        .setOngoing(true)
+                        .setProgress(100, pct, false)
+                    nm.notify(notifId, b.build())
+                } catch (e: Exception) {
+                }
+            }
+            try {
+                var url = java.net.URL(dlUrl)
+                var conn: java.net.HttpURLConnection? = null
+                var hops = 0
+                while (true) {
+                    val c = url.openConnection() as java.net.HttpURLConnection
+                    c.instanceFollowRedirects = false
+                    c.connectTimeout = 15000
+                    c.readTimeout = 60000
+                    c.setRequestProperty("User-Agent", userAgent)
+                    val cookie = CookieManager.getInstance().getCookie(url.toString())
+                    if (cookie != null) c.setRequestProperty("Cookie", cookie)
+                    if (currentUrl.isNotEmpty()) c.setRequestProperty("Referer", currentUrl)
+                    val code = c.responseCode
+                    if ((code == 301 || code == 302 || code == 303 || code == 307 || code == 308) && hops < 5) {
+                        val loc = c.getHeaderField("Location")
+                        c.disconnect()
+                        if (loc.isNullOrBlank()) throw Exception("redirect tanpa tujuan")
+                        url = java.net.URL(url, loc)
+                        hops++
+                        continue
+                    }
+                    conn = c
+                    break
+                }
+                val c = conn ?: throw Exception("tidak bisa tersambung")
+                val code = c.responseCode
+                if (code !in 200..299) {
+                    c.disconnect()
+                    throw Exception("server menolak ($code)")
+                }
+                // Nama asli dari Content-Disposition respons akhir.
+                var finalName = parseDispositionName(
+                    c.getHeaderField("Content-Disposition") ?: contentDisposition
+                ) ?: fileName
+                val total = c.contentLengthLong
+                val dir = FileStore.folderDir(this, dataDirectorySuffix)
+                dir.mkdirs()
+                // Baca 16 byte pertama dulu — cukup untuk tebak ekstensi
+                // dari isi file (WAV/MP3/PDF/ZIP/...) sebelum nama final
+                // diputuskan; sisanya streaming langsung ke disk.
+                val input = java.io.BufferedInputStream(c.inputStream)
+                val head = ByteArray(16)
+                var headLen = 0
+                while (headLen < 16) {
+                    val r = input.read(head, headLen, 16 - headLen)
+                    if (r < 0) break
+                    headLen += r
+                }
+                finalName = fixExtension(finalName, head.copyOf(headLen))
+                val dest = FileStore.uniqueFile(dir, finalName)
+                var written = headLen.toLong()
+                progress(0, false, "Mengunduh ${dest.name}…")
+                var lastPct = -1
+                java.io.FileOutputStream(dest).use { out ->
+                    if (headLen > 0) out.write(head, 0, headLen)
+                    val buf = ByteArray(64 * 1024)
+                    while (true) {
+                        val r = input.read(buf)
+                        if (r < 0) break
+                        out.write(buf, 0, r)
+                        written += r
+                        if (total > 0) {
+                            val pct = (written * 100 / total).toInt().coerceIn(0, 100)
+                            if (pct != lastPct && pct % 5 == 0) {
+                                lastPct = pct
+                                progress(pct, false, "Mengunduh ${dest.name}…")
+                            }
+                        }
+                    }
+                }
+                input.close()
+                c.disconnect()
+                progress(100, true, "")
+                logBlobDiag("UNDUH: ${dest.name} ($written B)")
+                runOnUiThread {
+                    android.widget.Toast.makeText(
+                        this,
+                        "Tersimpan di folder $spaceName: ${dest.name}",
+                        android.widget.Toast.LENGTH_LONG
+                    ).show()
+                    refreshDownloadCount()
+                }
+            } catch (e: Exception) {
+                progress(100, true, "")
+                logBlobDiag("UNDUH GAGAL: $fileName — ${e.message}")
+                runOnUiThread {
+                    android.widget.Toast.makeText(
+                        this, "Gagal mengunduh: ${e.message}", android.widget.Toast.LENGTH_LONG
+                    ).show()
+                }
+            }
+        }.start()
+    }
+
+    /** Nama file dari header Content-Disposition
+     *  (attachment; filename="..." / filename*=UTF-8''...). */
+    private fun parseDispositionName(cd: String?): String? {
+        if (cd.isNullOrBlank()) return null
         try {
-            val req = android.app.DownloadManager.Request(
-                android.net.Uri.parse(dlUrl)
-            )
-            req.setMimeType(mimeType)
-            req.addRequestHeader("User-Agent", userAgent)
-            val cookie = CookieManager.getInstance().getCookie(dlUrl)
-            if (cookie != null) req.addRequestHeader("Cookie", cookie)
-            if (currentUrl.isNotEmpty()) req.addRequestHeader("Referer", currentUrl)
-            req.setTitle(fileName)
-            req.setNotificationVisibility(
-                android.app.DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED
-            )
-            req.setDestinationInExternalFilesDir(
-                this, FileStore.ROOT, "$dataDirectorySuffix/$fileName"
-            )
-            val dm = getSystemService(DOWNLOAD_SERVICE) as android.app.DownloadManager
-            dm.enqueue(req)
-            Toast.makeText(
-                this,
-                "Mengunduh $fileName ke folder $spaceName",
-                Toast.LENGTH_SHORT
-            ).show()
-            logEvent("UNDUH: $fileName")
+            val m = Regex("filename\\*=UTF-8''([^;\\s]+)", RegexOption.IGNORE_CASE).find(cd)
+            if (m != null) return java.net.URLDecoder.decode(m.groupValues[1], "UTF-8")
+            val m2 = Regex("filename=\"([^\"]+)\"", RegexOption.IGNORE_CASE).find(cd)
+            if (m2 != null) return m2.groupValues[1]
+            val m3 = Regex("filename=([^;\\s]+)", RegexOption.IGNORE_CASE).find(cd)
+            if (m3 != null) return m3.groupValues[1].trim()
         } catch (e: Exception) {
-            Toast.makeText(this, "Gagal mengunduh: ${e.message}", Toast.LENGTH_LONG).show()
-            logEvent("UNDUH GAGAL: $fileName")
         }
+        return null
+    }
+
+    /** Perbaiki ekstensi dari isi file (magic bytes) bila nama
+     *  tidak punya ekstensi yang benar: .bin/.txt dari tebakan
+     *  WebView diganti bila isinya WAV/MP3/PDF/ZIP/PNG/JPG/MP4.
+     *  Nama asli dari anchor (mis. .wav/.md) tidak diubah. */
+    private fun fixExtension(name: String, bytes: ByteArray): String {
+        val sniffed = sniffExtension(bytes) ?: return name
+        val dot = name.lastIndexOf('.')
+        val ext = if (dot >= 0) name.substring(dot + 1).lowercase() else ""
+        if (ext == sniffed) return name
+        if (ext.isEmpty() || ext == "bin" || ext == "txt") {
+            val base = if (dot >= 0) name.substring(0, dot) else name
+            return "$base.$sniffed"
+        }
+        return name
+    }
+
+    private fun sniffExtension(b: ByteArray): String? {
+        fun eq(off: Int, vararg vs: Int) =
+            b.size > off + vs.size - 1 &&
+                vs.withIndex().all { (i, v) -> b[off + i] == v.toByte() }
+        if (eq(0, 0x52, 0x49, 0x46, 0x46) && eq(8, 0x57, 0x41, 0x56, 0x45)) return "wav"
+        if (eq(0, 0x49, 0x44, 0x33) || eq(0, 0xFF, 0xFB)) return "mp3"
+        if (eq(0, 0x25, 0x50, 0x44, 0x46)) return "pdf"
+        if (eq(0, 0x50, 0x4B, 0x03, 0x04)) return "zip"
+        if (eq(0, 0x89, 0x50, 0x4E, 0x47)) return "png"
+        if (eq(0, 0xFF, 0xD8, 0xFF)) return "jpg"
+        if (eq(4, 0x66, 0x74, 0x79, 0x70)) return "mp4"
+        return null
     }
 
     /** Ambil isi blob (v0.1.17): 1) cache frame utama (Claude,
@@ -1114,35 +1253,6 @@ abstract class BrowserActivity : AppCompatActivity() {
             }.start()
         }
 
-        /** Perbaiki ekstensi dari isi file (magic bytes) bila nama
-         *  tidak punya ekstensi yang benar: .bin/.txt dari tebakan
-         *  WebView diganti bila isinya WAV/MP3/PDF/ZIP/PNG/JPG/MP4.
-         *  Nama asli dari anchor (mis. .wav/.md) tidak diubah. */
-        private fun fixExtension(name: String, bytes: ByteArray): String {
-            val sniffed = sniffExtension(bytes) ?: return name
-            val dot = name.lastIndexOf('.')
-            val ext = if (dot >= 0) name.substring(dot + 1).lowercase() else ""
-            if (ext == sniffed) return name
-            if (ext.isEmpty() || ext == "bin" || ext == "txt") {
-                val base = if (dot >= 0) name.substring(0, dot) else name
-                return "$base.$sniffed"
-            }
-            return name
-        }
-
-        private fun sniffExtension(b: ByteArray): String? {
-            fun eq(off: Int, vararg vs: Int) =
-                b.size > off + vs.size - 1 &&
-                    vs.withIndex().all { (i, v) -> b[off + i] == v.toByte() }
-            if (eq(0, 0x52, 0x49, 0x46, 0x46) && eq(8, 0x57, 0x41, 0x56, 0x45)) return "wav"
-            if (eq(0, 0x49, 0x44, 0x33) || eq(0, 0xFF, 0xFB)) return "mp3"
-            if (eq(0, 0x25, 0x50, 0x44, 0x46)) return "pdf"
-            if (eq(0, 0x50, 0x4B, 0x03, 0x04)) return "zip"
-            if (eq(0, 0x89, 0x50, 0x4E, 0x47)) return "png"
-            if (eq(0, 0xFF, 0xD8, 0xFF)) return "jpg"
-            if (eq(4, 0x66, 0x74, 0x79, 0x70)) return "mp4"
-            return null
-        }
 
         /** Diagnosis dari halaman — ditulis ke _Log-Blob. */
         @android.webkit.JavascriptInterface
@@ -1408,6 +1518,7 @@ abstract class BrowserActivity : AppCompatActivity() {
                 dir.mkdirs()
                 val dest = FileStore.uniqueFile(dir, fileName)
                 java.io.FileOutputStream(dest).use { it.write(bytes) }
+                logBlobDiag("SIMPAN: ${dest.name} (${dest.length()} B)")
                 runOnUiThread {
                     Toast.makeText(
                         this,

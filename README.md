@@ -522,6 +522,27 @@ muncul (Ubah nama / Matikan Live / Hapus Space).
    "Beku" juga. Hapus Space yang beku → Space baru di slot yang sama
    tidak ikut beku.
 
+## Tes Unduhan dalam App v0.1.22 di HP (bahasa bayi)
+
+Perbaikan: DownloadManager sistem DIBUANG (bukti HP 06:59 — 4×
+"Couldn't download items"). Unduhan http(s) sekarang diunduh
+sendiri oleh app, cookie sesi ikut di tiap redirect, nama asli
+diambil dari server, progress tampil di notifikasi.
+
+1. Install APK v0.1.22-s1inappdl (nimpa, tanpa uninstall).
+2. Buka Claude 3 → tap **"Unduh semua"** di paket episode.
+   **LULUS** bila: muncul toast "Mengunduh download-files.zip…",
+   lalu notifikasi progress naik (0% → 100%), lalu toast
+   "Tersimpan di folder Claude 3: download-files.zip".
+3. Tap **⬇ di top bar** → folder space3. **LULUS** bila file
+   `download-files.zip` ada di sana (bukan .bin, bukan nama acak).
+4. Coba juga tap 1 lampiran (mis. MP4 / SRT) → unduh satuan.
+   **LULUS** bila tersimpan dengan nama asli + ekstensi benar.
+5. **GAGAL** bila: muncul notifikasi "Couldn't download items"
+   lagi, atau toast "Gagal mengunduh: server menolak (403)".
+   Kalau gagal, kirim file `_Log-Blob/blob-debug.txt` ke Jhon
+   (baris UNDUH GAGAL / SIMPAN sekarang tercatat di sana).
+
 ## Tes Split-screen + Geser Top Bar v0.1.21 di HP (bahasa bayi)
 
 Baru (perintah Sendy 06:45 — pindah Space HANYA untuk yang aktif):
