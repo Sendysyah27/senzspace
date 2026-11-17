@@ -46,7 +46,6 @@ abstract class BrowserActivity : AppCompatActivity() {
          *  berdampingan begitu Space peminta tampil. Satu tembakan —
          *  dibersihkan setelah dipakai supaya resume berikutnya tidak
          *  membuka split lagi. */
-        @Volatile
         // v0.1.31: requestSplitWith DIHAPUS — static companion hidup
         // PER PROSES Android. MainActivity (proses utama) mengisi
         // static ini, tapi BrowserActivity yang membacanya jalan di
