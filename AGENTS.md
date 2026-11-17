@@ -68,3 +68,16 @@ Jangan cuma diagnosa dari kodenya.
   + tidak beku; SpacePickerDialog.isLive/liveOnly), fallback ke
   Aktif bila tidak ada yang live; (c) AREA SENTUH minimal 44dp
   untuk tombol aksi di baris (titik-tiga FM).
+- BLOB 34 (17 Nov, v0.1.34): unduhan blob AI Studio intermiten —
+  log: dl iframes=2 hit=false -> 6 dtk -> xhr-error status=0,
+  TRAP cuma 2x seharian. Fix: (a) trap SAPU iframe yang sudah ada
+  saat dipasang (trapNode(documentElement)); (b) RELAY postMessage
+  — get-blob diteruskan ke iframe anak, blob-data diteruskan ke
+  parent (iframe bersarang); (c) ANTREAN PENDING — bila cache
+  kosong saat diminta, jangan balas kosong; balas sesudah
+  FileReader selesai (__senzPendingReqs/__senzFlushPending);
+  (d) RETRY kirim ulang di 3 dtk + fallback XHR 6 dtk -> 15 dtk;
+  (e) DIAG 'core: req ...' / 'core: balas ...' di log. JS-check
+  (node --check) WAJIB tiap ubah string JS — ekstraksi harus
+  mulai dari baris 'val js =' DI DALAM fungsi yang sama (bukan
+  kemunculan pertama di file).

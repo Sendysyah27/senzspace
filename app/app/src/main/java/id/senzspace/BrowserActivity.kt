@@ -1370,6 +1370,12 @@ abstract class BrowserActivity : AppCompatActivity() {
             "try{fs[i].contentWindow.postMessage({type:'senz-get-blob',url:url},'*');}catch(e){}}" +
             "setTimeout(function(){try{" +
             "if(window.__senzBlobDone)return;" +
+            "var fs2=document.querySelectorAll('iframe');" +
+            "for(var i2=0;i2<fs2.length;i2++){" +
+            "try{fs2[i2].contentWindow.postMessage({type:'senz-get-blob',url:url},'*');}catch(e){}}" +
+            "}catch(e){}},3000);" +
+            "setTimeout(function(){try{" +
+            "if(window.__senzBlobDone)return;" +
             "var xhr=new XMLHttpRequest();" +
             "xhr.open('GET',url,true);" +
             "xhr.responseType='blob';" +
@@ -1382,7 +1388,7 @@ abstract class BrowserActivity : AppCompatActivity() {
             "r.readAsDataURL(xhr.response);};" +
             "xhr.onerror=function(){window.SenzBlob.onBlobError('xhr-error status='+xhr.status);};" +
             "xhr.ontimeout=function(){window.SenzBlob.onBlobError('xhr-timeout');};" +
-            "xhr.send();}catch(e){window.SenzBlob.onBlobError('js-exception '+e.message);}},6000);" +
+            "xhr.send();}catch(e){window.SenzBlob.onBlobError('js-exception '+e.message);}},15000);" +
             "}catch(e){window.SenzBlob.onBlobError('js-exception '+e.message);}})();"
         try {
             webView.evaluateJavascript(js, null)
@@ -1487,6 +1493,19 @@ abstract class BrowserActivity : AppCompatActivity() {
             "window.__senzBlobCache={};" +
             "window.__senzBlobNames={};" +
             "window.__senzBlobDone=false;" +
+            "window.__senzPendingReqs={};" +
+            "window.__senzReplyBlob=function(u){" +
+            "var d=window.__senzBlobGet(u)||'';if(!d)return;" +
+            "var nm=window.__senzBlobName(u)||'';" +
+            "if(!nm){try{var as=document.querySelectorAll('a[download]');for(var ai=0;ai<as.length;ai++){if(as[ai].href===u&&as[ai].getAttribute('download')){nm=as[ai].getAttribute('download');break;}}}catch(e){}}" +
+            "try{if(window.SenzBlob)window.SenzBlob.onBlobDiag('core: balas '+u.slice(-8));}catch(e){}" +
+            "var rp={type:'senz-blob-data',url:u,data:d,name:nm};" +
+            "if(window.parent&&window.parent!==window){window.parent.postMessage(rp,'*');}" +
+            "else{try{window.__senzBlobDone=true;}catch(e){}if(window.SenzBlob)window.SenzBlob.onBlobData(d,nm);}};" +
+            "window.__senzFlushPending=function(u){" +
+            "if(!window.__senzPendingReqs[u])return;" +
+            "delete window.__senzPendingReqs[u];" +
+            "window.__senzReplyBlob(u);};" +
             "window.__senzBlobGet=function(u){return window.__senzBlobCache[u]||'';};" +
             "window.__senzBlobName=function(u){return window.__senzBlobNames[u]||'';};" +
             "var _create=URL.createObjectURL.bind(URL);" +
@@ -1497,7 +1516,8 @@ abstract class BrowserActivity : AppCompatActivity() {
             "if(keys.length>=5){delete window.__senzBlobCache[keys[0]];}" +
             "var r=new FileReader();" +
             "r.onloadend=function(){var s=r.result||'';var i=s.indexOf(',');" +
-            "window.__senzBlobCache[u]=i>=0?s.substring(i+1):s;};" +
+            "window.__senzBlobCache[u]=i>=0?s.substring(i+1):s;" +
+            "try{window.__senzFlushPending&&window.__senzFlushPending(u);}catch(e){}};" +
             "r.readAsDataURL(b);}}catch(e){}" +
             "return u;};" +
             "var _revoke=URL.revokeObjectURL.bind(URL);" +
@@ -1516,17 +1536,19 @@ abstract class BrowserActivity : AppCompatActivity() {
             "window.addEventListener('message',function(ev){" +
             "try{var m=ev.data||{};" +
             "if(m&&m.type==='senz-get-blob'&&m.url){" +
-            "var data=window.__senzBlobGet(m.url)||'';" +
-            "var name=window.__senzBlobName(m.url)||'';" +
-            "if(!name){try{var as=document.querySelectorAll('a[download]');for(var ai=0;ai<as.length;ai++){if(as[ai].href===m.url&&as[ai].getAttribute('download')){name=as[ai].getAttribute('download');break;}}}catch(e){}}" +
-            "var reply={type:'senz-blob-data',url:m.url,data:data,name:name};" +
-            "if(window.parent&&window.parent!==window){window.parent.postMessage(reply,'*');}" +
-            "else if(data&&window.SenzBlob){window.SenzBlob.onBlobData(data,name);}" +
-            "}else if(m&&m.type==='senz-blob-data'&&window.parent===window){" +
+            "try{if(window.SenzBlob)window.SenzBlob.onBlobDiag('core: req '+m.url.slice(-8)+' cache='+(window.__senzBlobGet(m.url)?'ada':'kosong'));}catch(e){}" +
+            "if(window.__senzBlobGet(m.url)){window.__senzReplyBlob(m.url);}" +
+            "else{window.__senzPendingReqs[m.url]=true;" +
+            "setTimeout(function(){try{delete window.__senzPendingReqs[m.url];}catch(e){}},20000);}" +
+            "try{var fs=document.querySelectorAll('iframe');" +
+            "for(var i=0;i<fs.length;i++){try{fs[i].contentWindow.postMessage(m,'*');}catch(e){}}}catch(e){}" +
+            "}else if(m&&m.type==='senz-blob-data'){" +
+            "if(window.parent===window){" +
             "if(m.url===window.__senzPendingBlobUrl&&m.data&&!window.__senzBlobDone){" +
             "var nm=m.name||'';" +
             "try{nm=nm||window.__senzBlobName(m.url)||'';}catch(e){}" +
-            "window.__senzBlobDone=true;window.SenzBlob.onBlobData(m.data,nm);}" +
+            "window.__senzBlobDone=true;window.SenzBlob.onBlobData(m.data,nm);}}" +
+            "else if(m.data){try{window.parent.postMessage(m,'*');}catch(e){}}" +
             "}}catch(e){}});" +
             "}catch(e){}})();"
         // Perangkap iframe (v0.1.18) — HANYA di frame utama. Menangkap
@@ -1588,6 +1610,7 @@ abstract class BrowserActivity : AppCompatActivity() {
             "for(var i=0;i<muts.length;i++){var m=muts[i];" +
             "for(var j=0;j<m.addedNodes.length;j++)trapNode(m.addedNodes[j]);}});" +
             "_obs.observe(document.documentElement||document,{childList:true,subtree:true});}catch(e){}" +
+            "try{trapNode(document.documentElement||document);}catch(e){}" +
             "}catch(e){}})();"
         return core + trap
     }

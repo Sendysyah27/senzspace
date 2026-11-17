@@ -455,6 +455,35 @@ muncul (Ubah nama / Matikan Live / Hapus Space).
    "Beku" juga. Hapus Space yang beku → Space baru di slot yang sama
    tidak ikut beku.
 
+## Tes Unduhan AI Studio v0.1.34 di HP (bahasa bayi)
+
+Latar: unduhan audio AI Studio gagal intermiten — log 17 Nov
+18:16–18:46 menunjukkan 8x GAGAL beruntun (toast "blob tidak
+bisa dibaca"), padahal 14:34–14:43 sempat 5x berhasil. Penyebab:
+iframe audio kadang belum siap saat diminta (cache kosong,
+jawaban hilang). v0.1.34 memperbaikinya: trap menyapu iframe
+yang sudah ada, jawaban diteruskan antar-frame, permintaan
+ditahan sampai cache siap, kirim ulang di 3 detik, batas tunggu
+15 detik.
+
+1. Install APK v0.1.34-s1blob34 (NIMPA — JANGAN uninstall).
+   Tutup total app dulu (hapus dari recent apps), lalu buka lagi.
+2. Buka Space AI Studio (SSR) → Playground TTS → generate audio
+   (atau pakai audio yang sudah ada, mis. yang 6:54).
+3. Tap tombol unduh (ikon panah bawah) di player audio.
+   **LULUS** bila: toast "Tersimpan di folder AI Studio:
+   Generated Audio ... .wav" + badge unduh di top bar naik 1.
+   Buka File Manager → aistudio → file .wav-nya ada dan bisa
+   diputar.
+4. Ulangi 3x (generate baru → unduh; atau unduh audio lain).
+   **LULUS** bila: 3 dari 3 berhasil (dulu gagal berselang-seling).
+   Kalau masih ada yang gagal, kirim lagi file
+   `_Log-Blob/blob-debug.txt` (File Manager → _Log-Blob) — log
+   baru sekarang mencatat baris "core: req ..." / "core: balas ..."
+   yang menunjukkan persis di mana macetnya.
+5. Cek sisi Claude tidak rusak: unduh 1 lampiran dari Claude
+   (mis. file .mp4 / .zip). **LULUS** bila tetap tersimpan normal.
+
 ## Tes Perbaikan v0.1.33 di HP (bahasa bayi)
 
 Latar: 3 screenshot Sendy (17 Nov 17:13–17:26) — rotasi, daftar
