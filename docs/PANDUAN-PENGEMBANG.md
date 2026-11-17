@@ -455,6 +455,82 @@ muncul (Ubah nama / Matikan Live / Hapus Space).
    "Beku" juga. Hapus Space yang beku → Space baru di slot yang sama
    tidak ikut beku.
 
+## Tes Perbaikan UX v0.1.31 di HP (bahasa bayi)
+
+Latar: 10 laporan dari HP Sendy (17 Nov 15:59) — live tidak aktif
+lagi setelah dibekukan; split-screen tidak jalan; app tidak bisa
+horizontal; geser di dalam Space mau diganti tombol; tombol top
+bar mau ada animasi sentuh; notifikasi Space cuma buka Beranda;
+bersihkan data Space 8 ikut menghapus Space 7; navbar mau ikon
+saja + melayang; Pengaturan mau ada pilihan folder ekspor.
+Tiga akar masalahnya: (1) split memakai "catatan bersama"
+(static) yang tidak tembus antar-proses — Space jalan di proses
+berbeda, jadi catatan itu selalu kosong; (2) bersihkan data memakai
+CLEAR_TOP yang menutup SEMUA activity di atasnya, termasuk Space
+lain; (3) skrip penangkap blob disisipkan ke SEMUA situs, termasuk
+halaman login ChatGPT — sekarang hanya di claude.ai + AI Studio.
+
+1. Install APK v0.1.31-s1ux31 (NIMPA — JANGAN uninstall).
+   Tutup total app dulu (hapus dari recent apps), lalu buka lagi.
+2. **Beku → nyalakan live.** Tahan lama kartu Claude 1 → "Matikan
+   Live" → tutup total app (hapus dari recent) → buka app lagi →
+   tahan lama kartu → "Nyalakan Live". **LULUS** bila: Space Claude
+   1 terbuka sendiri dan setelah kembali ke Beranda, tile-nya
+   live lagi (chip "Aktif", gambar update).
+3. **Split-screen vertikal.** Di Beranda, tahan lama kartu Claude 1
+   → "Buka berdampingan" → pilih Claude 2. **LULUS** bila: layar
+   terbagi ATAS-BAWAH (Claude 1 di atas, Claude 2 di bawah, karena
+   HP portrait) dan kedua Space bisa dipakai. (Bila HP menolak
+   split, Space 2 dibuka biasa — itu batas HP, bukan bug.)
+4. **Horizontal.** Putar HP ke landscape di Beranda, di dalam Space,
+   di File Manager, di Pengaturan. **LULUS** bila: tampilan ikut
+   miring ke landscape di semua layar (walau auto-rotate sistem
+   mati).
+5. **Tombol pindah Space.** Di dalam Space, tap tombol ⇌ (dua panah
+   berbalik) di top bar. **LULUS** bila: muncul daftar Space AKTIF
+   lain; pilih satu → pindah ke Space itu. Geser kiri-kanan di
+   dalam Space sudah tidak ada lagi.
+6. **Animasi sentuh.** Tekan-tahan tombol di top bar (⌄, ⟳, ⌂, ⇌,
+   ⬇). **LULUS** bila: tombol mengecil sedikit saat ditekan, lalu
+   kembali normal saat dilepas.
+7. **Notifikasi bisa diklik ke Space.** Turunkan shade notifikasi →
+   tap notifikasi "Claude 2 berjalan". **LULUS** bila: langsung
+   masuk ke Space Claude 2 (bukan cuma Beranda). Notifikasi
+   ringkasan grup tetap membuka Beranda.
+8. **Bersihkan data tidak nyasar.** Login di Space 7 (AI Studio)
+   dan Space 8 (misal ChatGPT) — keduanya Aktif. Tahan lama kartu
+   Space 8 → "Bersihkan data Space" → "Bersihkan". **LULUS** bila:
+   Space 8 minta login ulang, TAPI Space 7 tetap Aktif (tidak
+   ikut terhapus / tidak perlu login ulang). Bila suffix tidak
+   cocok, muncul toast "Batal: Space tidak cocok — data TIDAK
+   dihapus".
+9. **Login ChatGPT tidak stuck.** Di Space 8, buka chatgpt.com →
+   login Google → isi alamat Gmail. **LULUS** bila: bisa lanjut
+   mengisi dan login sampai masuk (halaman login tidak lagi
+   diganggu skrip app — situs selain Claude/AI Studio dimuat
+   persis seperti Chrome).
+10. **Navbar melayang.** Di Beranda, perhatikan bawah layar.
+    **LULUS** bila: hanya ada 3 ikon (🏠 📁 ⚙) tanpa teks, tanpa
+    background — melayang di atas konten, Beranda terasa
+    fullscreen; ikon masih bisa ditekan (File Manager, Pengaturan).
+11. **File Manager ala MiXplorer.** Buka File Manager → masuk folder
+    Space → tap tombol "▦ Grid". **LULUS** bila: file tampil grid
+    3 kolom. Pilih 1 file → ⋮ → "Buat ZIP" → **LULUS** bila file
+    .zip muncul. ⋮ pada .zip → "Ekstrak di sini" → **LULUS** bila
+    folder hasil ekstrak muncul. Tahan lama 1 file → "Potong" →
+    pindah ke folder lain → "Tempel" → **LULUS** bila file pindah.
+    Menu urut → "Tipe file" → **LULUS** bila file terurut per
+    ekstensi. ⋮ pada folder → Detail → **LULUS** bila tampil
+    ukuran total + jumlah file/folder.
+12. **Custom folder ekspor.** Pengaturan → "Penyimpanan" → "Pilih
+    folder ekspor" → pilih folder (misal di Download). Kembali ke
+    File Manager → ekspor 1 file. **LULUS** bila: toast menyebut
+    nama folder pilihan (bukan Download/SenzSpace) dan file ada di
+    folder itu. Tap "Reset ke default" → **LULUS** bila label
+    kembali "Download/SenzSpace". Switch "Tampilkan file
+    tersembunyi" ON → **LULUS** bila file yang namanya diawali
+    titik ikut tampil di File Manager.
+
 ## Tes Bersihkan Data Space v0.1.30 di HP (bahasa bayi)
 
 Latar: Google 400 TERUS di Space 7 (11:36) meski Space sudah

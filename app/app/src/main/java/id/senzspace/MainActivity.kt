@@ -41,6 +41,10 @@ class MainActivity : AppCompatActivity() {
         const val MAX_SPACES = 10
         const val EXTRA_URL = "extra_url"
         const val EXTRA_CLEAR_DATA = "extra_clear_data"
+        // v0.1.31: suffix target clear (dicek BrowserActivity sebelum
+        // menghapus — pengaman lintas-Space) + slot split-screen.
+        const val EXTRA_CLEAR_SUFFIX = "extra_clear_suffix"
+        const val EXTRA_SPLIT_WITH = "extra_split_with"
         const val EXTRA_SPACE_NAME = "extra_space_name"
         const val EXTRA_SPACE_COLOR = "extra_space_color"
         private const val PREFS_UI = "senzspace_ui"
@@ -159,6 +163,10 @@ class MainActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // v0.1.31: ikuti sensor putar HP (berlaku walau auto-rotate
+        // sistem mati) — app sebelumnya tidak bisa horizontal.
+        requestedOrientation =
+            android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR
         CrashLog.install(this)
         setContentView(R.layout.activity_main)
         FileStore.ensure(this)
@@ -706,13 +714,29 @@ class MainActivity : AppCompatActivity() {
                     0 -> showRenameDialog(entry)
                     1 -> {
                         LiveFreeze.setFrozen(this, suffix, !frozen)
-                        Toast.makeText(
-                            this,
-                            if (frozen) "\"${entry.name}\": Live dinyalakan"
-                            else "\"${entry.name}\": Live dibekukan — browser tetap jalan",
-                            Toast.LENGTH_SHORT
-                        ).show()
-                        renderDashboard()
+                        if (frozen) {
+                            // v0.1.31: "Nyalakan Live" MEMBUKA Space-nya —
+                            // timer tangkap thumbnail hidup di activity
+                            // Space; bila activity itu sempat mati selagi
+                            // dibekukan, hanya membuka Space yang
+                            // menghidupkannya lagi (temuan HP: live tidak
+                            // aktif lagi setelah dibekukan). Saat kembali
+                            // ke Beranda, onPause menangkap thumbnail
+                            // segar → tile live lagi.
+                            Toast.makeText(
+                                this,
+                                "\"${entry.name}\": Live dinyalakan — membuka Space",
+                                Toast.LENGTH_SHORT
+                            ).show()
+                            openSpace(entry)
+                        } else {
+                            Toast.makeText(
+                                this,
+                                "\"${entry.name}\": Live dibekukan — browser tetap jalan",
+                                Toast.LENGTH_SHORT
+                            ).show()
+                            renderDashboard()
+                        }
                     }
                     2 -> showSplitPicker(entry)
                     3 -> showClearDataDialog(entry)
@@ -747,8 +771,9 @@ class MainActivity : AppCompatActivity() {
         AlertDialog.Builder(this)
             .setTitle("Berdampingan dengan \"${entry.name}\"")
             .setItems(names) { _, which ->
-                BrowserActivity.requestSplitWith(others[which].slot)
-                openSpace(entry)
+                // v0.1.31: slot split dikirim sebagai intent extra
+                // (EXTRA_SPLIT_WITH) — static lintas-proses tidak jalan.
+                openSpace(entry, splitWith = others[which].slot)
             }
             .setNegativeButton("Batal", null)
             .show()
@@ -839,20 +864,31 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun openSpace(entry: SpaceRegistry.SpaceEntry, clearData: Boolean = false) {
+    private fun openSpace(
+        entry: SpaceRegistry.SpaceEntry,
+        clearData: Boolean = false,
+        splitWith: Int? = null
+    ) {
         // Multi Live: pakai instance Space yang sudah jalan (REORDER_TO_FRONT)
         // — jangan bikin WebView kedua untuk Space yang sama.
-        // Bersihkan data: FLAG_ACTIVITY_CLEAR_TOP (bukan REORDER) supaya
-        // instance lama DIHANCURKAN dan onCreate jalan lagi dengan extra
-        // clear — REORDER saja tidak memanggil onCreate/onNewIntent baru
-        // (tidak ada onNewIntent di BrowserActivity), extra akan diabaikan.
+        // v0.1.31: CLEAR_TOP DIHAPUS — flag itu menutup SEMUA activity di
+        // atas target di task yang sama (termasuk activity Space LAIN +
+        // Beranda). Itu tersangka utama insiden clear Space 8 ikut
+        // menghapus Space 7 (17 Nov ~15:xx): activity Space 7 ditutup
+        // paksa selagi clear berjalan. Pengganti: REORDER_TO_FRONT +
+        // onNewIntent di BrowserActivity (extra tetap sampai, activity
+        // lain tidak disentuh). Clear juga membawa suffix target yang
+        // dicek ulang di BrowserActivity sebelum menghapus apa pun.
         val intent = Intent(this, SpaceRegistry.activityForSlot(entry.slot)).apply {
+            flags = Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
             if (clearData) {
-                flags = Intent.FLAG_ACTIVITY_CLEAR_TOP
                 putExtra(EXTRA_CLEAR_DATA, true)
-            } else {
-                flags = Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
+                putExtra(
+                    EXTRA_CLEAR_SUFFIX,
+                    SpaceRegistry.suffixForSlot(entry.slot)
+                )
             }
+            if (splitWith != null) putExtra(EXTRA_SPLIT_WITH, splitWith)
             putExtra(EXTRA_SPACE_NAME, entry.name)
             putExtra(EXTRA_SPACE_COLOR, entry.color)
             putExtra(EXTRA_URL, entry.url)

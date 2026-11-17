@@ -3,25 +3,29 @@
      Frame 360×800: app bar (judul 20sp + pill ● LIVE) → toggle
      Multi Live / Daftar (328×36, pill 18dp) → label "SEMUA SPACE • LIVE"
      + hitung "N / 10" → grid 2 kolom tile live (159×134dp) ATAU daftar
-     kartu (mode Daftar) → bottom nav tetap (Beranda / File Manager /
-     Pengaturan, h56dp). File Manager & Pengaturan pindah ke bottom nav
-     (dulu kartu di bawah daftar). -->
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+     kartu (mode Daftar).
+     v0.1.31: bottom nav MELAYANG — ikon saja (tanpa teks), tanpa
+     background, di tengah bawah, jadi Beranda terasa fullscreen
+     (perintah Sendy 17 Nov 15:59). Root FrameLayout: ScrollView
+     match_parent + padding bawah 96dp supaya konten terakhir tidak
+     tertutup nav melayang. -->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="@color/senz_bg"
-    android:orientation="vertical">
+    android:background="@color/senz_bg">
 
     <ScrollView
         android:layout_width="match_parent"
-        android:layout_height="0dp"
-        android:layout_weight="1">
+        android:layout_height="match_parent">
 
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="vertical"
-            android:padding="16dp">
+            android:paddingLeft="16dp"
+            android:paddingTop="16dp"
+            android:paddingRight="16dp"
+            android:paddingBottom="96dp">
 
             <!-- App bar -->
             <LinearLayout
@@ -142,92 +146,65 @@
         </LinearLayout>
     </ScrollView>
 
-    <View
-        android:layout_width="match_parent"
-        android:layout_height="1dp"
-        android:background="@color/senz_card_stroke" />
-
-    <!-- Bottom nav tetap — ikon SVG garis minimalis (Feather/Lucide),
-         TRANSPARAN tanpa background/pill (perintah Sendy 23:35).
-         Item aktif (Beranda) tint indigo, sisanya muted. -->
+    <!-- Bottom nav MELAYANG (v0.1.31) — ikon saja, tanpa teks, tanpa
+         background, di tengah bawah (16dp dari bawah). Item aktif
+         (Beranda) tint indigo, sisanya muted. ID item dipertahankan
+         (listener MainActivity tidak berubah). -->
     <LinearLayout
-        android:layout_width="match_parent"
-        android:layout_height="56dp"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom|center_horizontal"
+        android:layout_marginBottom="16dp"
         android:background="@android:color/transparent"
         android:gravity="center_vertical"
         android:orientation="horizontal">
 
         <LinearLayout
             android:id="@+id/navHome"
-            android:layout_width="0dp"
-            android:layout_height="match_parent"
-            android:layout_weight="1"
-            android:background="@android:color/transparent"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:background="?android:attr/selectableItemBackgroundBorderless"
             android:gravity="center"
-            android:orientation="vertical">
+            android:orientation="vertical"
+            android:padding="12dp">
 
             <ImageView
-                android:layout_width="24dp"
-                android:layout_height="24dp"
+                android:layout_width="28dp"
+                android:layout_height="28dp"
                 android:src="@drawable/ic_home"
                 android:tint="@color/senz_accent" />
-
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="2dp"
-                android:text="Beranda"
-                android:textColor="@color/senz_accent"
-                android:textSize="11sp"
-                android:textStyle="bold" />
         </LinearLayout>
 
         <LinearLayout
             android:id="@+id/navFiles"
-            android:layout_width="0dp"
-            android:layout_height="match_parent"
-            android:layout_weight="1"
-            android:background="@android:color/transparent"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:background="?android:attr/selectableItemBackgroundBorderless"
             android:gravity="center"
-            android:orientation="vertical">
+            android:orientation="vertical"
+            android:padding="12dp">
 
             <ImageView
-                android:layout_width="24dp"
-                android:layout_height="24dp"
+                android:layout_width="28dp"
+                android:layout_height="28dp"
                 android:src="@drawable/ic_nav_folder"
                 android:tint="@color/senz_muted" />
-
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="2dp"
-                android:text="File Manager"
-                android:textColor="@color/senz_muted"
-                android:textSize="11sp" />
         </LinearLayout>
 
         <LinearLayout
             android:id="@+id/navSettings"
-            android:layout_width="0dp"
-            android:layout_height="match_parent"
-            android:layout_weight="1"
-            android:background="@android:color/transparent"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:background="?android:attr/selectableItemBackgroundBorderless"
             android:gravity="center"
-            android:orientation="vertical">
+            android:orientation="vertical"
+            android:padding="12dp">
 
             <ImageView
-                android:layout_width="24dp"
-                android:layout_height="24dp"
+                android:layout_width="28dp"
+                android:layout_height="28dp"
                 android:src="@drawable/ic_nav_settings"
                 android:tint="@color/senz_muted" />
-
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="2dp"
-                android:text="Pengaturan"
-                android:textColor="@color/senz_muted"
-                android:textSize="11sp" />
         </LinearLayout>
     </LinearLayout>
-</LinearLayout>
+</FrameLayout>

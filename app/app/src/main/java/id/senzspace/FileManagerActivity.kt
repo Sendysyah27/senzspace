@@ -41,6 +41,8 @@ class FileManagerActivity : AppCompatActivity() {
         const val EXTRA_FOLDER = "extra_folder"
         private const val PREFS_UI = "senzspace_ui"
         private const val KEY_SORT = "fm_sort"
+        private const val KEY_VIEW = "fm_view"
+        private const val KEY_SHOW_HIDDEN = "fm_show_hidden"
     }
 
     private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
@@ -50,6 +52,12 @@ class FileManagerActivity : AppCompatActivity() {
     private val selected = mutableSetOf<File>()
     private var query = ""
     private var sortMode = "date_desc"
+    // v0.1.31 (ala MiXplorer): mode tampil list/grid, clipboard
+    // Potong/Salin/Tempel, tampilkan file tersembunyi.
+    private var viewMode = "list"
+    private var showHidden = false
+    private var clipboard = listOf<File>()
+    private var clipboardCut = false
 
     private lateinit var content: LinearLayout
     private lateinit var crumbBar: TextView
@@ -57,6 +65,8 @@ class FileManagerActivity : AppCompatActivity() {
     private lateinit var toolbarRow: LinearLayout
     private lateinit var searchBox: EditText
     private lateinit var sortBtn: TextView
+    private lateinit var viewBtn: TextView
+    private lateinit var pasteBtn: TextView
     private lateinit var actionBar: LinearLayout
     private lateinit var actionCount: TextView
 
@@ -66,15 +76,22 @@ class FileManagerActivity : AppCompatActivity() {
         "name" -> "Nama A–Z"
         "date_asc" -> "Terlama"
         "size_desc" -> "Terbesar"
+        "type" -> "Tipe file"
         else -> "Terbaru"
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // v0.1.31: ikuti sensor putar HP (berlaku walau auto-rotate
+        // sistem mati) — app sebelumnya tidak bisa horizontal.
+        requestedOrientation =
+            android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR
         CrashLog.install(this)
         FileStore.ensure(this)
-        sortMode = getSharedPreferences(PREFS_UI, MODE_PRIVATE)
-            .getString(KEY_SORT, "date_desc") ?: "date_desc"
+        val uiPrefs = getSharedPreferences(PREFS_UI, MODE_PRIVATE)
+        sortMode = uiPrefs.getString(KEY_SORT, "date_desc") ?: "date_desc"
+        viewMode = uiPrefs.getString(KEY_VIEW, "list") ?: "list"
+        showHidden = uiPrefs.getBoolean(KEY_SHOW_HIDDEN, false)
         intent.getStringExtra(EXTRA_FOLDER)?.let { key ->
             pathStack.addLast(FileStore.folderDir(this, key))
         }
@@ -170,6 +187,32 @@ class FileManagerActivity : AppCompatActivity() {
             setPadding(dp(10), dp(8), dp(10), dp(8))
         }
         newFolderBtn.setOnClickListener { showNewFolderDialog() }
+        // v0.1.31: ganti tampilan Grid/Daftar + Tempel (clipboard).
+        viewBtn = TextView(this).apply {
+            text = if (viewMode == "grid") "☰ Daftar" else "▦ Grid"
+            textSize = 12f
+            typeface = Typeface.DEFAULT_BOLD
+            setTextColor(Color.parseColor("#E8ECF4"))
+            setBackgroundColor(Color.parseColor("#16233A"))
+            setPadding(dp(10), dp(8), dp(10), dp(8))
+        }
+        viewBtn.setOnClickListener {
+            viewMode = if (viewMode == "grid") "list" else "grid"
+            getSharedPreferences(PREFS_UI, MODE_PRIVATE)
+                .edit().putString(KEY_VIEW, viewMode).apply()
+            viewBtn.text = if (viewMode == "grid") "☰ Daftar" else "▦ Grid"
+            render()
+        }
+        pasteBtn = TextView(this).apply {
+            text = "Tempel"
+            textSize = 12f
+            typeface = Typeface.DEFAULT_BOLD
+            setTextColor(Color.WHITE)
+            setBackgroundColor(Color.parseColor("#5B5BD6"))
+            setPadding(dp(10), dp(8), dp(10), dp(8))
+            visibility = View.GONE
+        }
+        pasteBtn.setOnClickListener { pasteClipboard() }
         toolbarRow.addView(searchBox)
         toolbarRow.addView(sortBtn.apply {
             layoutParams = LinearLayout.LayoutParams(
@@ -178,6 +221,18 @@ class FileManagerActivity : AppCompatActivity() {
             ).apply { leftMargin = dp(8) }
         })
         toolbarRow.addView(newFolderBtn.apply {
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply { leftMargin = dp(8) }
+        })
+        toolbarRow.addView(viewBtn.apply {
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply { leftMargin = dp(8) }
+        })
+        toolbarRow.addView(pasteBtn.apply {
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT
@@ -221,12 +276,16 @@ class FileManagerActivity : AppCompatActivity() {
         }
         actionBar.addView(actionCount)
         for ((label, color, fn) in listOf(
-            Triple("Pindah", "#5B5BD6", { moveSelected() }),
+            // v0.1.31: Pindah/Salin jadi clipboard (Potong/Salin) —
+            // tempel di folder tujuan lewat tombol Tempel di toolbar.
+            Triple("Potong", "#5B5BD6", { cutSelected() }),
             Triple("Salin", "#0EA5A5", { copySelected() }),
             Triple("Ekspor", "#0EA5A5", { exportSelected() }),
             Triple("Bagikan", "#24344D", { shareFiles(selected.toList()) }),
+            Triple("ZIP", "#0EA5A5", { zipSelected() }),
             Triple("Hapus", "#7F1D1D", { deleteSelected() }),
             Triple("Pilih semua", "#24344D", { selectAll() }),
+            Triple("Balik pilihan", "#24344D", { invertSelection() }),
             Triple("Batal", "#24344D", { clearSelection() })
         )) {
             actionBar.addView(TextView(this).apply {
@@ -287,6 +346,7 @@ class FileManagerActivity : AppCompatActivity() {
         val dir = currentDir()
         val inFolder = dir != null
         toolbarRow.visibility = if (inFolder) View.VISIBLE else View.GONE
+        updatePasteBtn()
         backBtn.visibility = if (inFolder) View.VISIBLE else View.GONE
         crumbBar.text = if (!inFolder) {
             "Semua folder"
@@ -295,6 +355,14 @@ class FileManagerActivity : AppCompatActivity() {
         }
         updateActionBar()
         if (!inFolder) renderFolders() else renderEntries(dir!!)
+    }
+
+    /** Tombol Tempel muncul bila clipboard berisi item dan sedang di
+     *  dalam folder (tujuan tempel). */
+    private fun updatePasteBtn() {
+        if (!::pasteBtn.isInitialized) return
+        pasteBtn.visibility =
+            if (clipboard.isNotEmpty() && currentDir() != null) View.VISIBLE else View.GONE
     }
 
     private fun updateActionBar() {
@@ -311,7 +379,18 @@ class FileManagerActivity : AppCompatActivity() {
     private fun selectAll() {
         val dir = currentDir() ?: return
         selected.clear()
-        selected.addAll(FileStore.listEntries(dir))
+        selected.addAll(visibleEntries(dir))
+        render()
+    }
+
+    /** v0.1.31: balik pilihan — yang terpilih jadi batal, yang belum
+     *  jadi terpilih (di folder yang sedang dibuka). */
+    private fun invertSelection() {
+        val dir = currentDir() ?: return
+        val all = visibleEntries(dir)
+        val old = selected.toSet()
+        selected.clear()
+        selected.addAll(all.filter { it !in old })
         render()
     }
 
@@ -384,8 +463,12 @@ class FileManagerActivity : AppCompatActivity() {
 
     // ---------- Isi folder (subfolder + file) ----------
 
-    private fun renderEntries(dir: File) {
+    /** Entri yang terlihat: sembunyikan file titik (kecuali pengaturan
+     *  "Tampilkan file tersembunyi"), saring pencarian, urut sesuai
+     *  sortMode. Dipakai render + Pilih semua + Balik pilihan. */
+    private fun visibleEntries(dir: File): List<File> {
         val all = FileStore.listEntries(dir)
+            .filter { showHidden || !it.name.startsWith(".") }
         val filtered = if (query.isBlank()) all
             else all.filter { it.name.contains(query, ignoreCase = true) }
         val folders = filtered.filter { it.isDirectory }
@@ -395,9 +478,14 @@ class FileManagerActivity : AppCompatActivity() {
             "name" -> files.sortedBy { it.name.lowercase() }
             "date_asc" -> files.sortedBy { it.lastModified() }
             "size_desc" -> files.sortedByDescending { it.length() }
+            "type" -> files.sortedBy { it.extension.lowercase() + it.name.lowercase() }
             else -> files.sortedByDescending { it.lastModified() }
         }
-        val entries = folders + sortedFiles
+        return folders + sortedFiles
+    }
+
+    private fun renderEntries(dir: File) {
+        val entries = visibleEntries(dir)
         if (entries.isEmpty()) {
             content.addView(TextView(this).apply {
                 text = if (query.isNotBlank()) "Tidak ada file bernama \"$query\"."
@@ -408,7 +496,85 @@ class FileManagerActivity : AppCompatActivity() {
             })
             return
         }
+        if (viewMode == "grid") {
+            renderEntriesGrid(entries)
+            return
+        }
         for (entry in entries) content.addView(entryRow(entry))
+    }
+
+    /** v0.1.31: tampilan grid 3 kolom (ikon besar + nama) — ala
+     *  galeri file manager. Ketuk/buka dan tahan/pilih sama seperti
+     *  mode daftar. */
+    private fun renderEntriesGrid(entries: List<File>) {
+        val grid = android.widget.GridLayout(this).apply {
+            columnCount = 3
+            layoutParams = ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            )
+        }
+        for (entry in entries) grid.addView(entryCell(entry))
+        content.addView(grid)
+    }
+
+    private fun entryCell(entry: File): View {
+        val isFolder = entry.isDirectory
+        val isSelected = selected.contains(entry)
+        val cell = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+            setPadding(dp(8), dp(12), dp(8), dp(12))
+            layoutParams = android.widget.GridLayout.LayoutParams().apply {
+                width = 0
+                height = ViewGroup.LayoutParams.WRAP_CONTENT
+                columnSpec = android.widget.GridLayout.spec(
+                    android.widget.GridLayout.UNDEFINED, 1f
+                )
+                setMargins(dp(4), dp(4), dp(4), dp(4))
+            }
+            if (isSelected) setBackgroundColor(Color.parseColor("#1B2A44"))
+        }
+        cell.addView(android.widget.ImageView(this).apply {
+            if (isFolder) {
+                setImageResource(R.drawable.ic_nav_folder)
+                imageTintList = android.content.res.ColorStateList.valueOf(
+                    Color.parseColor("#E5B567")
+                )
+            } else {
+                setImageResource(FileStore.iconResFor(entry))
+                imageTintList = android.content.res.ColorStateList.valueOf(
+                    Color.parseColor("#8A94A6")
+                )
+            }
+            layoutParams = LinearLayout.LayoutParams(dp(32), dp(32))
+        })
+        cell.addView(TextView(this).apply {
+            text = entry.name
+            textSize = 12f
+            setTextColor(Color.parseColor("#E8ECF4"))
+            gravity = Gravity.CENTER
+            maxLines = 2
+            ellipsize = android.text.TextUtils.TruncateAt.END
+            setPadding(0, dp(6), 0, 0)
+        })
+        cell.setOnClickListener {
+            if (selected.isNotEmpty()) {
+                toggleSelect(entry)
+            } else if (isFolder) {
+                pathStack.addLast(entry)
+                render()
+            } else if (FileStore.isPreviewable(entry)) {
+                viewFile(entry)
+            } else {
+                openFile(entry)
+            }
+        }
+        cell.setOnLongClickListener {
+            toggleSelect(entry)
+            true
+        }
+        return cell
     }
 
     private fun entryRow(entry: File): View {
@@ -525,7 +691,15 @@ class FileManagerActivity : AppCompatActivity() {
             menu.menu.add("Bagikan").setOnMenuItemClickListener { shareFiles(listOf(entry)); true }
         }
         menu.menu.add("Pindah…").setOnMenuItemClickListener { showMoveDialog(listOf(entry)); true }
-        menu.menu.add("Salin").setOnMenuItemClickListener { copyEntries(listOf(entry)); true }
+        // v0.1.31: Potong/Salin masuk clipboard — tempel di folder
+        // tujuan lewat tombol Tempel di toolbar.
+        menu.menu.add("Potong").setOnMenuItemClickListener { cutToClipboard(listOf(entry)); true }
+        menu.menu.add("Salin").setOnMenuItemClickListener { copyToClipboard(listOf(entry)); true }
+        if (entry.extension.lowercase() == "zip") {
+            menu.menu.add("Ekstrak di sini").setOnMenuItemClickListener { unzipFile(entry); true }
+        } else {
+            menu.menu.add("Buat ZIP").setOnMenuItemClickListener { zipFiles(listOf(entry)); true }
+        }
         menu.menu.add("Ganti nama").setOnMenuItemClickListener { showRenameDialog(entry); true }
         menu.menu.add("Detail").setOnMenuItemClickListener { showDetailsDialog(entry); true }
         if (!isFolder) {
@@ -541,7 +715,8 @@ class FileManagerActivity : AppCompatActivity() {
             "date_desc" to "Terbaru",
             "date_asc" to "Terlama",
             "name" to "Nama A–Z",
-            "size_desc" to "Terbesar"
+            "size_desc" to "Terbesar",
+            "type" to "Tipe file"
         )) {
             menu.menu.add(label).setOnMenuItemClickListener {
                 sortMode = key
@@ -627,29 +802,163 @@ class FileManagerActivity : AppCompatActivity() {
             .show()
     }
 
-    private fun copyEntries(entries: List<File>) {
-        // Salin ke folder saat ini bila beda folder tidak dipilih: tanya
-        // tujuan dulu (sama seperti Pindah).
-        val dests = FileStore.FOLDERS
-        val names = dests.map { it.name }.toTypedArray()
-        AlertDialog.Builder(this)
-            .setTitle("Salin ${entries.size} item ke…")
-            .setItems(names) { _, which ->
-                val dest = dests[which]
-                var ok = 0
-                for (e in entries) {
-                    if (FileStore.copy(this, e, dest.key) != null) ok++
-                }
-                Toast.makeText(this, "$ok item disalin ke ${dest.name}", Toast.LENGTH_SHORT).show()
-                clearSelection()
-            }
-            .setNegativeButton("Batal", null)
-            .show()
+    // ---------- Clipboard ala MiXplorer (v0.1.31) ----------
+    // Potong/Salin hanya menaruh item di clipboard; Tempel mengeksekusi
+    // di folder yang sedang dibuka (bisa subfolder, bukan cuma folder
+    // tingkat atas seperti dialog Pindah/Salin lama).
+
+    private fun copyToClipboard(entries: List<File>) {
+        if (entries.isEmpty()) return
+        clipboard = entries.toList()
+        clipboardCut = false
+        Toast.makeText(
+            this,
+            "${entries.size} item disalin — buka folder tujuan, lalu Tempel",
+            Toast.LENGTH_LONG
+        ).show()
+        updatePasteBtn()
+        clearSelection()
+    }
+
+    private fun cutToClipboard(entries: List<File>) {
+        if (entries.isEmpty()) return
+        clipboard = entries.toList()
+        clipboardCut = true
+        Toast.makeText(
+            this,
+            "${entries.size} item dipotong — buka folder tujuan, lalu Tempel",
+            Toast.LENGTH_LONG
+        ).show()
+        updatePasteBtn()
+        clearSelection()
     }
 
     private fun copySelected() {
         if (selected.isEmpty()) return
-        copyEntries(selected.toList())
+        copyToClipboard(selected.toList())
+    }
+
+    private fun cutSelected() {
+        if (selected.isEmpty()) return
+        cutToClipboard(selected.toList())
+    }
+
+    private fun pasteClipboard() {
+        val dir = currentDir() ?: return
+        val items = clipboard
+        if (items.isEmpty()) return
+        var ok = 0
+        for (f in items) {
+            if (!f.exists()) continue
+            val dest = FileStore.uniqueFile(dir, f.name)
+            val done = try {
+                if (clipboardCut) {
+                    f.renameTo(dest)
+                } else if (f.isDirectory) {
+                    f.copyRecursively(dest)
+                } else {
+                    f.copyTo(dest, overwrite = false)
+                    true
+                }
+            } catch (e: Exception) {
+                false
+            }
+            if (done) ok++
+        }
+        if (clipboardCut) clipboard = emptyList()
+        Toast.makeText(
+            this,
+            "$ok item ditempel di ${dir.name}",
+            Toast.LENGTH_SHORT
+        ).show()
+        updatePasteBtn()
+        render()
+    }
+
+    // ---------- ZIP (v0.1.31) ----------
+
+    private fun zipSelected() {
+        if (selected.isEmpty()) return
+        zipFiles(selected.toList())
+        clearSelection()
+    }
+
+    private fun zipFiles(files: List<File>) {
+        val dir = currentDir() ?: return
+        val base = if (files.size == 1) files[0].nameWithoutExtension
+            else "arsip-${files.size}-item"
+        Thread {
+            try {
+                val dest = FileStore.uniqueFile(dir, "$base.zip")
+                java.util.zip.ZipOutputStream(
+                    java.io.BufferedOutputStream(java.io.FileOutputStream(dest))
+                ).use { zos ->
+                    for (f in files) addToZip(zos, f, f.name)
+                }
+                runOnUiThread {
+                    Toast.makeText(this, "ZIP dibuat: ${dest.name}", Toast.LENGTH_LONG).show()
+                    render()
+                }
+            } catch (e: Exception) {
+                runOnUiThread {
+                    Toast.makeText(this, "Gagal membuat ZIP: ${e.message}", Toast.LENGTH_LONG).show()
+                }
+            }
+        }.start()
+    }
+
+    private fun addToZip(
+        zos: java.util.zip.ZipOutputStream, file: File, entryName: String
+    ) {
+        if (file.isDirectory) {
+            file.listFiles()?.forEach { addToZip(zos, it, "$entryName/${it.name}") }
+        } else {
+            zos.putNextEntry(java.util.zip.ZipEntry(entryName))
+            file.inputStream().use { it.copyTo(zos) }
+            zos.closeEntry()
+        }
+    }
+
+    private fun unzipFile(file: File) {
+        val dir = currentDir() ?: return
+        Thread {
+            try {
+                val destDir = File(dir, file.nameWithoutExtension)
+                destDir.mkdirs()
+                val destCanonical = destDir.canonicalPath
+                java.util.zip.ZipInputStream(
+                    java.io.BufferedInputStream(file.inputStream())
+                ).use { zis ->
+                    var entry = zis.nextEntry
+                    while (entry != null) {
+                        val out = File(destDir, entry.name)
+                        // Anti Zip-Slip: tolak entri yang keluar dari
+                        // folder tujuan.
+                        if (!out.canonicalPath.startsWith(destCanonical)) {
+                            zis.closeEntry()
+                            entry = zis.nextEntry
+                            continue
+                        }
+                        if (entry.isDirectory) {
+                            out.mkdirs()
+                        } else {
+                            out.parentFile?.mkdirs()
+                            out.outputStream().use { zis.copyTo(it) }
+                        }
+                        zis.closeEntry()
+                        entry = zis.nextEntry
+                    }
+                }
+                runOnUiThread {
+                    Toast.makeText(this, "Diekstrak ke ${destDir.name}", Toast.LENGTH_LONG).show()
+                    render()
+                }
+            } catch (e: Exception) {
+                runOnUiThread {
+                    Toast.makeText(this, "Gagal mengekstrak: ${e.message}", Toast.LENGTH_LONG).show()
+                }
+            }
+        }.start()
     }
 
     private fun moveSelected() {
@@ -664,7 +973,8 @@ class FileManagerActivity : AppCompatActivity() {
         }
         Toast.makeText(
             this,
-            if (ok > 0) "$ok file diekspor ke Download/SenzSpace" else "Gagal mengekspor",
+            if (ok > 0) "$ok file diekspor ke ${FileStore.exportLocationLabel(this)}"
+            else "Gagal mengekspor",
             Toast.LENGTH_LONG
         ).show()
         clearSelection()
@@ -751,8 +1061,16 @@ class FileManagerActivity : AppCompatActivity() {
         if (entry.isFile) {
             details.append("Ukuran: ${FileStore.formatSize(entry.length())}\n")
         } else {
-            val n = entry.listFiles()?.size ?: 0
-            details.append("Isi: $n item\n")
+            // v0.1.31: ukuran total rekursif + hitungan file/folder.
+            val total = FileStore.totalBytesRecursive(entry)
+            var files = 0
+            var folders = 0
+            entry.walkTopDown().forEach {
+                if (it.isFile) files++
+                else if (it.isDirectory && it != entry) folders++
+            }
+            details.append("Ukuran total: ${FileStore.formatSize(total)}\n")
+            details.append("Isi: $files file • $folders folder\n")
         }
         details.append("Diubah: ${FileStore.formatDate(entry.lastModified())}\n")
         val root = FileStore.rootDir(this)

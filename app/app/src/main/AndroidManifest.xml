@@ -38,52 +38,62 @@
             android:name=".Space1Activity"
             android:process=":space1"
             android:exported="false"
-            android:configChanges="screenSize|smallestScreenSize|screenLayout|orientation|density|layoutDirection" />
+            android:configChanges="screenSize|smallestScreenSize|screenLayout|orientation|density|layoutDirection"
+            android:resizeableActivity="true" />
         <activity
             android:name=".Space2Activity"
             android:process=":space2"
             android:exported="false"
-            android:configChanges="screenSize|smallestScreenSize|screenLayout|orientation|density|layoutDirection" />
+            android:configChanges="screenSize|smallestScreenSize|screenLayout|orientation|density|layoutDirection"
+            android:resizeableActivity="true" />
         <activity
             android:name=".Space3Activity"
             android:process=":space3"
             android:exported="false"
-            android:configChanges="screenSize|smallestScreenSize|screenLayout|orientation|density|layoutDirection" />
+            android:configChanges="screenSize|smallestScreenSize|screenLayout|orientation|density|layoutDirection"
+            android:resizeableActivity="true" />
         <activity
             android:name=".Space4Activity"
             android:process=":space4"
             android:exported="false"
-            android:configChanges="screenSize|smallestScreenSize|screenLayout|orientation|density|layoutDirection" />
+            android:configChanges="screenSize|smallestScreenSize|screenLayout|orientation|density|layoutDirection"
+            android:resizeableActivity="true" />
         <activity
             android:name=".Space5Activity"
             android:process=":space5"
             android:exported="false"
-            android:configChanges="screenSize|smallestScreenSize|screenLayout|orientation|density|layoutDirection" />
+            android:configChanges="screenSize|smallestScreenSize|screenLayout|orientation|density|layoutDirection"
+            android:resizeableActivity="true" />
         <activity
             android:name=".Space6Activity"
             android:process=":space6"
             android:exported="false"
-            android:configChanges="screenSize|smallestScreenSize|screenLayout|orientation|density|layoutDirection" />
+            android:configChanges="screenSize|smallestScreenSize|screenLayout|orientation|density|layoutDirection"
+            android:resizeableActivity="true" />
         <activity
             android:name=".AiStudioActivity"
             android:process=":aistudio"
             android:exported="false"
-            android:configChanges="screenSize|smallestScreenSize|screenLayout|orientation|density|layoutDirection" />
+            android:configChanges="screenSize|smallestScreenSize|screenLayout|orientation|density|layoutDirection"
+            android:resizeableActivity="true" />
         <activity
             android:name=".Space8Activity"
             android:process=":space8"
             android:exported="false"
-            android:configChanges="screenSize|smallestScreenSize|screenLayout|orientation|density|layoutDirection" />
+            android:configChanges="screenSize|smallestScreenSize|screenLayout|orientation|density|layoutDirection"
+            android:resizeableActivity="true" />
         <activity
             android:name=".Space9Activity"
             android:process=":space9"
             android:exported="false"
-            android:configChanges="screenSize|smallestScreenSize|screenLayout|orientation|density|layoutDirection" />
+            android:configChanges="screenSize|smallestScreenSize|screenLayout|orientation|density|layoutDirection"
+            android:resizeableActivity="true" />
         <activity
             android:name=".Space10Activity"
             android:process=":space10"
             android:exported="false"
-            android:configChanges="screenSize|smallestScreenSize|screenLayout|orientation|density|layoutDirection" />
+            android:configChanges="screenSize|smallestScreenSize|screenLayout|orientation|density|layoutDirection"
+            android:resizeableActivity="true" />
 
         <!-- File Manager: jalan di proses utama (bukan proses Space) —
              ia membaca/menulis folder kerja semua Space. -->

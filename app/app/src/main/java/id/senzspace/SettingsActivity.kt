@@ -27,6 +27,9 @@ class SettingsActivity : AppCompatActivity() {
     private lateinit var intervalValue: TextView
     private lateinit var batteryStatus: TextView
     private lateinit var storageInfo: TextView
+    // v0.1.31: folder ekspor custom + tampilkan file tersembunyi.
+    private lateinit var exportPathValue: TextView
+    private lateinit var hiddenSwitch: Switch
     private var expectingLockResult = false
 
     private val lockLauncher = registerForActivityResult(
@@ -50,8 +53,49 @@ class SettingsActivity : AppCompatActivity() {
 
     private var pendingAction: String? = null
 
+    // v0.1.31: pemilih folder ekspor (SAF). URI pohon disimpan
+    // persisten (takePersistableUriPermission) supaya tetap bisa
+    // ditulis setelah app ditutup.
+    private val exportPicker = registerForActivityResult(
+        ActivityResultContracts.OpenDocumentTree()
+    ) { uri ->
+        if (uri == null) return@registerForActivityResult
+        try {
+            contentResolver.takePersistableUriPermission(
+                uri,
+                android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                    android.content.Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+            )
+            val name = displayNameOf(uri)
+            FileStore.setCustomExport(this, uri, name)
+            Toast.makeText(this, "Folder ekspor: $name", Toast.LENGTH_LONG).show()
+            refresh()
+        } catch (e: Exception) {
+            Toast.makeText(this, "Gagal menyimpan folder: ${e.message}", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    private fun displayNameOf(uri: android.net.Uri): String {
+        return try {
+            contentResolver.query(
+                uri,
+                arrayOf(android.provider.DocumentsContract.Document.COLUMN_DISPLAY_NAME),
+                null, null, null
+            )?.use { c ->
+                if (c.moveToFirst()) c.getString(0)
+                else uri.lastPathSegment ?: "Folder pilihan"
+            } ?: (uri.lastPathSegment ?: "Folder pilihan")
+        } catch (e: Exception) {
+            uri.lastPathSegment ?: "Folder pilihan"
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // v0.1.31: ikuti sensor putar HP (berlaku walau auto-rotate
+        // sistem mati) — app sebelumnya tidak bisa horizontal.
+        requestedOrientation =
+            android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR
 
         val scroll = android.widget.ScrollView(this).apply {
             layoutParams = ViewGroup.LayoutParams(
@@ -231,6 +275,79 @@ class SettingsActivity : AppCompatActivity() {
         batteryBtn.setOnClickListener { requestBatteryException() }
         root.addView(batteryBtn)
 
+        // ---------- Penyimpanan (v0.1.31) ----------
+        root.addView(sectionTitle("Penyimpanan"))
+        exportPathValue = TextView(this).apply {
+            textSize = 14f
+            typeface = Typeface.DEFAULT_BOLD
+            setTextColor(Color.parseColor("#5B5BD6"))
+            setPadding(0, 0, 0, 8)
+        }
+        root.addView(exportPathValue)
+        root.addView(TextView(this).apply {
+            text = "Folder tujuan saat kamu mengekspor file dari File Manager. " +
+                "Default: Download/SenzSpace. Folder pilihan tersimpan " +
+                "dan tetap bisa ditulis setelah app ditutup."
+            textSize = 12f
+            setTextColor(Color.parseColor("#8A94A6"))
+            setPadding(0, 0, 0, 16)
+        })
+        val exportPickBtn = Button(this).apply {
+            text = "Pilih folder ekspor"
+            setTextColor(Color.WHITE)
+            setBackgroundColor(Color.parseColor("#5B5BD6"))
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            )
+        }
+        exportPickBtn.setOnClickListener { exportPicker.launch(null) }
+        root.addView(exportPickBtn)
+        val exportResetBtn = Button(this).apply {
+            text = "Reset ke default (Download/SenzSpace)"
+            setTextColor(Color.parseColor("#E8ECF4"))
+            setBackgroundColor(Color.parseColor("#24344D"))
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            )
+        }
+        exportResetBtn.setOnClickListener {
+            FileStore.clearCustomExport(this)
+            Toast.makeText(
+                this,
+                "Folder ekspor direset ke Download/SenzSpace",
+                Toast.LENGTH_SHORT
+            ).show()
+            refresh()
+        }
+        root.addView(exportResetBtn)
+        // Tampilkan file tersembunyi (dipakai File Manager).
+        val hiddenRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, 24, 0, 8)
+        }
+        hiddenRow.addView(TextView(this).apply {
+            text = "Tampilkan file tersembunyi"
+            textSize = 16f
+            setTextColor(Color.parseColor("#E8ECF4"))
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+        })
+        hiddenSwitch = Switch(this)
+        hiddenRow.addView(hiddenSwitch)
+        root.addView(hiddenRow)
+        root.addView(TextView(this).apply {
+            text = "File/folder yang namanya diawali titik (misal .nomedia) " +
+                "ikut tampil di File Manager."
+            textSize = 12f
+            setTextColor(Color.parseColor("#8A94A6"))
+            setPadding(0, 0, 0, 16)
+        })
+        hiddenSwitch.setOnCheckedChangeListener { _, checked ->
+            uiPrefs().edit().putBoolean("fm_show_hidden", checked).apply()
+        }
+
         // ---------- Perawatan ----------
         root.addView(sectionTitle("Perawatan"))
         storageInfo = TextView(this).apply {
@@ -389,6 +506,12 @@ class SettingsActivity : AppCompatActivity() {
             batteryStatus.setTextColor(
                 Color.parseColor(if (ignored) "#34D399" else "#FBBF24")
             )
+        }
+        if (::exportPathValue.isInitialized) {
+            exportPathValue.text = FileStore.exportLocationLabel(this)
+        }
+        if (::hiddenSwitch.isInitialized) {
+            hiddenSwitch.isChecked = uiPrefs().getBoolean("fm_show_hidden", false)
         }
         if (::storageInfo.isInitialized) {
             val rootDir = FileStore.rootDir(this)

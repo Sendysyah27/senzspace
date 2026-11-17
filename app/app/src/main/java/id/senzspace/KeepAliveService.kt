@@ -133,15 +133,10 @@ open class KeepAliveService : Service() {
         }
         try {
             ensureChannel()
-            val openIntent = Intent(this, MainActivity::class.java).apply {
-                // Jangan pakai `flags = ...` di sini: Intent.setFlags()
-                // mengembalikan Intent (bukan void), jadi Kotlin hanya
-                // menyediakan `flags` sebagai val — pakai addFlags().
-                addFlags(
-                    Intent.FLAG_ACTIVITY_NEW_TASK or
-                        Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
-                )
-            }
+            // v0.1.31: tap notifikasi Space ini LANGSUNG membuka Space-nya
+            // (bukan cuma Beranda). Intent menarget activity Space itu
+            // dengan nama/warna/URL dari registry.
+            val openIntent = spaceOpenIntent(suffix, name)
             val pending = PendingIntent.getActivity(
                 this, notifId, openIntent,
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
@@ -149,7 +144,7 @@ open class KeepAliveService : Service() {
             val notif: Notification = NotificationCompat.Builder(this, CHANNEL_ID)
                 .setSmallIcon(R.drawable.ic_notification)
                 .setContentTitle("SenzSpace — $name berjalan")
-                .setContentText("Multi Live aktif • sesi tetap hidup")
+                .setContentText("Tap untuk membuka Space ini")
                 .setContentIntent(pending)
                 .setGroup(GROUP_KEY)
                 .setOngoing(true)
@@ -184,6 +179,47 @@ open class KeepAliveService : Service() {
             } else false
             if (!hasSummary) postSummary(this, -1)
         } catch (e: Exception) {
+        }
+    }
+
+    /** v0.1.31: intent untuk membuka Space bersuffix ini (dipakai
+     *  notifikasi per-Space). Jatuh kembali ke Beranda bila slot
+     *  tidak dikenal. */
+    private fun spaceOpenIntent(suffix: String, spaceName: String): Intent {
+        val slot = when (suffix) {
+            "space1" -> 1
+            "space2" -> 2
+            "space3" -> 3
+            "space4" -> 4
+            "space5" -> 5
+            "space6" -> 6
+            "aistudio" -> 7
+            "space8" -> 8
+            "space9" -> 9
+            "space10" -> 10
+            else -> null
+        } ?: return Intent(this, MainActivity::class.java).apply {
+            addFlags(
+                Intent.FLAG_ACTIVITY_NEW_TASK or
+                    Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
+            )
+        }
+        val entry = try {
+            SpaceRegistry.load(this).firstOrNull { it.slot == slot }
+        } catch (e: Exception) {
+            null
+        }
+        return Intent(this, SpaceRegistry.activityForSlot(slot)).apply {
+            // Jangan pakai `flags = ...`: Intent.setFlags() mengembalikan
+            // Intent (bukan void), jadi Kotlin hanya menyediakan `flags`
+            // sebagai val — pakai addFlags().
+            addFlags(
+                Intent.FLAG_ACTIVITY_NEW_TASK or
+                    Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
+            )
+            putExtra(MainActivity.EXTRA_SPACE_NAME, entry?.name ?: spaceName)
+            putExtra(MainActivity.EXTRA_SPACE_COLOR, entry?.color ?: "#5B5BD6")
+            putExtra(MainActivity.EXTRA_URL, entry?.url ?: "https://claude.ai")
         }
     }
 

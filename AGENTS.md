@@ -41,3 +41,16 @@ Jangan cuma diagnosa dari kodenya.
   sempat ter-push — dibersihkan 12:06; .gitignore diperketat
   *.log, *_url.txt + pengecualian !releases/*.apk).
   Screenshot produk di docs/screenshots/ (asli dari HP Sendy).
+- UX 31 (17 Nov, v0.1.31): (1) JANGAN pakai static companion
+  untuk handoff antar-proses — static hidup per-proses, Space
+  jalan di proses berbeda; kirim lewat intent extra + onNewIntent.
+  (2) Trap injeksi blob HANYA untuk host di daftar putih
+  TRAP_HOSTS (claude.ai + subdomain, aistudio.google.com +
+  subdomain) — situs lain dimuat 100% utuh seperti Chrome
+  (login ChatGPT sempat rusak karena trap).
+  (3) Bersihkan data Space: SELALU REORDER_TO_FRONT +
+  onNewIntent + cek EXTRA_CLEAR_SUFFIX di BrowserActivity —
+  JANGAN PERNAH CLEAR_TOP (menutup activity Space lain di task
+  yang sama; insiden clear Space 8 ikut menghapus Space 7).
+  (4) Timer live dihidupkan ulang di onResume (idempotent) —
+  "Nyalakan Live" juga membuka Space-nya.

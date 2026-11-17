@@ -1,6 +1,7 @@
 package id.senzspace
 
 import android.content.Context
+import android.provider.DocumentsContract
 import java.io.File
 
 // File Manager S1 (PRD F7): folder kerja per Space + Inbox Bersama + Arsip.
@@ -186,11 +187,101 @@ object FileStore {
     fun delete(file: File): Boolean =
         if (file.isDirectory) file.deleteRecursively() else file.delete()
 
+    // ---------- Custom path ekspor (v0.1.31) ----------
+    // Folder ekspor bisa dipilih pengguna (SAF): URI pohon dokumen
+    // disimpan persisten di SharedPreferences "senzspace_ui".
+    // Tanpa pilihan custom, ekspor tetap ke Download/SenzSpace.
+
+    private const val PREFS_UI = "senzspace_ui"
+    private const val KEY_EXPORT_URI = "export_tree_uri"
+    private const val KEY_EXPORT_NAME = "export_tree_name"
+
+    fun customExportUri(ctx: Context): android.net.Uri? {
+        val s = ctx.getSharedPreferences(PREFS_UI, Context.MODE_PRIVATE)
+            .getString(KEY_EXPORT_URI, null) ?: return null
+        return android.net.Uri.parse(s)
+    }
+
+    fun customExportName(ctx: Context): String? =
+        ctx.getSharedPreferences(PREFS_UI, Context.MODE_PRIVATE)
+            .getString(KEY_EXPORT_NAME, null)
+
+    fun setCustomExport(ctx: Context, uri: android.net.Uri, name: String) {
+        ctx.getSharedPreferences(PREFS_UI, Context.MODE_PRIVATE).edit()
+            .putString(KEY_EXPORT_URI, uri.toString())
+            .putString(KEY_EXPORT_NAME, name)
+            .apply()
+    }
+
+    fun clearCustomExport(ctx: Context) {
+        ctx.getSharedPreferences(PREFS_UI, Context.MODE_PRIVATE).edit()
+            .remove(KEY_EXPORT_URI)
+            .remove(KEY_EXPORT_NAME)
+            .apply()
+    }
+
+    /** Label lokasi ekspor yang dipakai di toast + Pengaturan. */
+    fun exportLocationLabel(ctx: Context): String =
+        customExportName(ctx) ?: "Download/SenzSpace"
+
     /** Ekspor file ke folder publik Download/SenzSpace (D5) — sadar dipilih
      *  pengguna per file; folder kerja utama tetap di dalam app.
      *  Android 10+: MediaStore (tanpa izin tulis). Di bawah itu: tulis
      *  langsung ke folder publik. Kembalikan nama file bila berhasil. */
+    /** v0.1.31: bila folder ekspor custom dipilih, tulis ke pohon
+     *  dokumen itu (SAF). Gagal → jatuh ke jalur lama (MediaStore).
+     *  Kembalikan nama file bila berhasil, null bila gagal. */
     fun exportToDownloads(ctx: Context, file: File): String? {
+        val treeUri = customExportUri(ctx)
+        if (treeUri != null) {
+            try {
+                val cr = ctx.contentResolver
+                val docUri = DocumentsContract.buildDocumentUriUsingTree(
+                    treeUri,
+                    DocumentsContract.getTreeDocumentId(treeUri)
+                )
+                // Hapus dulu file lama bernama sama (agar tidak dobel).
+                val old = findInTree(cr, docUri, file.name)
+                if (old != null) DocumentsContract.deleteDocument(cr, old)
+                val newDoc = DocumentsContract.createDocument(
+                    cr, docUri, mimeType(file), file.name
+                ) ?: return exportToDownloadsLegacy(ctx, file)
+                cr.openOutputStream(newDoc)?.use { out ->
+                    file.inputStream().use { it.copyTo(out) }
+                }
+                return file.name
+            } catch (e: Exception) {
+                return exportToDownloadsLegacy(ctx, file)
+            }
+        }
+        return exportToDownloadsLegacy(ctx, file)
+    }
+
+    /** Cari dokumen bernama `name` langsung di bawah folder `dirUri`. */
+    private fun findInTree(
+        cr: android.content.ContentResolver,
+        dirUri: android.net.Uri,
+        name: String
+    ): android.net.Uri? {
+        val childrenUri = DocumentsContract.buildChildDocumentsUriUsingTree(
+            dirUri, DocumentsContract.getTreeDocumentId(dirUri)
+        )
+        cr.query(
+            childrenUri,
+            arrayOf(DocumentsContract.Document.COLUMN_DOCUMENT_ID),
+            "${DocumentsContract.Document.COLUMN_DISPLAY_NAME}=?",
+            arrayOf(name), null
+        )?.use { c ->
+            if (c.moveToFirst()) {
+                val id = c.getString(0)
+                return DocumentsContract.buildDocumentUriUsingTree(dirUri, id)
+            }
+        }
+        return null
+    }
+
+    /** Jalur ekspor lama (MediaStore / direktori publik). */
+    private fun exportToDownloadsLegacy(ctx: Context, file: File): String? {
         return try {
             if (android.os.Build.VERSION.SDK_INT >= 29) {
                 val mime = android.webkit.MimeTypeMap.getSingleton()

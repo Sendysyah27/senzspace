@@ -30,6 +30,9 @@ class AddSpaceActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // v0.1.31: ikuti sensor putar HP (berlaku walau auto-rotate sistem mati).
+        requestedOrientation =
+            android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR
         CrashLog.install(this)
 
         val root = LinearLayout(this).apply {

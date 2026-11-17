@@ -47,9 +47,13 @@ abstract class BrowserActivity : AppCompatActivity() {
          *  dibersihkan setelah dipakai supaya resume berikutnya tidak
          *  membuka split lagi. */
         @Volatile
-        private var pendingSplitSlot: Int? = null
-        fun requestSplitWith(slot: Int) { pendingSplitSlot = slot }
-
+        // v0.1.31: requestSplitWith DIHAPUS — static companion hidup
+        // PER PROSES Android. MainActivity (proses utama) mengisi
+        // static ini, tapi BrowserActivity yang membacanya jalan di
+        // proses :spaceN yang berbeda — nilainya selalu null di sana,
+        // jadi "Buka berdampingan" tidak pernah jalan (temuan HP
+        // 17 Nov). Pengganti: intent extra EXTRA_SPLIT_WITH +
+        // onNewIntent (lihat bawah).
         // setDataDirectorySuffix() HANYA boleh dipanggil sekali seumur hidup
         // satu proses Android — panggilan kedua melempar IllegalStateException.
         // Proses :spaceN TETAP HIDUP setelah Activity keluar (Android
@@ -66,34 +70,12 @@ abstract class BrowserActivity : AppCompatActivity() {
     private lateinit var webView: WebView
     private lateinit var rootLayout: LinearLayout
     private var topBarView: android.view.View? = null
-    private var swipeTrackingTopBar = false
 
-    /** Geser top bar (v0.1.21): geser kiri = Space aktif berikutnya,
-     *  geser kanan = Space aktif sebelumnya. Hanya Space yang chip-nya
-     *  "Aktif" (sudah login) yang dilewati — perintah Sendy 06:45. */
-    private val spaceSwipeDetector by lazy {
-        android.view.GestureDetector(
-            this,
-            object : android.view.GestureDetector.SimpleOnGestureListener() {
-                override fun onDown(e: android.view.MotionEvent): Boolean = true
-                override fun onFling(
-                    e1: android.view.MotionEvent?,
-                    e2: android.view.MotionEvent,
-                    velocityX: Float,
-                    velocityY: Float
-                ): Boolean {
-                    val start = e1 ?: return false
-                    val dx = e2.x - start.x
-                    val dy = e2.y - start.y
-                    if (kotlin.math.abs(dx) < dp(80)) return false
-                    if (kotlin.math.abs(dx) < kotlin.math.abs(dy) * 1.5f) return false
-                    if (kotlin.math.abs(velocityX) < 200) return false
-                    switchSpace(if (dx < 0) 1 else -1)
-                    return true
-                }
-            }
-        )
-    }
+    /** v0.1.31: geser top bar DIHAPUS (perintah Sendy 17 Nov) —
+     *  diganti tombol ⇌ di top bar (showSwitchSpacePicker).
+     *  Slot split yang diminta lewat intent (EXTRA_SPLIT_WITH)
+     *  ditampung di field instance ini, dikonsumsi di onResume. */
+    private var pendingSplitSlot: Int? = null
     private lateinit var downloadBtn: android.widget.ImageButton
     private lateinit var downloadBadge: android.widget.TextView
 
@@ -149,6 +131,23 @@ abstract class BrowserActivity : AppCompatActivity() {
     private val NO_INJECT_HOSTS = setOf(
         "accounts.google.com", "myaccount.google.com"
     )
+
+    /** v0.1.31 — DAFTAR PUTIH trap blob: skrip penangkap blob HANYA
+     *  diinjeksikan ke host Claude + AI Studio (satu-satunya yang
+     *  butuh unduhan blob). Sebelumnya trap diinjeksikan ke SEMUA situs
+     *  kecuali host Google — halaman login situs lain (mis. ChatGPT /
+     *  auth.openai.com) ikut dimodifikasi DOM-nya sehingga login Google
+     *  macet di tengah isi akun (temuan HP 17 Nov ~15:xx, Space 8).
+     *  Situs lain kini dimuat apa adanya seperti Chrome; unduhan https
+     *  lewat fetch WebView tetap jalan di mana saja. */
+    private val TRAP_HOSTS = setOf(
+        "claude.ai", "aistudio.google.com"
+    )
+
+    private fun isTrapHost(host: String): Boolean {
+        if (host in TRAP_HOSTS) return true
+        return TRAP_HOSTS.any { host.endsWith(".$it") }
+    }
 
     /** Callback unduhan file-chooser yang sedang menunggu pilihan user.
      *  WAJIB dipanggil tepat sekali (dengan array URI atau null). */
@@ -482,6 +481,10 @@ abstract class BrowserActivity : AppCompatActivity() {
             WebView.setWebContentsDebuggingEnabled(true)
         }
         super.onCreate(savedInstanceState)
+        // v0.1.31: ikuti sensor putar HP (berlaku walau auto-rotate
+        // sistem mati) — app sebelumnya tidak bisa horizontal.
+        requestedOrientation =
+            android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR
 
         val name = intent.getStringExtra(MainActivity.EXTRA_SPACE_NAME) ?: "Space"
         spaceName = name
@@ -547,6 +550,10 @@ abstract class BrowserActivity : AppCompatActivity() {
         reloadBtn.setOnClickListener { if (::webView.isInitialized) webView.reload() }
         val homeBtn = topBarIcon(R.drawable.ic_home, "Beranda Space")
         homeBtn.setOnClickListener { if (::webView.isInitialized) webView.loadUrl(homeUrl) }
+        // v0.1.31: tombol pindah Space (ganti geser top bar) — buka
+        // dialog pilih Space AKTIF (sudah login), aturan Sendy 06:45.
+        val switchBtn = topBarIcon(R.drawable.ic_switch, "Pindah Space")
+        switchBtn.setOnClickListener { showSwitchSpacePicker() }
         // Unduhan: ikon + badge angka kecil di pojok kanan atas
         // (jumlah file di folder Space ini; tap → File Manager).
         val downloadWrap = android.widget.FrameLayout(this).apply {
@@ -574,10 +581,18 @@ abstract class BrowserActivity : AppCompatActivity() {
         downloadWrap.addView(downloadBtn)
         downloadWrap.addView(downloadBadge)
         topBarLayout.addView(topBar)
+        topBarLayout.addView(switchBtn)
         topBarLayout.addView(minimizeBtn)
         topBarLayout.addView(reloadBtn)
         topBarLayout.addView(homeBtn)
         topBarLayout.addView(downloadWrap)
+        // v0.1.31: animasi sentuh ringan (mengecil 0,88x saat ditekan)
+        // untuk semua tombol top bar.
+        addTouchAnimation(switchBtn)
+        addTouchAnimation(minimizeBtn)
+        addTouchAnimation(reloadBtn)
+        addTouchAnimation(homeBtn)
+        addTouchAnimation(downloadWrap)
         root.addView(topBarLayout)
         topBarView = topBarLayout
 
@@ -787,10 +802,15 @@ abstract class BrowserActivity : AppCompatActivity() {
 
         if (savedInstanceState == null) {
             if (intent.getBooleanExtra(MainActivity.EXTRA_CLEAR_DATA, false)) {
-                clearSpaceDataAndLoad(url)
+                clearSpaceDataAndLoad(
+                    url,
+                    intent.getStringExtra(MainActivity.EXTRA_CLEAR_SUFFIX)
+                )
             } else {
                 webView.loadUrl(url)
             }
+            intent.getIntExtra(MainActivity.EXTRA_SPLIT_WITH, -1)
+                .takeIf { it > 0 }?.let { pendingSplitSlot = it }
         }
         startLiveCapture()
         // Guard anti-kill: service foreground di proses Space ini supaya
@@ -816,7 +836,20 @@ abstract class BrowserActivity : AppCompatActivity() {
      *  + limit Space ini supaya chip Beranda jujur lagi. File unduhan
      *  TIDAK disentuh. removeAllCookies bersifat async — halaman awal
      *  dimuat di callback-nya; pengaman 3 detik bila callback telat. */
-    private fun clearSpaceDataAndLoad(home: String) {
+    private fun clearSpaceDataAndLoad(home: String, expectedSuffix: String? = null) {
+        // v0.1.31 — pengaman lintas-Space: clear HANYA jalan bila suffix
+        // yang diminta pengirim sama dengan suffix proses ini. Kalau
+        // tidak cocok (intent nyasar / slot salah), BATALKAN — jangan
+        // pernah menghapus data Space lain. Temuan HP: clear Space 8
+        // ikut menghapus Space 7 (17 Nov ~15:xx).
+        if (expectedSuffix != null && expectedSuffix != dataDirectorySuffix) {
+            android.widget.Toast.makeText(
+                this, "Batal: Space tidak cocok — data TIDAK dihapus",
+                android.widget.Toast.LENGTH_LONG
+            ).show()
+            if (::webView.isInitialized) webView.loadUrl(home)
+            return
+        }
         try {
             android.webkit.CookieManager.getInstance().removeAllCookies {
                 try {
@@ -855,29 +888,28 @@ abstract class BrowserActivity : AppCompatActivity() {
         }, 3000)
     }
 
-    /** Teruskan sentuhan yang MULAI di top bar ke detektor geser
-     *  (v0.1.21). Sentuhan lain (WebView, tombol) tidak disentuh —
-     *  detector hanya mengamati; tap/klik tetap jalan normal. */
-    override fun dispatchTouchEvent(ev: android.view.MotionEvent): Boolean {
-        when (ev.actionMasked) {
-            android.view.MotionEvent.ACTION_DOWN -> {
-                swipeTrackingTopBar =
-                    topBarView?.let { ev.y <= it.bottom } ?: false
+    /** v0.1.31: animasi sentuh ringan — tombol mengecil ke 0,88x saat
+     *  ditekan, kembali saat dilepas. Mengembalikan false supaya klik
+     *  tetap jalan normal. */
+    private fun addTouchAnimation(v: android.view.View) {
+        v.setOnTouchListener { view, ev ->
+            when (ev.actionMasked) {
+                android.view.MotionEvent.ACTION_DOWN ->
+                    view.animate().scaleX(0.88f).scaleY(0.88f)
+                        .setDuration(80).start()
+                android.view.MotionEvent.ACTION_UP,
+                android.view.MotionEvent.ACTION_CANCEL ->
+                    view.animate().scaleX(1f).scaleY(1f)
+                        .setDuration(120).start()
             }
-            android.view.MotionEvent.ACTION_UP,
-            android.view.MotionEvent.ACTION_CANCEL -> {
-                if (swipeTrackingTopBar) spaceSwipeDetector.onTouchEvent(ev)
-                swipeTrackingTopBar = false
-            }
+            false
         }
-        if (swipeTrackingTopBar) spaceSwipeDetector.onTouchEvent(ev)
-        return super.dispatchTouchEvent(ev)
     }
 
-    /** Pindah ke Space AKTIF berikutnya (arah +1) / sebelumnya (-1).
-     *  Pool = Space yang sudah login; yang "Belum login" dilewatin.
-     *  Bila tidak ada Space aktif lain, beri tahu (bukan diam). */
-    private fun switchSpace(direction: Int) {
+    /** Pindah Space lewat tombol ⇌ di top bar (ganti geser, v0.1.31).
+     *  Daftar = Space AKTIF (sudah login) selain Space ini — aturan
+     *  Sendy 06:45. Bila tidak ada Space aktif lain, beri tahu. */
+    private fun showSwitchSpacePicker() {
         val spaces = try {
             SpaceRegistry.load(this)
         } catch (e: Exception) {
@@ -890,32 +922,32 @@ abstract class BrowserActivity : AppCompatActivity() {
         val active = spaces.filter {
             SpaceStatus.readLogin(this, SpaceRegistry.suffixForSlot(it.slot))
         }
-        val pool = when {
-            active.size >= 2 -> active
-            active.isEmpty() -> spaces
-            else -> {
-                android.widget.Toast.makeText(
-                    this, "Tidak ada Space aktif lain", android.widget.Toast.LENGTH_SHORT
-                ).show()
-                return
+        val pool = if (active.size >= 2) active else spaces
+        val others = pool.filter {
+            SpaceRegistry.suffixForSlot(it.slot) != dataDirectorySuffix
+        }
+        if (others.isEmpty()) {
+            android.widget.Toast.makeText(
+                this, "Tidak ada Space aktif lain", android.widget.Toast.LENGTH_SHORT
+            ).show()
+            return
+        }
+        val names = others.map { it.name }.toTypedArray()
+        android.app.AlertDialog.Builder(this)
+            .setTitle("Pindah Space")
+            .setItems(names) { _, which ->
+                val next = others[which]
+                android.widget.Toast.makeText(this, "→ ${next.name}", android.widget.Toast.LENGTH_SHORT).show()
+                val intent = android.content.Intent(this, SpaceRegistry.activityForSlot(next.slot)).apply {
+                    flags = android.content.Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
+                    putExtra(MainActivity.EXTRA_SPACE_NAME, next.name)
+                    putExtra(MainActivity.EXTRA_SPACE_COLOR, next.color)
+                    putExtra(MainActivity.EXTRA_URL, next.url)
+                }
+                startActivity(intent)
             }
-        }
-        val idx = pool.indexOfFirst {
-            SpaceRegistry.suffixForSlot(it.slot) == dataDirectorySuffix
-        }
-        val next = when {
-            idx >= 0 -> pool[(idx + direction + pool.size) % pool.size]
-            direction > 0 -> pool.first()
-            else -> pool.last()
-        }
-        android.widget.Toast.makeText(this, "→ ${next.name}", android.widget.Toast.LENGTH_SHORT).show()
-        val intent = android.content.Intent(this, SpaceRegistry.activityForSlot(next.slot)).apply {
-            flags = android.content.Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
-            putExtra(MainActivity.EXTRA_SPACE_NAME, next.name)
-            putExtra(MainActivity.EXTRA_SPACE_COLOR, next.color)
-            putExtra(MainActivity.EXTRA_URL, next.url)
-        }
-        startActivity(intent)
+            .setNegativeButton("Batal", null)
+            .show()
     }
 
     /** Buka Space lain berdampingan (split-screen, v0.1.21):
@@ -935,6 +967,9 @@ abstract class BrowserActivity : AppCompatActivity() {
             putExtra(MainActivity.EXTRA_SPACE_COLOR, entry.color)
             putExtra(MainActivity.EXTRA_URL, entry.url)
         }
+        android.widget.Toast.makeText(
+            this, "Membuka ${entry.name} berdampingan…", android.widget.Toast.LENGTH_SHORT
+        ).show()
         try {
             startActivity(intent)
         } catch (e: Exception) {
@@ -951,6 +986,11 @@ abstract class BrowserActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         isForeground = true
+        // v0.1.31: hidupkan lagi timer tangkap live (idempotent) — bila
+        // activity sempat dihancurkan sistem selagi Space dibekukan,
+        // timer mati dan "Nyalakan Live" saja tidak menghidupkannya lagi
+        // (temuan HP: live tidak aktif lagi setelah dibekukan).
+        startLiveCapture()
         LockGate.check(this, lockLauncher)
         refreshDownloadCount()
         // v0.1.21: jalankan permintaan split-screen (sekali saja).
@@ -966,6 +1006,23 @@ abstract class BrowserActivity : AppCompatActivity() {
             }
             if (mySlot != null && split != mySlot) openSplitSpace(split)
         }
+    }
+
+    /** v0.1.31: terima intent susulan untuk activity yang sudah jalan
+     *  (REORDER_TO_FRONT tidak memanggil onCreate). Menangani Bersihkan
+     *  data (dengan cek suffix) + permintaan split-screen. Tanpa ini,
+     *  extra di intent yang dibawa REORDER_TO_FRONT diabaikan. */
+    override fun onNewIntent(intent: android.content.Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        if (intent.getBooleanExtra(MainActivity.EXTRA_CLEAR_DATA, false)) {
+            clearSpaceDataAndLoad(
+                homeUrl,
+                intent.getStringExtra(MainActivity.EXTRA_CLEAR_SUFFIX)
+            )
+        }
+        intent.getIntExtra(MainActivity.EXTRA_SPLIT_WITH, -1)
+            .takeIf { it > 0 }?.let { pendingSplitSlot = it }
     }
 
     override fun onStop() {
@@ -1573,9 +1630,10 @@ abstract class BrowserActivity : AppCompatActivity() {
                 !urlStr.startsWith("https://")
             ) return null
             val host = request.url.host ?: ""
-            if (host in NO_INJECT_HOSTS ||
-                host.endsWith(".accounts.google.com")
-            ) return null
+            // v0.1.31: hanya host Claude / AI Studio yang diambil
+            // (daftar putih TRAP_HOSTS). Host lain — termasuk halaman
+            // login situs lain — dimuat WebView apa adanya.
+            if (!isTrapHost(host)) return null
             val path = request.url.path ?: ""
             val last = path.substringAfterLast('/', "")
             if (last.contains('.')) {

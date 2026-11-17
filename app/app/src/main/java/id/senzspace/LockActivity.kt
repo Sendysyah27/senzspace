@@ -45,6 +45,9 @@ class LockActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // v0.1.31: ikuti sensor putar HP (berlaku walau auto-rotate sistem mati).
+        requestedOrientation =
+            android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR
         mode = intent.getStringExtra(EXTRA_MODE) ?: MODE_VERIFY
         if (mode == MODE_CHANGE) step = 0 else step = 0
 
