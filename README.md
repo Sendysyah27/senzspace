@@ -6,7 +6,7 @@
 
 ## Unduh
 
-**[⬇ Unduh SenzSpace v0.1.28 (APK)](https://github.com/Sendysyah27/senzspace/releases/download/v0.1.28/SenzSpace-v0.1.28.apk)** — Android 7 ke atas.
+**[⬇ Unduh SenzSpace v0.1.28 (APK)](https://raw.githubusercontent.com/Sendysyah27/senzspace/main/releases/SenzSpace-v0.1.28.apk)** — Android 7 ke atas.
 
 Install langsung dari HP (izinkan "install dari sumber tidak dikenal" sekali saat diminta). Update berikutnya: **install menimpa, jangan uninstall** — uninstall menghapus semua sesi login di semua Space.
 
