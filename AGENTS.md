@@ -28,5 +28,16 @@ Jangan cuma diagnosa dari kodenya.
   ditambah via put-file langsung di GitHub AKAN TERHAPUS oleh
   push-tree berikutnya kalau tidak ada juga di tree lokal
   (insiden 08:52: APK releases/ hilang, diperbaiki 08:53).
-  Tiap rilis baru: hapus APK rilis lama dari tree (repo tidak
-  membengkak).
+- SHORTCUT UNDUHAN TERBARU — ATURAN TETAP (17 Nov 12:06,
+  perintah Sendy): TIAP RILIS WAJIB: (1) APK rilis disalin ke
+  releases/SenzSpace-vX.Y.Z.apk DAN timpa
+  releases/SenzSpace-latest.apk dengan file yang sama; (2)
+  tombol "Unduh versi terbaru" di README selalu menaut ke
+  raw.githubusercontent.../releases/SenzSpace-latest.apk;
+  (3) GitHub Release tag vX.Y.Z dengan body menautkan APK
+  terbaru + APK versi itu. APK versi lama TIDAK dihapus
+  (rollback). JANGAN taruh file kerja di root repo (insiden
+  17 Nov: ci27/29/33.log + logs_url*.txt + artifact_url.txt
+  sempat ter-push — dibersihkan 12:06; .gitignore diperketat
+  *.log, *_url.txt + pengecualian !releases/*.apk).
+  Screenshot produk di docs/screenshots/ (asli dari HP Sendy).
