@@ -84,8 +84,11 @@ class FileManagerActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         // v0.1.31: ikuti sensor putar HP (berlaku walau auto-rotate
         // sistem mati) — app sebelumnya tidak bisa horizontal.
+        // v0.1.33: rotasi MENGIKUTI setelan sistem (auto-rotate HP) —
+        // SENSOR (v0.1.31) memutar app dari sensor walau auto-rotate
+        // sistem mati; UNSPECIFIED = perilaku default Android.
         requestedOrientation =
-            android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR
+            android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
         CrashLog.install(this)
         FileStore.ensure(this)
         val uiPrefs = getSharedPreferences(PREFS_UI, MODE_PRIVATE)
@@ -657,13 +660,16 @@ class FileManagerActivity : AppCompatActivity() {
                 setPadding(dp(8), 0, dp(4), 0)
             })
         } else {
+            // v0.1.33: area sentuh 44dp (dulu kotak 20dp, sulit ditekan)
+            // — ikon tetap 20dp di tengah.
             val more = android.widget.ImageView(this).apply {
                 setImageResource(R.drawable.ic_more_vertical)
                 imageTintList = android.content.res.ColorStateList.valueOf(
                     Color.parseColor("#8A94A6")
                 )
-                layoutParams = LinearLayout.LayoutParams(dp(20), dp(20))
-                setPadding(dp(12), dp(4), dp(4), dp(4))
+                layoutParams = LinearLayout.LayoutParams(dp(44), dp(44))
+                scaleType = android.widget.ImageView.ScaleType.CENTER_INSIDE
+                setPadding(dp(12), dp(12), dp(12), dp(12))
             }
             more.setOnClickListener { showEntryMenu(more, entry) }
             row.addView(more)

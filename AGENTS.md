@@ -61,3 +61,10 @@ Jangan cuma diagnosa dari kodenya.
   status + situs + jumlah file), baris ikon + label + hint. Tombol
   fungsi = persegi panjang membulat radius 12dp (btn_primary /
   btn_teal / btn_dark / chip_rounded).
+- UX 33 (17 Nov, v0.1.33): (a) ROTASI ngikutin sistem — ganti
+  SCREEN_ORIENTATION_SENSOR (v0.1.31, abaikan toggle sistem) jadi
+  UNSPECIFIED di 7 activity; (b) LIVE vs AKTIF — picker Pindah
+  Space + Split hanya tampilkan Space LIVE (thumbnail segar <60 dtk
+  + tidak beku; SpacePickerDialog.isLive/liveOnly), fallback ke
+  Aktif bila tidak ada yang live; (c) AREA SENTUH minimal 44dp
+  untuk tombol aksi di baris (titik-tiga FM).

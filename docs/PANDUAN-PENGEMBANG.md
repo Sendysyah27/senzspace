@@ -455,6 +455,34 @@ muncul (Ubah nama / Matikan Live / Hapus Space).
    "Beku" juga. Hapus Space yang beku → Space baru di slot yang sama
    tidak ikut beku.
 
+## Tes Perbaikan v0.1.33 di HP (bahasa bayi)
+
+Latar: 3 screenshot Sendy (17 Nov 17:13–17:26) — rotasi, daftar
+Pindah Space, dan tombol titik-tiga File Manager.
+
+1. Install APK v0.1.33-s1ui33 (NIMPA — JANGAN uninstall).
+   Tutup total app dulu (hapus dari recent apps), lalu buka lagi.
+2. **Rotasi ngikutin sistem.** Nyalakan "Rotasi otomatis" di HP
+   (pengaturan cepat di atas layar), lalu miringkan HP ke
+   horizontal. **LULUS** bila: Beranda / Space / File Manager ikut
+   jadi horizontal. Lalu MATIKAN "Rotasi otomatis" dan miringkan
+   lagi. **LULUS** bila: app TETAP portrait (tidak ikut muter).
+   Dulu (v0.1.31) app muter dari sensor walau auto-rotate mati;
+   sekarang ngikutin setelan sistem.
+3. **Pindah Space cuma yang LIVE.** Buka Beranda, lihat tile mana
+   yang ada badge LIVE merah (di screenshot Sendy cuma 3: Claude
+   753, Claude Nengz, Claude SS). Masuk salah satu Space, tap
+   tombol ⇌ di top bar. **LULUS** bila: daftarnya HANYA Space yang
+   live (yang badge LIVE-nya nyala), BUKAN semua 6 yang Aktif.
+   Catatan: kalau tidak ada Space lain yang live, daftar balik
+   ke yang Aktif (supaya dialog tidak kosong) — itu normal.
+   Menu "Buka berdampingan" (tahan lama kartu) aturannya sama.
+4. **Tombol titik-tiga gampang ditekan.** Buka File Manager →
+   masuk folder Space. **LULUS** bila: tombol titik-tiga di kanan
+   tiap file gampang ditekan (area sentuhnya sekarang 44dp —
+   sebesar tombol kembali); tap sekali langsung buka menu
+   (Lihat, Buka, Bagikan, Pindah, Potong, Salin, ...).
+
 ## Tes Polish UI v0.1.32 di HP (bahasa bayi)
 
 Latar: 4 screenshot Sendy (17 Nov 16:34–16:37) — Pengaturan masih

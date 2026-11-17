@@ -165,8 +165,11 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         // v0.1.31: ikuti sensor putar HP (berlaku walau auto-rotate
         // sistem mati) — app sebelumnya tidak bisa horizontal.
+        // v0.1.33: rotasi MENGIKUTI setelan sistem (auto-rotate HP) —
+        // SENSOR (v0.1.31) memutar app dari sensor walau auto-rotate
+        // sistem mati; UNSPECIFIED = perilaku default Android.
         requestedOrientation =
-            android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR
+            android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
         CrashLog.install(this)
         setContentView(R.layout.activity_main)
         FileStore.ensure(this)
@@ -907,10 +910,15 @@ class MainActivity : AppCompatActivity() {
         }
         // v0.1.32: dialog kartu dengan chip status per Space
         // (Aktif / Beku / Limit / Belum login).
+        // v0.1.33: tampilkan Space yang LIVE saja (fallback ke aktif
+        // bila tidak ada yang live) — sama seperti Pindah Space.
+        val shown = SpacePickerDialog.liveOnly(
+            this, others, SpaceRegistry.suffixForSlot(entry.slot)
+        )
         SpacePickerDialog.show(
             this,
             "Berdampingan dengan \"${entry.name}\"",
-            others,
+            shown,
             SpaceRegistry.suffixForSlot(entry.slot)
         ) { picked ->
             // v0.1.31: slot split dikirim sebagai intent extra

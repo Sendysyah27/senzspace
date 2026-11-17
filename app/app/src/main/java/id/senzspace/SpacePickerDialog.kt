@@ -32,6 +32,33 @@ object SpacePickerDialog {
         return "Belum login" to "#8A94A6"
     }
 
+    /** LIVE (v0.1.33): Space dianggap live bila thumbnail-nya segar
+     *  (< 60 dtk, sama seperti LIVE_FRESH_SEC di Beranda) dan tidak
+     *  dibekukan. Beda dengan "Aktif" (sudah login) — Space bisa Aktif
+     *  tapi tidak live bila prosesnya sudah mati / thumbnail basi. */
+    fun isLive(ctx: Context, suffix: String): Boolean {
+        if (LiveFreeze.isFrozen(ctx, suffix)) return false
+        val f = FileStore.liveThumbFile(ctx, suffix)
+        if (!f.exists()) return false
+        val ageMs = System.currentTimeMillis() - f.lastModified()
+        return ageMs in 0 until 60_000
+    }
+
+    /** Saring daftar ke Space LIVE saja (di luar excludeSuffix).
+     *  Bila tidak ada yang live, kembalikan daftar asal (fallback) —
+     *  dialog tidak boleh kosong. */
+    fun liveOnly(
+        ctx: Context,
+        spaces: List<SpaceRegistry.SpaceEntry>,
+        excludeSuffix: String?
+    ): List<SpaceRegistry.SpaceEntry> {
+        val live = spaces.filter {
+            val s = SpaceRegistry.suffixForSlot(it.slot)
+            s != excludeSuffix && isLive(ctx, s)
+        }
+        return if (live.isNotEmpty()) live else spaces
+    }
+
     fun show(
         ctx: Context,
         title: String,

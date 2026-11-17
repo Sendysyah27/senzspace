@@ -482,8 +482,11 @@ abstract class BrowserActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         // v0.1.31: ikuti sensor putar HP (berlaku walau auto-rotate
         // sistem mati) — app sebelumnya tidak bisa horizontal.
+        // v0.1.33: rotasi MENGIKUTI setelan sistem (auto-rotate HP) —
+        // SENSOR (v0.1.31) memutar app dari sensor walau auto-rotate
+        // sistem mati; UNSPECIFIED = perilaku default Android.
         requestedOrientation =
-            android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR
+            android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
 
         val name = intent.getStringExtra(MainActivity.EXTRA_SPACE_NAME) ?: "Space"
         spaceName = name
@@ -925,14 +928,21 @@ abstract class BrowserActivity : AppCompatActivity() {
             SpaceStatus.readLogin(this, SpaceRegistry.suffixForSlot(it.slot))
         }
         val pool = if (active.size >= 2) active else spaces
-        if (pool.none { SpaceRegistry.suffixForSlot(it.slot) != dataDirectorySuffix }) {
+        val others = pool.filter {
+            SpaceRegistry.suffixForSlot(it.slot) != dataDirectorySuffix
+        }
+        if (others.isEmpty()) {
             android.widget.Toast.makeText(
                 this, "Tidak ada Space aktif lain", android.widget.Toast.LENGTH_SHORT
             ).show()
             return
         }
+        // v0.1.33: tampilkan Space yang LIVE saja (bukan semua yang
+        // Aktif) — liveOnly fallback ke daftar aktif bila tidak ada
+        // yang live, supaya dialog tidak kosong.
+        val shown = SpacePickerDialog.liveOnly(this, others, dataDirectorySuffix)
         SpacePickerDialog.show(
-            this, "Pindah Space", pool, dataDirectorySuffix
+            this, "Pindah Space", shown, dataDirectorySuffix
         ) { next ->
             android.widget.Toast.makeText(this, "→ ${next.name}", android.widget.Toast.LENGTH_SHORT).show()
             val intent = android.content.Intent(this, SpaceRegistry.activityForSlot(next.slot)).apply {
