@@ -1036,7 +1036,7 @@ abstract class BrowserActivity : AppCompatActivity() {
             "return pump();});};" +
             "return pump();}).catch(function(e){" +
             "window.SenzHttp.onError(''+(e&&e.message?e.message:e));});" +
-            "}catch(e){try{window.SenzHttp.onError('js '+e.message);}catch(_){}})();"
+            "}catch(e){try{window.SenzHttp.onError('js '+e.message);}catch(_){}}})();"
         try {
             webView.evaluateJavascript(js) { v ->
                 logBlobDiag("UNDUH-WEB js-result: $v")
@@ -1172,8 +1172,20 @@ abstract class BrowserActivity : AppCompatActivity() {
      *  tidak punya ekstensi yang benar: .bin/.txt dari tebakan
      *  WebView diganti bila isinya WAV/MP3/PDF/ZIP/PNG/JPG/MP4.
      *  Nama asli dari anchor (mis. .wav/.md) tidak diubah. */
+    private fun looksLikeText(b: ByteArray): Boolean {
+        if (b.isEmpty()) return false
+        val n = minOf(b.size, 512)
+        var printable = 0
+        for (i in 0 until n) {
+            val v = b[i].toInt() and 0xFF
+            if (v == 9 || v == 10 || v == 13 || (v in 32..126) || v >= 128) printable++
+        }
+        return printable * 100 / n >= 95
+    }
+
     private fun fixExtension(name: String, bytes: ByteArray): String {
-        val sniffed = sniffExtension(bytes) ?: return name
+        val sniffed = sniffExtension(bytes)
+            ?: if (looksLikeText(bytes)) "txt" else return name
         val dot = name.lastIndexOf('.')
         val ext = if (dot >= 0) name.substring(dot + 1).lowercase() else ""
         if (ext == sniffed) return name
@@ -1375,6 +1387,7 @@ abstract class BrowserActivity : AppCompatActivity() {
             "if(m&&m.type==='senz-get-blob'&&m.url){" +
             "var data=window.__senzBlobGet(m.url)||'';" +
             "var name=window.__senzBlobName(m.url)||'';" +
+            "if(!name){try{var as=document.querySelectorAll('a[download]');for(var ai=0;ai<as.length;ai++){if(as[ai].href===m.url&&as[ai].getAttribute('download')){name=as[ai].getAttribute('download');break;}}}catch(e){}}" +
             "var reply={type:'senz-blob-data',url:m.url,data:data,name:name};" +
             "if(window.parent&&window.parent!==window){window.parent.postMessage(reply,'*');}" +
             "else if(data&&window.SenzBlob){window.SenzBlob.onBlobData(data,name);}" +

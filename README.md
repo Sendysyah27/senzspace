@@ -522,6 +522,27 @@ muncul (Ubah nama / Matikan Live / Hapus Space).
    "Beku" juga. Hapus Space yang beku → Space baru di slot yang sama
    tidak ikut beku.
 
+## Tes Unduhan via WebView v0.1.27 di HP (bahasa bayi)
+
+AKAR MASALAH KETEMU (bukti log v0.1.26 08:07 + 08:08): jembatan
+SenzHttp HIDUP (probe: "object"), tapi skrip fetch-nya TIDAK
+PERNAH JALAN (js-result: null, "fetch mulai" tidak muncul).
+Penyebabnya: **satu kurung kurawal `}` hilang** di ujung skrip —
+seluruh skrip gagal dibaca WebView, jadi diam total. v0.1.27
+memperbaiki kurungnya (sudah dicek sintaksnya pakai node
+--check SEBELUM dikirim — pelajaran: cek JS dulu baru push).
+Bonus: lampiran satuan sekarang dapat nama asli (bukan UUID)
+dan file teks tersimpan sebagai .txt (bukan .bin).
+
+1. Install APK v0.1.27-s1bracefix (nimpa, tanpa uninstall).
+   Tutup total app dulu (hapus dari recent apps), lalu buka lagi.
+2. Buka Claude 3 → tap **"Unduh semua"**.
+   **LULUS** bila: toast "Tersimpan di folder Claude 3:
+   download-files.zip" + file ada di space3. (Tidak ada lagi
+   toast "tidak merespon".)
+3. Tap juga 1 lampiran satuan (mis. MP4) — namanya sekarang
+   harus nama asli, bukan UUID.
+
 ## Tes Unduhan via WebView v0.1.26 di HP (bahasa bayi)
 
 v0.1.25 membuktikan: listener jalan ("UNDUH-WEB mulai" 07:52:39),
