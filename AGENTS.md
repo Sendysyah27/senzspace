@@ -13,3 +13,7 @@ Jangan cuma diagnosa dari kodenya.
   secret apa pun ke repo publik ini.
 - Batas jujur: app mengelola sesi sah, bukan membobol limit / CAPTCHA platform.
 - Tes bahasa bayi untuk tiap slice ada di README.md.
+- Tiap kirim APK: tegaskan INSTALL MENIMPA, JANGAN UNINSTALL
+  (uninstall = semua sesi login 7 Space hilang, harus login
+  ulang semua — insiden 17 Nov 08:23, Sendy tidak sengaja
+  uninstall sebelum install v0.1.27).

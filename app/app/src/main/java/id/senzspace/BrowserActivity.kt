@@ -1024,7 +1024,7 @@ abstract class BrowserActivity : AppCompatActivity() {
             "var cd=r.headers.get('Content-Disposition')||'';" +
             "var nm='';" +
             "var m=/filename\\*?=([^;]+)/.exec(cd);" +
-            "if(m){nm=decodeURIComponent(m[1].replace(/^UTF-8''/,'').replace(/\"/g,''));}" +
+            "if(m){nm=decodeURIComponent(m[1].replace(/^utf-8''/i,'').replace(/\"/g,''));}" +
             "window.SenzHttp.onMeta(r.headers.get('Content-Length')||'0',nm);" +
             "var reader=r.body.getReader();" +
             "var pump=function(){return reader.read().then(function(res){" +

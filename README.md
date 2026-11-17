@@ -522,6 +522,23 @@ muncul (Ubah nama / Matikan Live / Hapus Space).
    "Beku" juga. Hapus Space yang beku → Space baru di slot yang sama
    tidak ikut beku.
 
+## Tes Unduhan v0.1.28 di HP (bahasa bayi)
+
+v0.1.27 TERBUKTI JALAN (Sendy 08:29, Space 2): file
+`utf-8''files.zip` mendarat di folder Claude 2 — jalur https
+(fetch WebView) akhirnya hidup setelah kurung diperbaiki. Sisa
+cacat kecil: nama file masih berawalan `utf-8''` karena server
+mengirim `filename*=utf-8''...` (huruf kecil) sedangkan penghapus
+awalan di kode hanya kenal `UTF-8''` (huruf besar). v0.1.28
+membuat penghapusnya tidak peduli besar-kecil huruf.
+
+1. Install APK v0.1.28-s1utf8name (NIMPA — JANGAN uninstall,
+   uninstall = semua sesi login hilang, harus login ulang).
+   Tutup total app dulu (hapus dari recent apps), lalu buka lagi.
+2. Buka Space mana pun → tap **"Unduh semua"** atau 1 lampiran.
+   **LULUS** bila: nama file bersih tanpa awalan `utf-8''`
+   (mis. `files.zip`, bukan `utf-8''files.zip`).
+
 ## Tes Unduhan via WebView v0.1.27 di HP (bahasa bayi)
 
 AKAR MASALAH KETEMU (bukti log v0.1.26 08:07 + 08:08): jembatan

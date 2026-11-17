@@ -11,8 +11,8 @@ android {
         applicationId = "id.senzspace"
         minSdk = 24
         targetSdk = 34
-        versionCode = 32
-        versionName = "0.1.27-s1bracefix"
+        versionCode = 33
+        versionName = "0.1.28-s1utf8name"
     }
 
     // Kunci debug TETAP (sejak 16 Nov 2026): keystore disimpan sebagai GitHub
