@@ -990,11 +990,6 @@ abstract class BrowserActivity : AppCompatActivity() {
     private fun downloadHttpViaWebView(dlUrl: String, fileName: String) {
         if (!::webView.isInitialized) return
         pendingHttpFileName = fileName
-        // v0.1.25: catat MULAI di log + toast awal + watchdog — percobaan
-        // v0.1.24 diam total (0 baris UNDUH-WEB di log 07:40) sehingga
-        // tidak ketahuan listener jalan atau tidak, SenzHttp ada atau
-        // tidak. Watchdog 6 detik melaporkan bila WebView tidak
-        // merespon sama sekali.
         val host = try { java.net.URL(dlUrl).host } catch (e: Exception) { dlUrl }
         logBlobDiag("UNDUH-WEB mulai: $host")
         android.widget.Toast.makeText(this, "Mengunduh $fileName…", android.widget.Toast.LENGTH_SHORT).show()
@@ -1008,11 +1003,22 @@ abstract class BrowserActivity : AppCompatActivity() {
                 ).show()
             }
         }, 6000)
-        val escaped = dlUrl.replace("\\", "\\\\").replace("'", "\\'")
+        // v0.1.26: daftarkan ulang jembatan tepat sebelum dipakai +
+        // selidiki konteks JS — v0.1.25 membuktikan JS tidak pernah
+        // lapor balik ("fetch mulai" tidak muncul). URL dikirim lewat
+        // window.__senzDlUrl (JSON-escaped) supaya isi URL tidak bisa
+        // merusak string JS. Hasil probe + hasil eksekusi JS dicatat.
+        webView.addJavascriptInterface(HttpDownloadBridge(), "SenzHttp")
+        webView.evaluateJavascript("typeof window.SenzHttp") { v ->
+            logBlobDiag("UNDUH-WEB probe SenzHttp: $v")
+        }
+        webView.evaluateJavascript(
+            "window.__senzDlUrl=" + org.json.JSONObject.quote(dlUrl) + ";", null
+        )
         val js = "(function(){try{" +
             "if(!window.SenzHttp){return;}" +
             "window.SenzHttp.onDiag('fetch mulai');" +
-            "fetch('$escaped',{credentials:'include'}).then(function(r){" +
+            "fetch(window.__senzDlUrl,{credentials:'include'}).then(function(r){" +
             "if(!r.ok){window.SenzHttp.onError('server menolak ('+r.status+')');return null;}" +
             "window.SenzHttp.onDiag('fetch ok total='+(r.headers.get('Content-Length')||'?'));" +
             "var cd=r.headers.get('Content-Disposition')||'';" +
@@ -1032,7 +1038,9 @@ abstract class BrowserActivity : AppCompatActivity() {
             "window.SenzHttp.onError(''+(e&&e.message?e.message:e));});" +
             "}catch(e){try{window.SenzHttp.onError('js '+e.message);}catch(_){}})();"
         try {
-            webView.evaluateJavascript(js, null)
+            webView.evaluateJavascript(js) { v ->
+                logBlobDiag("UNDUH-WEB js-result: $v")
+            }
         } catch (e: Exception) {
             android.widget.Toast.makeText(this, "Gagal mengunduh: ${e.message}", android.widget.Toast.LENGTH_LONG).show()
         }

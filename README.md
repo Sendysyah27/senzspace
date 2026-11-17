@@ -522,6 +522,28 @@ muncul (Ubah nama / Matikan Live / Hapus Space).
    "Beku" juga. Hapus Space yang beku → Space baru di slot yang sama
    tidak ikut beku.
 
+## Tes Unduhan via WebView v0.1.26 di HP (bahasa bayi)
+
+v0.1.25 membuktikan: listener jalan ("UNDUH-WEB mulai" 07:52:39),
+tapi WebView tidak merespon dalam 6 detik (watchdog 07:52:45) —
+"fetch mulai" tidak pernah muncul. v0.1.26 menyelidiki + memperbaiki:
+jembatan SenzHttp didaftarkan ulang tepat sebelum dipakai, URL
+dikirim lewat `window.__senzDlUrl` (aman dari karakter aneh), dan
+hasil selidikannya dicatat di log ("probe SenzHttp" + "js-result").
+
+1. Install APK v0.1.26-s1webprobe (nimpa, tanpa uninstall).
+   Tutup total app dulu (hapus dari recent apps), lalu buka lagi.
+2. Buka Claude 3 → tap **"Unduh semua"**.
+   **LULUS** bila: toast "Tersimpan di folder Claude 3:
+   download-files.zip" + file ada di space3.
+3. **Bila masih gagal:** kirim `_Log-Blob/blob-debug.txt` ke Jhon.
+   Baris baru akan menjawab: probe "undefined" = jembatan tidak
+   hidup di halaman; probe "object" + js-result "null" = string JS
+   gagal jalan; probe "object" + ada "fetch mulai" = fetch-nya
+   yang macet. Bonus: tap juga 1 lampiran satuan (mis. MP4) —
+   itu menguji jalur blob (SenzBlob) yang terpisah, biar ketahuan
+   apakah SEMUA jembatan mati atau cuma SenzHttp.
+
 ## Tes Unduhan via WebView v0.1.25 di HP (bahasa bayi)
 
 v0.1.24 DIAM TOTAL (bukti log 07:40: 0 baris UNDUH-WEB — fetch
