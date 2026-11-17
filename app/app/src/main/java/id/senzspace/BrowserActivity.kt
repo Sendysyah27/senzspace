@@ -986,7 +986,8 @@ abstract class BrowserActivity : AppCompatActivity() {
      *  langsung ke folder Space (file besar tidak menumpuk di RAM);
      *  nama asli diambil dari Content-Disposition respons akhir bila
      *  ada, lalu ekstensi diperbaiki dari isi file (v0.1.19). Progress
-     *  tampil di notifikasi (channel yang sama dengan guard live). */
+     *  tampil di notifikasi (channel yang sama dengan guard live).
+     *  v0.1.23: header ala browser + toples cookie antar-hop (403). */
     private fun downloadViaManager(
         dlUrl: String, userAgent: String, contentDisposition: String,
         mimeType: String, fileName: String
@@ -1014,19 +1015,65 @@ abstract class BrowserActivity : AppCompatActivity() {
                 }
             }
             try {
+                // Toples cookie selama redirect (v0.1.23): cookie yang
+                // diset server di tengah rantai ikut dikirim ke hop
+                // berikutnya — HttpURLConnection tidak menyimpan cookie
+                // sendiri. Tanpa ini, hop terakhir bisa ditolak 403.
+                val jar = LinkedHashMap<String, String>()
+                fun harvest(c: java.net.HttpURLConnection) {
+                    try {
+                        for ((k, vs) in c.headerFields) {
+                            if (k != null && k.equals("Set-Cookie", ignoreCase = true)) {
+                                for (v in vs) {
+                                    val nv = v.substringBefore(";").trim()
+                                    val eq = nv.indexOf('=')
+                                    if (eq > 0) jar[nv.substring(0, eq)] = nv.substring(eq + 1)
+                                }
+                            }
+                        }
+                    } catch (e: Exception) {
+                    }
+                }
+                fun cookieHeader(u: java.net.URL): String? {
+                    val base = CookieManager.getInstance().getCookie(u.toString())
+                    val parts = LinkedHashMap<String, String>()
+                    if (!base.isNullOrBlank()) {
+                        for (p in base.split(";")) {
+                            val t = p.trim()
+                            val eq = t.indexOf('=')
+                            if (eq > 0) parts[t.substring(0, eq)] = t.substring(eq + 1)
+                        }
+                    }
+                    parts.putAll(jar)
+                    if (parts.isEmpty()) return null
+                    return parts.entries.joinToString("; ") { "${it.key}=${it.value}" }
+                }
                 var url = java.net.URL(dlUrl)
                 var conn: java.net.HttpURLConnection? = null
                 var hops = 0
+                val pageHost = try { java.net.URL(currentUrl).host } catch (e: Exception) { "" }
                 while (true) {
                     val c = url.openConnection() as java.net.HttpURLConnection
                     c.instanceFollowRedirects = false
                     c.connectTimeout = 15000
                     c.readTimeout = 60000
                     c.setRequestProperty("User-Agent", userAgent)
-                    val cookie = CookieManager.getInstance().getCookie(url.toString())
+                    // Header ala browser (v0.1.23): HttpURLConnection
+                    // polos tanpa header ini dicurigai bot oleh server
+                    // (403) walau cookie-nya benar.
+                    c.setRequestProperty("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+                    c.setRequestProperty("Accept-Language", "en-US,en;q=0.9")
+                    c.setRequestProperty("Sec-Fetch-Dest", "document")
+                    c.setRequestProperty("Sec-Fetch-Mode", "navigate")
+                    c.setRequestProperty("Sec-Fetch-Site", if (url.host == pageHost) "same-origin" else "cross-site")
+                    c.setRequestProperty("Sec-Fetch-User", "?1")
+                    c.setRequestProperty("Upgrade-Insecure-Requests", "1")
+                    val cookie = cookieHeader(url)
                     if (cookie != null) c.setRequestProperty("Cookie", cookie)
                     if (currentUrl.isNotEmpty()) c.setRequestProperty("Referer", currentUrl)
                     val code = c.responseCode
+                    logBlobDiag("UNDUH hop $hops: ${url.host} -> $code")
+                    harvest(c)
                     if ((code == 301 || code == 302 || code == 303 || code == 307 || code == 308) && hops < 5) {
                         val loc = c.getHeaderField("Location")
                         c.disconnect()

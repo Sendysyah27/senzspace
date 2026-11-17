@@ -522,6 +522,25 @@ muncul (Ubah nama / Matikan Live / Hapus Space).
    "Beku" juga. Hapus Space yang beku → Space baru di slot yang sama
    tidak ikut beku.
 
+## Tes Unduhan 403 v0.1.23 di HP (bahasa bayi)
+
+Perbaikan: v0.1.22 masih ditolak server (403) — HttpURLConnection
+polos dicurigai bot. Sekarang unduhan mengirim header lengkap ala
+browser (Accept, Accept-Language, Sec-Fetch-*) + cookie yang diset
+server di tengah redirect ikut dibawa ke hop berikutnya. Tiap hop
+dicatat di `_Log-Blob/blob-debug.txt` ("UNDUH hop 0: <host> -> 403").
+
+1. Install APK v0.1.23-s1dl403 (nimpa, tanpa uninstall).
+2. Buka Claude 3 → tap **"Unduh semua"**.
+   **LULUS** bila: toast "Tersimpan di folder Claude 3:
+   download-files.zip" + file ada di space3.
+3. **GAGAL** bila: masih toast "Gagal mengunduh: server menolak
+   (403)". Kalau gagal, kirim `_Log-Blob/blob-debug.txt` ke Jhon —
+   baris "UNDUH hop …" akan nunjukin di hop ke berapa + host mana
+   yang menolak. Rencana B (bila ini masih gagal): unduh lewat
+   WebView-nya langsung (fetch dari halaman, header + cookie 100%
+   sama kayak browser).
+
 ## Tes Unduhan dalam App v0.1.22 di HP (bahasa bayi)
 
 Perbaikan: DownloadManager sistem DIBUANG (bukti HP 06:59 — 4×
