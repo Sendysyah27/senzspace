@@ -1028,7 +1028,7 @@ abstract class BrowserActivity : AppCompatActivity() {
         private var lastPct = -1
         private var notifId = 0
 
-        @JavascriptInterface
+        @android.webkit.JavascriptInterface
         fun onMeta(totalStr: String, cdName: String) {
             total = totalStr.toLongOrNull() ?: 0L
             baseName = cdName.ifBlank { pendingHttpFileName }
@@ -1040,7 +1040,7 @@ abstract class BrowserActivity : AppCompatActivity() {
             showProgress(0, "Mengunduh $baseName…")
         }
 
-        @JavascriptInterface
+        @android.webkit.JavascriptInterface
         fun onChunk(base64: String) {
             try {
                 val bytes = android.util.Base64.decode(base64, android.util.Base64.DEFAULT)
@@ -1067,7 +1067,7 @@ abstract class BrowserActivity : AppCompatActivity() {
             }
         }
 
-        @JavascriptInterface
+        @android.webkit.JavascriptInterface
         fun onDone() {
             try { out?.close() } catch (e: Exception) {}
             out = null
@@ -1090,7 +1090,7 @@ abstract class BrowserActivity : AppCompatActivity() {
             }
         }
 
-        @JavascriptInterface
+        @android.webkit.JavascriptInterface
         fun onError(reason: String) {
             finishError(reason)
         }
