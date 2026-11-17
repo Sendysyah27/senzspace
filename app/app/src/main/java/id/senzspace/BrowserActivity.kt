@@ -108,6 +108,8 @@ abstract class BrowserActivity : AppCompatActivity() {
     private var activityDestroyed = false
     private var pendingBlobFileName = ""
     private var pendingHttpFileName = "download"
+    private var httpWatchdogSeq = 0
+    private var httpMetaReceived = false
 
     /** Listener unduhan (PRD F6): blob: → jembatan JS, data: → decode
      *  langsung, http(s) → fetch WebView (v0.1.24). */
@@ -988,11 +990,31 @@ abstract class BrowserActivity : AppCompatActivity() {
     private fun downloadHttpViaWebView(dlUrl: String, fileName: String) {
         if (!::webView.isInitialized) return
         pendingHttpFileName = fileName
+        // v0.1.25: catat MULAI di log + toast awal + watchdog — percobaan
+        // v0.1.24 diam total (0 baris UNDUH-WEB di log 07:40) sehingga
+        // tidak ketahuan listener jalan atau tidak, SenzHttp ada atau
+        // tidak. Watchdog 6 detik melaporkan bila WebView tidak
+        // merespon sama sekali.
+        val host = try { java.net.URL(dlUrl).host } catch (e: Exception) { dlUrl }
+        logBlobDiag("UNDUH-WEB mulai: $host")
+        android.widget.Toast.makeText(this, "Mengunduh $fileName…", android.widget.Toast.LENGTH_SHORT).show()
+        val seq = ++httpWatchdogSeq
+        httpMetaReceived = false
+        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+            if (seq == httpWatchdogSeq && !httpMetaReceived) {
+                logBlobDiag("UNDUH-WEB: tidak ada respon dari WebView (SenzHttp?)")
+                android.widget.Toast.makeText(
+                    this, "Unduhan tidak merespon — coba lagi", android.widget.Toast.LENGTH_LONG
+                ).show()
+            }
+        }, 6000)
         val escaped = dlUrl.replace("\\", "\\\\").replace("'", "\\'")
         val js = "(function(){try{" +
             "if(!window.SenzHttp){return;}" +
+            "window.SenzHttp.onDiag('fetch mulai');" +
             "fetch('$escaped',{credentials:'include'}).then(function(r){" +
             "if(!r.ok){window.SenzHttp.onError('server menolak ('+r.status+')');return null;}" +
+            "window.SenzHttp.onDiag('fetch ok total='+(r.headers.get('Content-Length')||'?'));" +
             "var cd=r.headers.get('Content-Disposition')||'';" +
             "var nm='';" +
             "var m=/filename\\*?=([^;]+)/.exec(cd);" +
@@ -1029,7 +1051,13 @@ abstract class BrowserActivity : AppCompatActivity() {
         private var notifId = 0
 
         @android.webkit.JavascriptInterface
+        fun onDiag(msg: String) {
+            logBlobDiag("UNDUH-WEB diag: $msg")
+        }
+
+        @android.webkit.JavascriptInterface
         fun onMeta(totalStr: String, cdName: String) {
+            httpMetaReceived = true
             total = totalStr.toLongOrNull() ?: 0L
             baseName = cdName.ifBlank { pendingHttpFileName }
             notifId = 2000 + (System.currentTimeMillis() % 90).toInt()

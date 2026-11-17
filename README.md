@@ -522,6 +522,31 @@ muncul (Ubah nama / Matikan Live / Hapus Space).
    "Beku" juga. Hapus Space yang beku → Space baru di slot yang sama
    tidak ikut beku.
 
+## Tes Unduhan via WebView v0.1.25 di HP (bahasa bayi)
+
+v0.1.24 DIAM TOTAL (bukti log 07:40: 0 baris UNDUH-WEB — fetch
+tidak pernah lapor balik). v0.1.25 menambahkan: log "UNDUH-WEB
+mulai" saat tombol ditekan, toast "Mengunduh …" di awal, laporan
+tiap langkah dari WebView, dan watchdog 6 detik yang berteriak
+bila WebView tidak merespon sama sekali.
+
+1. Install APK v0.1.25-s1webdiag (nimpa, tanpa uninstall).
+   **PENTING: setelah install, TUTUP TOTAL app-nya dulu** (hapus
+   dari recent apps) lalu buka lagi — supaya proses lama yang
+   masih jalan tidak menahan kode lama.
+2. Buka Claude 3 → tap **"Unduh semua"**.
+   **LULUS** bila: toast "Mengunduh download-files.zip…" muncul,
+   lalu toast "Tersimpan di folder Claude 3: download-files.zip"
+   + file ada di space3.
+3. **Bila masih diam / gagal:** kirim `_Log-Blob/blob-debug.txt`
+   ke Jhon. Baris barunya akan nunjukin persis di mana berhentinya:
+   - tidak ada "UNDUH-WEB mulai" → tombol tidak sampai ke
+     downloader (listener tidak jalan);
+   - ada "mulai" tapi ada "tidak ada respon dari WebView" →
+     jembatan SenzHttp tidak hidup;
+   - ada "fetch mulai" tapi tidak ada "fetch ok" → server tidak
+     menjawab fetch dari WebView.
+
 ## Tes Unduhan via WebView v0.1.24 di HP (bahasa bayi)
 
 RENCANA B: hop 0 ke claude.ai ditolak 403 walau cookie + header
