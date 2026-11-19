@@ -455,6 +455,50 @@ muncul (Ubah nama / Matikan Live / Hapus Space).
    "Beku" juga. Hapus Space yang beku → Space baru di slot yang sama
    tidak ikut beku.
 
+## Tes TTS API v0.1.40 di HP (bahasa bayi)
+
+v0.1.40 memperbaiki dua hal dari tes 22:24 (v0.1.39 gagal karena
+Space 7 mendarat di halaman preview suara — 0 kolom isian, bukan
+halaman TTS):
+
+1. **Jhon TIDAK PERLU kamu ketuk notifikasi apa pun.** Bukti:
+   diagnose TTS 22:24 itu jalan sendiri di background (Space 7
+   kebuka tanpa tampil, halaman ke-load, diagnose jalan, status
+   failed tertulis) — padahal kamu tidak mengetuk apa pun. Jadi
+   mulai v0.1.40, Jhon kirim tugas dan tugasnya jalan di
+   background; kamu tetap di app Muse, Jhon yang kabarin
+   hasilnya. Notifikasi "Buka ..." cuma ada kalau kamu mau
+   mengintip — bukan syarat.
+2. **TTS navigasi sendiri ke halaman TTS.** Kalau Space 7 bukan
+   di halaman TTS, Jhon buka menu garis tiga, pilih entri model
+   starred / TTS, lalu diagnose ulang. Kolom isian yang dihitung
+   sekarang termasuk contenteditable (kotak teks AI Studio bisa
+   jadi bukan textarea biasa).
+
+Langkah tes (sama seperti 39, tanpa ketuk notifikasi):
+1. Install APK v0.1.40 (nimpa — JANGAN uninstall). Buka SenzSpace sekali.
+2. Bilang ke Jhon: "generate VO Charger di Space 7". LULUS bila:
+   Jhon jawab "queued" lalu "done" + nama file VO, DAN file wav
+   ada di File Manager → aistudio. Kamu tidak perlu mengetuk apa
+   pun selama proses.
+3. Kalau "failed", Jhon sebut alasannya + apa yang dia lihat di
+   halaman (daftar tombol/kolom) — itu bahan perbaikan berikutnya.
+
+## Tes Prompt API v0.1.40 di HP — prompt masuk Project (bahasa bayi)
+
+v0.1.40: prompt bisa masuk ke Project Claude tanpa kamu kirim
+URL. Jhon yang navigasi sendiri dari tombol kiri atas (sidebar)
+di Space, pilih Project "SSR CONTENT STUDIO", buka chat baru di
+dalamnya, baru kirim prompt + lampiran.
+
+1. Install APK v0.1.40 (nimpa — JANGAN uninstall).
+2. Bilang ke Jhon: "kirim prompt Charger ke Space 2, Project SSR CONTENT STUDIO".
+   LULUS bila: Jhon jawab "sent", DAN di HP (kalau kamu intip
+   Space 2) chat baru di dalam Project SSR CONTENT STUDIO itu
+   berisi prompt + 3 lampiran (packet, prompt, VO).
+3. Kalau "failed", Jhon sebut alasannya (misal "Project tidak
+   ketemu di sidebar" = nama Project beda / belum kebuka).
+
 ## Tes TTS API v0.1.39 di HP (bahasa bayi)
 
 v0.1.39 bikin Jhon bisa generate VO di AI Studio (Space 7) lewat

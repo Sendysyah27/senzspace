@@ -17,6 +17,7 @@ object SpaceLauncher {
         promptText: String? = null,
         promptFiles: List<String>? = null,
         promptUrl: String? = null,
+        promptProject: String? = null,
         ttsScript: String? = null,
         ttsVoice: String? = null,
         ttsModel: String? = null,
@@ -44,6 +45,9 @@ object SpaceLauncher {
                 }
                 if (promptUrl != null) {
                     putExtra(MainActivity.EXTRA_API_PROMPT_URL, promptUrl)
+                }
+                if (promptProject != null) {
+                    putExtra(MainActivity.EXTRA_API_PROMPT_PROJECT, promptProject)
                 }
             }
             // v0.1.39: payload TTS API.
@@ -75,6 +79,7 @@ object SpaceLauncher {
         promptText: String? = null,
         promptFiles: List<String>? = null,
         promptUrl: String? = null,
+        promptProject: String? = null,
         ttsScript: String? = null,
         ttsVoice: String? = null,
         ttsModel: String? = null,
@@ -84,7 +89,7 @@ object SpaceLauncher {
             intentFor(
                 ctx, entry, clearData, splitWith, newTask = true,
                 promptText = promptText, promptFiles = promptFiles,
-                promptUrl = promptUrl,
+                promptUrl = promptUrl, promptProject = promptProject,
                 ttsScript = ttsScript, ttsVoice = ttsVoice,
                 ttsModel = ttsModel, ttsUrl = ttsUrl
             )

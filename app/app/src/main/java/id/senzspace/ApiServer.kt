@@ -352,6 +352,10 @@ class ApiServer(private val ctx: Context) {
                     return
                 }
                 val url = req.optString("url", "").ifBlank { null }
+                // v0.1.40: nama Project tujuan (mis. "SSR CONTENT STUDIO").
+                // BrowserActivity menavigasi sendiri dari tombol kiri atas
+                // (sidebar) ke Project itu - user TIDAK perlu kirim URL.
+                val project = req.optString("project", "").ifBlank { null }
                 if (url != null && !url.startsWith("https://claude.ai/")) {
                     sendJson(client, 400, JSONObject().put("error", "url harus https://claude.ai/..."))
                     return
@@ -375,7 +379,7 @@ class ApiServer(private val ctx: Context) {
                 SpaceLauncher.open(
                     ctx, entry,
                     promptText = text, promptFiles = files,
-                    promptUrl = url
+                    promptUrl = url, promptProject = project
                 )
                 if (visible) {
                     sendJson(client, 202, JSONObject().apply {
@@ -394,7 +398,7 @@ class ApiServer(private val ctx: Context) {
                         put("visible", false)
                         put("needs_tap", true)
                         put("status", "queued")
-                        put("note", "app di background - ketuk notifikasi 'Buka ${entry.name}' supaya prompt dieksekusi")
+                        put("note", "lagi jalan di background - lu tetap di Muse aja, gua kabarin hasilnya (ketuk notifikasi kalau mau lihat)")
                     })
                 }
             }
@@ -473,7 +477,7 @@ class ApiServer(private val ctx: Context) {
                         put("visible", false)
                         put("needs_tap", true)
                         put("status", "queued")
-                        put("note", "app di background - ketuk notifikasi 'Buka ${entry.name}' supaya TTS dieksekusi")
+                        put("note", "lagi jalan di background - lu tetap di Muse aja, gua kabarin hasilnya (ketuk notifikasi kalau mau lihat)")
                     })
                 }
             }

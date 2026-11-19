@@ -118,6 +118,28 @@ Jangan cuma diagnosa dari kodenya.
   (BufferedReader bisa menelan byte body). senz.py v2 ngomong ke
   API via `adb forward tcp:19335 tcp:19335`; procs/shot/type/tap/
   key/home tetap ADB (level perangkat).
+- API 40 (19 Nov, v0.1.40): NAVIGASI OTOMATIS + TANPA TAP.
+  (a) TTS: bila diagnose 0 kolom isian, eksekutor TIDAK langsung
+  gagal — buka menu "Open navigation menu", klik entri model
+  starred (bila diminta) atau entri TTS (Text to speech / TTS /
+  Generate speech), diagnose ulang (max 3x). Kolom isian yang
+  dihitung: textarea + [contenteditable=true] + input[type=text];
+  isi mendukung contenteditable (textContent + input event).
+  Bukti butuh: 22:24 Space 7 mendarat di halaman preview suara
+  (tombol "Preview dialog audio", "Play preview of The Grizzled
+  Detective" dst, 0 textarea) — halaman TTS satu navigasi jauhnya.
+  (b) PROMPT: param `project` (nama, mis. "SSR CONTENT STUDIO") —
+  eksekutor klik tombol kiri atas (sidebar: aria-label Toggle/Open
+  sidebar / Menu) -> klik nama Project (cocok persis dulu, lalu
+  mengandung) -> tunggu URL /project/ -> klik "New chat" -> alur
+  lama (diagnose -> attach -> isi -> kirim). User TIDAK perlu kirim
+  URL Project. (c) TANPA TAP: eksekusi prompt/TTS jalan di
+  background — activity kebuka tak tampil, WebView tetap load +
+  JS tetap jalan (TERBUKTI diagnose TTS 22:24 jalan tanpa tap).
+  Balasan 202 note-nya "lagi jalan di background - lu tetap di
+  Muse aja". Notifikasi "Buka <nama>" tetap ada sebagai opsi
+  intip, BUKAN syarat. JANGAN lagi suruh user ketuk notifikasi
+  untuk menjalankan tugas.
 - API 39 (19 Nov, v0.1.39): TTS API — POST /tts {slot=7, script,
   voice?, model?, url?} (script max 50.000 char, voice default =
   format Riko pilihan Sendy, url HARUS https://aistudio.google.com/...)

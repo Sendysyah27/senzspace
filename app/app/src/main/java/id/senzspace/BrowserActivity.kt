@@ -156,6 +156,9 @@ abstract class BrowserActivity : AppCompatActivity() {
     private var pendingPromptText: String? = null
     private var pendingPromptFiles: List<java.io.File>? = null
     private var pendingPromptUrl: String? = null
+    /** v0.1.40 - nama Project Claude tujuan (mis. "SSR CONTENT STUDIO"). */
+    private var pendingPromptProject: String? = null
+    private var promptProjectDone: Boolean = false
     private var promptRunning: Boolean = false
     private var promptChooserServed: Boolean = false
     private val promptHandler = Handler(Looper.getMainLooper())
@@ -1030,6 +1033,8 @@ abstract class BrowserActivity : AppCompatActivity() {
         intent.removeExtra(MainActivity.EXTRA_API_PROMPT_FILES)
         val url = intent.getStringExtra(MainActivity.EXTRA_API_PROMPT_URL)
         intent.removeExtra(MainActivity.EXTRA_API_PROMPT_URL)
+        val project = intent.getStringExtra(MainActivity.EXTRA_API_PROMPT_PROJECT)
+        intent.removeExtra(MainActivity.EXTRA_API_PROMPT_PROJECT)
         val files = names?.mapNotNull { n ->
             val f = java.io.File(FileStore.folderDir(this, "_inbox"), n)
             if (f.isFile) f else null
@@ -1037,6 +1042,8 @@ abstract class BrowserActivity : AppCompatActivity() {
         pendingPromptText = text
         pendingPromptFiles = files
         pendingPromptUrl = url
+        pendingPromptProject = project
+        promptProjectDone = false
         promptRunning = false
         promptChooserServed = false
         writePromptStatus("queued", "payload diterima Space $dataDirectorySuffix")
@@ -1064,8 +1071,73 @@ abstract class BrowserActivity : AppCompatActivity() {
             return
         }
         promptRunning = true
-        writePromptStatus("running", "mencari kolom chat Claude")
-        runPromptDiagnose(5)
+        // v0.1.40: prompt masuk Project - navigasi sendiri dari tombol
+        // kiri atas (sidebar) ke Project, baru buka chat baru di sana.
+        if (pendingPromptProject != null && !promptProjectDone) {
+            writePromptStatus("running", "menuju Project ${pendingPromptProject}")
+            runPromptProject()
+        } else {
+            writePromptStatus("running", "mencari kolom chat Claude")
+            runPromptDiagnose(5)
+        }
+    }
+
+    /** v0.1.40 - navigasi ke Project Claude dari dalam Space.
+     *  Langkah: klik tombol kiri atas (sidebar) -> klik nama Project
+     *  -> tunggu URL /project/ -> klik "New chat" -> diagnose composer.
+     *  Semua jalan di background (WebView tetap mengeksekusi meski
+     *  activity tidak tampil - terbukti diagnose TTS 22:24). */
+    private fun runPromptProject() {
+        if (pendingPromptText == null) return
+        val js = """(function(){var labels=['Toggle sidebar','Open sidebar','Close sidebar','Open navigation menu','Menu'];var bs=[...document.querySelectorAll('button')].filter(function(b){return b.offsetParent!==null;});for(var i=0;i<labels.length;i++){for(var j=0;j<bs.length;j++){var l=(bs[j].getAttribute('aria-label')||'').trim();if(l===labels[i]){bs[j].click();return '1';}}}for(var k=0;k<bs.length;k++){var al=(bs[k].getAttribute('aria-label')||'').toLowerCase();if(al.indexOf('sidebar')>=0||al.indexOf('menu')>=0){bs[k].click();return '1';}}return '0';})()"""
+        webView.evaluateJavascript(js) { raw ->
+            val clean = raw?.trim()?.removeSurrounding("\"") ?: ""
+            if (clean == "1") {
+                promptHandler.postDelayed({ runPromptPickProject() }, 1500)
+            } else {
+                failPrompt("tombol sidebar (kiri atas) tidak ketemu - tidak bisa masuk Project")
+            }
+        }
+    }
+
+    private fun runPromptPickProject() {
+        val want = pendingPromptProject ?: return runPromptDiagnose(5)
+        val quoted = org.json.JSONObject.quote(want)
+        val js = """(function(){var want=$quoted.toLowerCase();var els=[...document.querySelectorAll('a,button,[role="link"],[role="button"],[role="menuitem"],li')].filter(function(e){return e.offsetParent!==null;});for(var i=0;i<els.length;i++){var t=(els[i].textContent||'').trim();if(t.toLowerCase()===want){els[i].click();return t;}}for(var j=0;j<els.length;j++){var u=(els[j].textContent||'').trim();if(u.toLowerCase().indexOf(want)>=0&&u.length<80){els[j].click();return u;}}return '';})()"""
+        webView.evaluateJavascript(js) { raw ->
+            val picked = raw?.trim()?.removeSurrounding("\"") ?: ""
+            if (picked.isBlank()) {
+                failPrompt("Project '$want' tidak ketemu di sidebar (cek nama Project-nya)")
+            } else {
+                writePromptStatus("running", "Project dipilih: $picked")
+                waitPromptProjectUrl(5)
+            }
+        }
+    }
+
+    private fun waitPromptProjectUrl(triesLeft: Int) {
+        if (pendingPromptText == null) return
+        if (currentUrl.contains("/project/")) {
+            runPromptNewChat()
+        } else if (triesLeft <= 0) {
+            failPrompt("halaman Project tidak kebuka (URL sekarang: $currentUrl)")
+        } else {
+            promptHandler.postDelayed({ waitPromptProjectUrl(triesLeft - 1) }, 2000)
+        }
+    }
+
+    private fun runPromptNewChat() {
+        val js = """(function(){var bs=[...document.querySelectorAll('button,a')].filter(function(b){return b.offsetParent!==null;});for(var i=0;i<bs.length;i++){var l=(bs[i].getAttribute('aria-label')||'').trim();var tx=(bs[i].textContent||'').trim();if(/new chat/i.test(l)||/new chat/i.test(tx)){bs[i].click();return '1';}}return '0';})()"""
+        webView.evaluateJavascript(js) { raw ->
+            val clean = raw?.trim()?.removeSurrounding("\"") ?: ""
+            if (clean == "1") {
+                promptProjectDone = true
+                writePromptStatus("running", "chat baru di Project dibuka - mencari kolom chat")
+                promptHandler.postDelayed({ runPromptDiagnose(5) }, 2000)
+            } else {
+                failPrompt("tombol 'New chat' di Project tidak ketemu")
+            }
+        }
     }
 
     /** Langkah 1: kolom chat (ProseMirror) ada? Balik "1|1|label,label"
@@ -1258,7 +1330,7 @@ abstract class BrowserActivity : AppCompatActivity() {
      *  "ta|run|dl|model|taLabels|btnLabels". */
     private fun runTtsDiagnose(triesLeft: Int) {
         if (pendingTtsScript == null) return
-        val js = """(function(){var tas=[...document.querySelectorAll('textarea')].filter(function(t){return t.offsetParent!==null;});var taLabels=tas.map(function(t){return (t.getAttribute('aria-label')||t.getAttribute('placeholder')||'textarea').replace(/[|,]/g,' ');});var run=0,dl=0,model='';var bs=[...document.querySelectorAll('button')].filter(function(b){return b.offsetParent!==null;});var btnLabels=[];for(var i=0;i<bs.length;i++){var l=(bs[i].getAttribute('aria-label')||'').trim();var tx=(bs[i].textContent||'').trim();if(l)btnLabels.push(l.replace(/[|,]/g,' '));else if(tx&&tx.length<40)btnLabels.push(tx.replace(/[|,]/g,' '));if(!run&&(l==='Run'||tx==='Run'))run=1;if(!dl&&(l==='Download'||tx==='Download'))dl=1;if(!model&&/gemini/i.test(tx))model=tx.replace(/[|,]/g,' ').slice(0,60);}return tas.length+'|'+run+'|'+dl+'|'+model+'|'+taLabels.join(',')+'|'+btnLabels.join(',');})()"""
+        val js = """(function(){var tas=[...document.querySelectorAll('textarea,[contenteditable="true"],input[type="text"]')].filter(function(t){return t.offsetParent!==null;});var taLabels=tas.map(function(t){return (t.getAttribute('aria-label')||t.getAttribute('placeholder')||'textarea').replace(/[|,]/g,' ');});var run=0,dl=0,model='';var bs=[...document.querySelectorAll('button')].filter(function(b){return b.offsetParent!==null;});var btnLabels=[];for(var i=0;i<bs.length;i++){var l=(bs[i].getAttribute('aria-label')||'').trim();var tx=(bs[i].textContent||'').trim();if(l)btnLabels.push(l.replace(/[|,]/g,' '));else if(tx&&tx.length<40)btnLabels.push(tx.replace(/[|,]/g,' '));if(!run&&(l==='Run'||tx==='Run'))run=1;if(!dl&&(l==='Download'||tx==='Download'))dl=1;if(!model&&/gemini/i.test(tx))model=tx.replace(/[|,]/g,' ').slice(0,60);}return tas.length+'|'+run+'|'+dl+'|'+model+'|'+taLabels.join(',')+'|'+btnLabels.join(',');})()"""
         webView.evaluateJavascript(js) { raw ->
             val clean = raw?.trim()?.removeSurrounding("\"") ?: ""
             val parts = clean.split("|")
@@ -1278,9 +1350,48 @@ abstract class BrowserActivity : AppCompatActivity() {
             } else if (triesLeft > 1) {
                 ttsHandler.postDelayed({ runTtsDiagnose(triesLeft - 1) }, 2000)
             } else {
-                failTts(
-                    "kolom naskah TTS tidak ketemu (textarea: ${parts.getOrElse(4) { "" }}; tombol: ${parts.getOrElse(5) { "" }} - mungkin bukan halaman TTS, buka halaman TTS dulu)"
-                )
+                // v0.1.40: halaman ini bukan halaman TTS (mis. halaman
+                // preview suara, 0 kolom isian - kejadian 22:24). Jangan
+                // gagal dulu: buka menu navigasi, cari entri TTS / model
+                // starred, lalu diagnose ulang dari halaman yang benar.
+                writeTtsStatus("running", "bukan halaman TTS - mencari entri TTS di menu")
+                runTtsNavMenu(3)
+            }
+        }
+    }
+
+    /** v0.1.40 - navigasi ke halaman TTS dari halaman lain AI Studio.
+     *  Klik hamburger ("Open navigation menu") -> klik entri model
+     *  starred (bila diminta) atau entri TTS (Text to speech / TTS /
+     *  Generate speech) -> diagnose ulang. Max 3 percobaan. */
+    private fun runTtsNavMenu(triesLeft: Int) {
+        if (pendingTtsScript == null) return
+        if (triesLeft <= 0) {
+            failTts("halaman TTS tidak ketemu lewat menu navigasi (Space 7 bukan di halaman TTS)")
+            return
+        }
+        val js = """(function(){var b=document.querySelector('button[aria-label="Open navigation menu"]')||document.querySelector('button[aria-label="Main menu"]')||document.querySelector('button[aria-label="Menu"]');if(!b)return '0';b.click();return '1';})()"""
+        webView.evaluateJavascript(js) { raw ->
+            val clean = raw?.trim()?.removeSurrounding("\"") ?: ""
+            if (clean == "1") {
+                ttsHandler.postDelayed({ runTtsPickMenuItem(triesLeft) }, 1500)
+            } else {
+                failTts("tombol menu navigasi tidak ketemu (bukan halaman AI Studio?)")
+            }
+        }
+    }
+
+    private fun runTtsPickMenuItem(navTriesLeft: Int) {
+        val want = pendingTtsModel
+        val quoted = org.json.JSONObject.quote(want ?: "")
+        val js = """(function(){var want=$quoted.toLowerCase();var rx=/text.to.speech|tts|speech|generate speech/i;var items=[...document.querySelectorAll('[role="menuitem"],[role="option"],a,button,li')].filter(function(e){return e.offsetParent!==null;});if(want){for(var i=0;i<items.length;i++){var t=(items[i].textContent||'').trim();if(t.toLowerCase().indexOf(want)>=0&&t.length<120){items[i].click();return t;}}}else{for(var j=0;j<items.length;j++){var u=(items[j].textContent||'').trim();if(rx.test(u)&&u.length<120){items[j].click();return u;}}}return '';})()"""
+        webView.evaluateJavascript(js) { raw ->
+            val picked = raw?.trim()?.removeSurrounding("\"") ?: ""
+            if (picked.isBlank()) {
+                failTts("entri TTS / model '${want ?: "TTS"}' tidak ketemu di menu navigasi")
+            } else {
+                writeTtsStatus("running", "entri menu dipilih: $picked - menunggu halaman TTS")
+                ttsHandler.postDelayed({ runTtsDiagnose(5) }, 2000)
             }
         }
     }
@@ -1288,7 +1399,7 @@ abstract class BrowserActivity : AppCompatActivity() {
     /** Langkah 2a (bila model diminta + beda dari yang aktif): buka
      *  menu garis tiga (kanan atas). */
     private fun runTtsMenu() {
-        val js = """(function(){var b=document.querySelector('button[aria-label="Main menu"]')||document.querySelector('button[aria-label="Menu"]');if(!b)return '0';b.click();return '1';})()"""
+        val js = """(function(){var b=document.querySelector('button[aria-label="Open navigation menu"]')||document.querySelector('button[aria-label="Main menu"]')||document.querySelector('button[aria-label="Menu"]');if(!b)return '0';b.click();return '1';})()"""
         writeTtsStatus("running", "membuka menu model (garis tiga)")
         webView.evaluateJavascript(js) { raw ->
             val clean = raw?.trim()?.removeSurrounding("\"") ?: ""
@@ -1321,7 +1432,7 @@ abstract class BrowserActivity : AppCompatActivity() {
      *  native setter + event input untuk framework Angular/React). */
     private fun ttsFillJs(role: String, text: String): String {
         val quoted = org.json.JSONObject.quote(text)
-        val js = """(function(role,text){var tas=[...document.querySelectorAll('textarea')].filter(function(t){return t.offsetParent!==null;});var pick=null;if(role==='voice'){pick=tas.find(function(t){var s=((t.getAttribute('aria-label')||'')+' '+(t.getAttribute('placeholder')||'')).toLowerCase();return s.indexOf('style')>=0||s.indexOf('voice')>=0||s.indexOf('describe')>=0||s.indexOf('tone')>=0;});}else{pick=tas.find(function(t){var s=((t.getAttribute('aria-label')||'')+' '+(t.getAttribute('placeholder')||'')).toLowerCase();return s.indexOf('text')>=0||s.indexOf('script')>=0||s.indexOf('enter')>=0||s.indexOf('speech')>=0;});if(!pick&&tas.length>0){pick=tas.reduce(function(a,b){return (b.rows||0)>(a.rows||0)?b:a;});}}if(!pick)return '0';pick.focus();try{pick.setSelectionRange(0,pick.value.length);}catch(e){}var ok=false;try{ok=document.execCommand('insertText',false,text);}catch(e){}if(!ok||(pick.value||'').length===0){var setter=Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype,'value').set;setter.call(pick,text);pick.dispatchEvent(new Event('input',{bubbles:true}));}return String((pick.value||'').length);})('$role',$quoted)"""
+        val js = """(function(role,text){var tas=[...document.querySelectorAll('textarea,[contenteditable="true"],input[type="text"]')].filter(function(t){return t.offsetParent!==null;});var pick=null;if(role==='voice'){pick=tas.find(function(t){var s=((t.getAttribute('aria-label')||'')+' '+(t.getAttribute('placeholder')||'')).toLowerCase();return s.indexOf('style')>=0||s.indexOf('voice')>=0||s.indexOf('describe')>=0||s.indexOf('tone')>=0;});}else{pick=tas.find(function(t){var s=((t.getAttribute('aria-label')||'')+' '+(t.getAttribute('placeholder')||'')).toLowerCase();return s.indexOf('text')>=0||s.indexOf('script')>=0||s.indexOf('enter')>=0||s.indexOf('speech')>=0;});if(!pick&&tas.length>0){pick=tas.reduce(function(a,b){return (b.rows||0)>(a.rows||0)?b:a;});}}if(!pick)return '0';pick.focus();try{pick.setSelectionRange(0,pick.value.length);}catch(e){}var ok=false;try{ok=document.execCommand('insertText',false,text);}catch(e){}if(!ok||(pick.value||pick.textContent||'').length===0){if(pick.tagName==='TEXTAREA'){var setter=Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype,'value').set;setter.call(pick,text);}else if(pick.tagName==='INPUT'){var setter2=Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype,'value').set;setter2.call(pick,text);}else{pick.textContent=text;}pick.dispatchEvent(new Event('input',{bubbles:true}));}return String((pick.value||pick.textContent||'').length);})('$role',$quoted)"""
         return js
     }
 
