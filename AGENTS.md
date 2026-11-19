@@ -118,6 +118,35 @@ Jangan cuma diagnosa dari kodenya.
   (BufferedReader bisa menelan byte body). senz.py v2 ngomong ke
   API via `adb forward tcp:19335 tcp:19335`; procs/shot/type/tap/
   key/home tetap ADB (level perangkat).
+- API 41 (19 Nov, v0.1.41): TTS ALUR ASLI (screenshot Sendy 23:28-23:32).
+  (a) Urutan eksekusi: Run settings (ikon slider kanan atas) ->
+  kartu model aktif -> tab Starred -> entri "Gemini 3.8 Flash Lite
+  TTS" (default model) -> "Create new dialog" -> tombol "Style"
+  -> isi kotak "Describe the voice style" (format Riko) -> dropdown
+  "Speaker 1" -> nama voice "Sadaltager" (default speaker,
+  Favorites) -> isi naskah (kotak besar, placeholder "Type '<'
+  for tags") -> Run -> tunggu unduh -> blob trap simpan wav.
+  (b) DUA PEMBEDA YANG DULU TERTUKAR: `voice` param = STYLE
+  (teks deskripsi suara, default format Riko); `speaker` param =
+  NAMA voice (default Sadaltager). Model BUKAN dipilih lewat
+  hamburger kiri ("Open navigation menu" tidak berisi entri TTS
+  — itu penyebab failed 23:21; alur hamburger DIHAPUS).
+  (c) Diagnose state-aware: ada "Speaker 1" + kolom = editor
+  dialog (langsung Style); ada "Create new dialog" = halaman
+  utama TTS (klik itu); selain itu = alur pilih model. Kolom
+  isian: textarea + [contenteditable] apa pun + input +
+  [role=textbox]; naskah = kolom TERLUAS (area), bukan rows.
+  Gagal di satu langkah -> status failed membawa DUMP inventaris
+  halaman / isi menu. (d) Pelajaran 23:11-23:21: eksekusi
+  background JALAN bila proses Space sudah hangat (status
+  bergerak queued->running di menit ke-7,5) — tapi COLD START
+  dari background gagal total (proses :aistudio tetap mati 12
+  mnt + /open 45 dtk). Jadi "tanpa tap" berlaku untuk proses
+  yang sudah hangat; Space yang mati total butuh satu ketuk
+  pemanasan dulu. (e) STOP 23:24 ("lama lu bro, stop aja kalo lu
+  bingung") — patch 41 pertama DIBATALKAN (push dimatikan, repo
+  tetap v0.1.40); 23:35 Sendy kirim 8 screenshot alur asli +
+  Gas ulang — v0.1.41 ini dibangun dari screenshot itu.
 - API 40 (19 Nov, v0.1.40): NAVIGASI OTOMATIS + TANPA TAP.
   (a) TTS: bila diagnose 0 kolom isian, eksekutor TIDAK langsung
   gagal — buka menu "Open navigation menu", klik entri model

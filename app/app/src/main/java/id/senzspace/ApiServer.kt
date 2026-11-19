@@ -86,6 +86,9 @@ class ApiServer(private val ctx: Context) {
         const val PORT = 19335
         // v0.1.39: format suara VO default (pilihan Sendy, 19 Nov).
         const val DEFAULT_VOICE = "Very bright, high-pitched, cheerful Indonesian male voice, fast-paced, energetic, punchy, crisp, lively, natural Indonesian accent, speed 1.4x"
+        // v0.1.41: model TTS starred + voice (nama) - dari screenshot Sendy 23:28-23:32.
+        const val DEFAULT_TTS_MODEL = "Gemini 3.8 Flash Lite TTS"
+        const val DEFAULT_TTS_SPEAKER = "Sadaltager"
         private const val TAG = "SenzApi"
         private val FILE_KEYS = setOf(
             "space1", "space2", "space3", "space4", "space5", "space6",
@@ -422,12 +425,14 @@ class ApiServer(private val ctx: Context) {
                 }
             }
             method == "POST" && path == "/tts" -> {
-                // v0.1.39: generate VO di AI Studio (Space 7) lewat API.
+                // v0.1.39-41: generate VO di AI Studio (Space 7) lewat API.
                 // HANYA atas perintah eksplisit per generate - tidak ada
                 // auto-generate. Payload lewat intent extra; AiStudio
-                // (proses Space) yang mengeksekusi di WebView-nya:
-                // pilih model starred (bila diminta) -> isi format suara
-                // -> isi naskah -> Run -> tunggu selesai -> klik unduh
+                // (proses Space) yang mengeksekusi di WebView-nya.
+                // Alur v0.1.41 (screenshot Sendy 23:28-23:32): Run
+                // settings -> kartu model -> Starred -> model TTS ->
+                // Create new dialog -> Style (format suara) -> Speaker
+                // (nama voice) -> naskah -> Run -> tunggu -> unduh
                 // (blob trap menyimpan wav ke folder aistudio).
                 // Status ditulis ke api-tts-<suffix>.json.
                 val req = try {
@@ -447,8 +452,11 @@ class ApiServer(private val ctx: Context) {
                     sendJson(client, 400, JSONObject().put("error", "naskah kosong / terlalu panjang"))
                     return
                 }
+                // voice = STYLE (teks "Describe the voice style"),
+                // BUKAN nama voice. Nama voice = speaker (Sadaltager).
                 val voice = req.optString("voice", "").ifBlank { DEFAULT_VOICE }
-                val model = req.optString("model", "").ifBlank { null }
+                val model = req.optString("model", "").ifBlank { DEFAULT_TTS_MODEL }
+                val speaker = req.optString("speaker", "").ifBlank { DEFAULT_TTS_SPEAKER }
                 val url = req.optString("url", "").ifBlank { null }
                 if (url != null && !url.startsWith("https://aistudio.google.com/")) {
                     sendJson(client, 400, JSONObject().put("error", "url harus https://aistudio.google.com/..."))
@@ -460,7 +468,8 @@ class ApiServer(private val ctx: Context) {
                 SpaceLauncher.open(
                     ctx, entry,
                     ttsScript = script, ttsVoice = voice,
-                    ttsModel = model, ttsUrl = url
+                    ttsModel = model, ttsUrl = url,
+                    ttsSpeaker = speaker
                 )
                 if (visible) {
                     sendJson(client, 202, JSONObject().apply {

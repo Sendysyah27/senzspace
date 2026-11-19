@@ -57,6 +57,8 @@ class MainActivity : AppCompatActivity() {
         const val EXTRA_API_TTS_VOICE = "extra_api_tts_voice"
         const val EXTRA_API_TTS_MODEL = "extra_api_tts_model"
         const val EXTRA_API_TTS_URL = "extra_api_tts_url"
+        // v0.1.41: nama voice TTS (mis. "Sadaltager", Favorites).
+        const val EXTRA_API_TTS_SPEAKER = "extra_api_tts_speaker"
         // v0.1.40: nama Project Claude tujuan prompt (mis. "SSR CONTENT STUDIO").
         const val EXTRA_API_PROMPT_PROJECT = "extra_api_prompt_project"
         const val EXTRA_SPACE_NAME = "extra_space_name"

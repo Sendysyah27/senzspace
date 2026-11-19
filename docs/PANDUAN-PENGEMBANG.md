@@ -455,6 +455,32 @@ muncul (Ubah nama / Matikan Live / Hapus Space).
    "Beku" juga. Hapus Space yang beku → Space baru di slot yang sama
    tidak ikut beku.
 
+## Tes TTS API v0.1.41 di HP (bahasa bayi)
+
+v0.1.41 membangun ulang TTS pakai alur ASLI dari 8 screenshot
+kamu (23:28-23:32). Yang dulu salah: model dicari lewat hamburger
+kiri (tidak ada entri TTS di sana), dan format Riko dikira nama
+voice. Yang benar:
+
+1. Run settings (ikon slider, kanan atas) → 2. kartu model →
+3. tab Starred → "Gemini 3.8 Flash Lite TTS" → 4. "Create new
+dialog" → 5. tombol Style → ketik format Riko → 6. dropdown
+"Speaker 1" → "Sadaltager" → 7. naskah di kotak besar → 8. Run
+pojok kanan bawah → 9. selesai, klik unduh.
+
+Catatan pemanasan: Space yang prosesnya mati total TIDAK BISA
+dinyalakan dari background — ketuk tile-nya sekali dulu, baru
+tugas jalan sendiri. Space yang prosesnya sudah hangat jalan
+tanpa tap.
+
+1. Install APK v0.1.41 (nimpa — JANGAN uninstall). Buka SenzSpace
+   sekali, ketuk tile Space 7 sekali (pemanasan).
+2. Bilang ke Jhon: "generate VO Charger di Space 7". LULUS bila:
+   Jhon jawab "done" + nama file VO, DAN file wav ada di File
+   Manager → aistudio.
+3. Kalau "failed", Jhon sebut alasannya + dump isi halaman — itu
+   bahan perbaikan berikutnya, kamu tidak perlu apa-apa.
+
 ## Tes TTS API v0.1.40 di HP (bahasa bayi)
 
 v0.1.40 memperbaiki dua hal dari tes 22:24 (v0.1.39 gagal karena

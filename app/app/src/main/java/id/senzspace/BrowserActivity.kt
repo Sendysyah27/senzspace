@@ -167,6 +167,8 @@ abstract class BrowserActivity : AppCompatActivity() {
     private var pendingTtsVoice: String? = null
     private var pendingTtsModel: String? = null
     private var pendingTtsUrl: String? = null
+    private var pendingTtsSpeaker: String? = null
+    private var ttsActiveModel: String = ""
     private var ttsRunning: Boolean = false
     private var ttsFilesBefore: Set<String> = emptySet()
     private val ttsHandler = Handler(Looper.getMainLooper())
@@ -1281,6 +1283,7 @@ abstract class BrowserActivity : AppCompatActivity() {
     private fun failTts(detail: String) {
         ttsRunning = false
         pendingTtsScript = null
+        pendingTtsSpeaker = null
         writeTtsStatus("failed", detail)
     }
 
@@ -1294,10 +1297,13 @@ abstract class BrowserActivity : AppCompatActivity() {
         intent.removeExtra(MainActivity.EXTRA_API_TTS_MODEL)
         val url = intent.getStringExtra(MainActivity.EXTRA_API_TTS_URL)
         intent.removeExtra(MainActivity.EXTRA_API_TTS_URL)
+        val speaker = intent.getStringExtra(MainActivity.EXTRA_API_TTS_SPEAKER)
+        intent.removeExtra(MainActivity.EXTRA_API_TTS_SPEAKER)
         pendingTtsScript = script
         pendingTtsVoice = voice
         pendingTtsModel = model
         pendingTtsUrl = url
+        pendingTtsSpeaker = speaker
         ttsRunning = false
         writeTtsStatus("queued", "payload TTS diterima Space $dataDirectorySuffix")
         if (url != null && currentUrl != url) {
@@ -1326,103 +1332,195 @@ abstract class BrowserActivity : AppCompatActivity() {
         runTtsDiagnose(5)
     }
 
-    /** Langkah 1: kolom naskah + tombol Run ada? Balik
-     *  "ta|run|dl|model|taLabels|btnLabels". */
+    /** Langkah 1 (v0.1.41): kenali halaman AI Studio.
+     *  Balik "ta|run|dl|model|speaker|create|taLabels|btnLabels":
+     *  ta = kolom isian terlihat, speaker = ada dropdown
+     *  "Speaker 1" (editor dialog TTS), create = ada tombol
+     *  "Create new dialog" (halaman utama TTS).
+     *  Keputusan: editor -> Style; ada Create -> klik itu;
+     *  selain itu -> alur pilih model (Run settings). */
     private fun runTtsDiagnose(triesLeft: Int) {
         if (pendingTtsScript == null) return
-        val js = """(function(){var tas=[...document.querySelectorAll('textarea,[contenteditable="true"],input[type="text"]')].filter(function(t){return t.offsetParent!==null;});var taLabels=tas.map(function(t){return (t.getAttribute('aria-label')||t.getAttribute('placeholder')||'textarea').replace(/[|,]/g,' ');});var run=0,dl=0,model='';var bs=[...document.querySelectorAll('button')].filter(function(b){return b.offsetParent!==null;});var btnLabels=[];for(var i=0;i<bs.length;i++){var l=(bs[i].getAttribute('aria-label')||'').trim();var tx=(bs[i].textContent||'').trim();if(l)btnLabels.push(l.replace(/[|,]/g,' '));else if(tx&&tx.length<40)btnLabels.push(tx.replace(/[|,]/g,' '));if(!run&&(l==='Run'||tx==='Run'))run=1;if(!dl&&(l==='Download'||tx==='Download'))dl=1;if(!model&&/gemini/i.test(tx))model=tx.replace(/[|,]/g,' ').slice(0,60);}return tas.length+'|'+run+'|'+dl+'|'+model+'|'+taLabels.join(',')+'|'+btnLabels.join(',');})()"""
+        val js = """(function(){var tas=[...document.querySelectorAll('textarea,[contenteditable],input,[role="textbox"]')].filter(function(t){return t.offsetParent!==null;});var taLabels=tas.map(function(t){return (t.getAttribute('aria-label')||t.getAttribute('placeholder')||'textarea').replace(/[|,]/g,' ');});var run=0,dl=0,model='';var bs=[...document.querySelectorAll('button')].filter(function(b){return b.offsetParent!==null;});var btnLabels=[];for(var i=0;i<bs.length;i++){var l=(bs[i].getAttribute('aria-label')||'').trim();var tx=(bs[i].textContent||'').trim();if(l)btnLabels.push(l.replace(/[|,]/g,' '));else if(tx&&tx.length<40)btnLabels.push(tx.replace(/[|,]/g,' '));if(!run&&(l==='Run'||tx==='Run'))run=1;if(!dl&&(l==='Download'||tx==='Download'))dl=1;if(!model&&/gemini/i.test(tx))model=tx.replace(/[|,]/g,' ').slice(0,60);}var bodyTxt=document.body?document.body.innerText||'':'';var speaker=bodyTxt.indexOf('Speaker 1')>=0?'1':'0';var create=bodyTxt.indexOf('Create new dialog')>=0?'1':'0';return tas.length+'|'+run+'|'+dl+'|'+model+'|'+speaker+'|'+create+'|'+taLabels.join(',')+'|'+btnLabels.join(',');})()"""
         webView.evaluateJavascript(js) { raw ->
             val clean = raw?.trim()?.removeSurrounding("\"") ?: ""
             val parts = clean.split("|")
             val taCount = parts.getOrNull(0)?.toIntOrNull() ?: 0
             val modelText = parts.getOrNull(3) ?: ""
-            if (taCount > 0) {
+            val speakerFlag = parts.getOrNull(4) ?: "0"
+            val createFlag = parts.getOrNull(5) ?: "0"
+            if (modelText.isNotBlank()) ttsActiveModel = modelText
+            if (speakerFlag == "1" && taCount > 0) {
                 writeTtsStatus(
                     "running",
-                    "halaman TTS ketemu (textarea: ${parts.getOrElse(4) { "" }}; model aktif: $modelText)"
+                    "editor dialog TTS ketemu (kolom: ${parts.getOrElse(6) { "" }}; model aktif: $modelText)"
                 )
-                val want = pendingTtsModel
-                if (want != null && !modelText.contains(want, ignoreCase = true)) {
-                    runTtsMenu()
-                } else {
-                    runTtsVoice()
-                }
+                runTtsStyle()
+            } else if (createFlag == "1") {
+                writeTtsStatus("running", "halaman TTS ketemu - membuka dialog baru")
+                runTtsCreateDialog()
             } else if (triesLeft > 1) {
                 ttsHandler.postDelayed({ runTtsDiagnose(triesLeft - 1) }, 2000)
             } else {
-                // v0.1.40: halaman ini bukan halaman TTS (mis. halaman
-                // preview suara, 0 kolom isian - kejadian 22:24). Jangan
-                // gagal dulu: buka menu navigasi, cari entri TTS / model
-                // starred, lalu diagnose ulang dari halaman yang benar.
-                writeTtsStatus("running", "bukan halaman TTS - mencari entri TTS di menu")
-                runTtsNavMenu(3)
+                // Bukan editor / bukan halaman utama TTS (mis. halaman
+                // preview suara 22:24, atau Playground chat). Alur
+                // ASLI (screenshot Sendy 23:28-23:32): Run settings
+                // -> kartu model -> Starred -> model TTS -> dialog.
+                writeTtsStatus("running", "menuju pemilihan model TTS (Run settings)")
+                runTtsModelFlow()
             }
         }
     }
 
-    /** v0.1.40 - navigasi ke halaman TTS dari halaman lain AI Studio.
-     *  Klik hamburger ("Open navigation menu") -> klik entri model
-     *  starred (bila diminta) atau entri TTS (Text to speech / TTS /
-     *  Generate speech) -> diagnose ulang. Max 3 percobaan. */
-    private fun runTtsNavMenu(triesLeft: Int) {
+    /** v0.1.41 - ALUR MODEL ASLI (screenshot Sendy 23:28-23:32):
+     *  1) klik tombol Run settings (ikon slider, kanan atas) ->
+     *  2) klik kartu model aktif -> 3) tab Starred -> klik entri
+     *  model TTS -> 4) klik "Create new dialog" -> diagnose ulang.
+     *  Hamburger kiri ("Open navigation menu") TIDAK dipakai:
+     *  menunya tidak berisi entri TTS (penyebab failed 23:21). */
+    private fun runTtsModelFlow() {
         if (pendingTtsScript == null) return
-        if (triesLeft <= 0) {
-            failTts("halaman TTS tidak ketemu lewat menu navigasi (Space 7 bukan di halaman TTS)")
-            return
-        }
-        val js = """(function(){var b=document.querySelector('button[aria-label="Open navigation menu"]')||document.querySelector('button[aria-label="Main menu"]')||document.querySelector('button[aria-label="Menu"]');if(!b)return '0';b.click();return '1';})()"""
+        val js = """(function(){var b=document.querySelector('button[aria-label="Toggle run settings panel"]');if(!b){var bs=[...document.querySelectorAll('button')];for(var i=0;i<bs.length;i++){var l=(bs[i].getAttribute('aria-label')||'').toLowerCase();if(l.indexOf('run settings')>=0){b=bs[i];break;}}}if(!b)return '0';b.click();return '1';})()"""
         webView.evaluateJavascript(js) { raw ->
             val clean = raw?.trim()?.removeSurrounding("\"") ?: ""
             if (clean == "1") {
-                ttsHandler.postDelayed({ runTtsPickMenuItem(triesLeft) }, 1500)
+                ttsHandler.postDelayed({ runTtsPickModelCard() }, 1500)
             } else {
-                failTts("tombol menu navigasi tidak ketemu (bukan halaman AI Studio?)")
+                runTtsDumpInventory("tombol Run settings tidak ketemu")
             }
         }
     }
 
-    private fun runTtsPickMenuItem(navTriesLeft: Int) {
-        val want = pendingTtsModel
-        val quoted = org.json.JSONObject.quote(want ?: "")
-        val js = """(function(){var want=$quoted.toLowerCase();var rx=/text.to.speech|tts|speech|generate speech/i;var items=[...document.querySelectorAll('[role="menuitem"],[role="option"],a,button,li')].filter(function(e){return e.offsetParent!==null;});if(want){for(var i=0;i<items.length;i++){var t=(items[i].textContent||'').trim();if(t.toLowerCase().indexOf(want)>=0&&t.length<120){items[i].click();return t;}}}else{for(var j=0;j<items.length;j++){var u=(items[j].textContent||'').trim();if(rx.test(u)&&u.length<120){items[j].click();return u;}}}return '';})()"""
+    /** Langkah 2: klik kartu model aktif di panel Run settings.
+     *  Kartu berisi nama model (mis. "Gemini 4 Hydrogen") + id
+     *  (mis. "gemini-4-hydrogen") - klik elemen terdalam yang
+     *  teksnya mengandung nama/id itu. */
+    private fun runTtsPickModelCard() {
+        if (pendingTtsScript == null) return
+        val activeQuoted = org.json.JSONObject.quote(ttsActiveModel)
+        val js = """(function(){var want=$activeQuoted;var els=[...document.querySelectorAll('*')].filter(function(e){return e.offsetParent!==null&&e.children.length===0;});var best=null,bestLen=1e9;for(var i=0;i<els.length;i++){var t=(els[i].textContent||'').trim();if(!t)continue;var hit=(want&&t.toLowerCase().indexOf(want.toLowerCase())>=0)||/gemini-[0-9]/i.test(t);if(hit&&t.length<bestLen){best=els[i];bestLen=t.length;}}if(!best)return '0';best.click();return best.textContent.trim().slice(0,60);})()"""
         webView.evaluateJavascript(js) { raw ->
             val picked = raw?.trim()?.removeSurrounding("\"") ?: ""
-            if (picked.isBlank()) {
-                failTts("entri TTS / model '${want ?: "TTS"}' tidak ketemu di menu navigasi")
+            if (picked.isBlank() || picked == "0") {
+                runTtsDumpInventory("kartu model tidak ketemu di panel Run settings")
             } else {
-                writeTtsStatus("running", "entri menu dipilih: $picked - menunggu halaman TTS")
-                ttsHandler.postDelayed({ runTtsDiagnose(5) }, 2000)
+                writeTtsStatus("running", "kartu model dibuka: $picked - memilih model TTS")
+                ttsHandler.postDelayed({ runTtsPickModelEntry() }, 2000)
             }
         }
     }
 
-    /** Langkah 2a (bila model diminta + beda dari yang aktif): buka
-     *  menu garis tiga (kanan atas). */
-    private fun runTtsMenu() {
-        val js = """(function(){var b=document.querySelector('button[aria-label="Open navigation menu"]')||document.querySelector('button[aria-label="Main menu"]')||document.querySelector('button[aria-label="Menu"]');if(!b)return '0';b.click();return '1';})()"""
-        writeTtsStatus("running", "membuka menu model (garis tiga)")
-        webView.evaluateJavascript(js) { raw ->
-            val clean = raw?.trim()?.removeSurrounding("\"") ?: ""
-            if (clean == "1") {
-                ttsHandler.postDelayed({ runTtsPickModel() }, 1500)
-            } else {
-                failTts("tombol menu (garis tiga) tidak ketemu")
-            }
-        }
-    }
-
-    /** Langkah 2b: klik entri menu yang namanya mengandung model. */
-    private fun runTtsPickModel() {
-        val want = pendingTtsModel ?: return runTtsVoice()
+    /** Langkah 3: di Model selection, tab Starred dulu, lalu klik
+     *  entri model TTS (default "Gemini 3.8 Flash Lite TTS"). */
+    private fun runTtsPickModelEntry() {
+        if (pendingTtsScript == null) return
+        val want = pendingTtsModel ?: "Gemini 3.8 Flash Lite TTS"
         val quoted = org.json.JSONObject.quote(want)
-        val js = """(function(){var want=$quoted.toLowerCase();var items=[...document.querySelectorAll('[role="menuitem"],[role="option"],button,li')].filter(function(e){return e.offsetParent!==null;});for(var i=0;i<items.length;i++){var t=(items[i].textContent||'').trim();if(t.toLowerCase().indexOf(want)>=0&&t.length<120){items[i].click();return t;}}return '';})()"""
+        val js = """(function(){var want=$quoted.toLowerCase();var tabs=[...document.querySelectorAll('button')].filter(function(b){return b.offsetParent!==null;});for(var i=0;i<tabs.length;i++){if((tabs[i].textContent||'').trim()==='Starred'){tabs[i].click();break;}}var els=[...document.querySelectorAll('*')].filter(function(e){return e.offsetParent!==null&&e.children.length===0;});var best=null,bestLen=1e9;for(var j=0;j<els.length;j++){var t=(els[j].textContent||'').trim();if(t.toLowerCase().indexOf(want)>=0&&t.length<bestLen){best=els[j];bestLen=t.length;}}if(!best)return '0';best.click();return best.textContent.trim().slice(0,60);})()"""
+        // Beri waktu tab Starred tampil sebelum klik entri.
+        ttsHandler.postDelayed({
+            webView.evaluateJavascript(js) { raw ->
+                val picked = raw?.trim()?.removeSurrounding("\"") ?: ""
+                if (picked.isBlank() || picked == "0") {
+                    runTtsDumpMenu(want)
+                } else {
+                    writeTtsStatus("running", "model TTS dipilih: $picked - membuka dialog baru")
+                    ttsHandler.postDelayed({ runTtsCreateDialog() }, 2000)
+                }
+            }
+        }, 1000)
+    }
+
+    /** Langkah 4: klik "Create new dialog", lalu diagnose ulang
+     *  (editor dialog harus muncul: ada "Speaker 1" + kolom). */
+    private fun runTtsCreateDialog() {
+        if (pendingTtsScript == null) return
+        val js = """(function(){var els=[...document.querySelectorAll('button,[role="button"],a,div')].filter(function(e){return e.offsetParent!==null;});for(var i=0;i<els.length;i++){if((els[i].textContent||'').trim()==='Create new dialog'){els[i].click();return '1';}}return '0';})()"""
+        webView.evaluateJavascript(js) { raw ->
+            val clean = raw?.trim()?.removeSurrounding("\"") ?: ""
+            if (clean == "1") {
+                ttsHandler.postDelayed({ runTtsDiagnose(5) }, 2000)
+            } else {
+                runTtsDumpInventory("tombol 'Create new dialog' tidak ketemu setelah pilih model")
+            }
+        }
+    }
+
+    /** v0.1.41 - dump inventaris halaman ke status (diagnostik):
+     *  semua elemen isian (tag + type + label + terlihat/tidak) +
+     *  semua tombol + URL. Dipakai saat kolom isian tetap tidak
+     *  ketemu, supaya perbaikan berikut pakai selektor sebenarnya,
+     *  bukan tebakan. */
+    private fun runTtsDumpInventory(prefix: String) {
+        val js = """(function(){var out=[];var els=[...document.querySelectorAll('textarea,[contenteditable],input,[role="textbox"]')];for(var i=0;i<els.length;i++){var e=els[i];out.push(e.tagName+'|'+(e.getAttribute('type')||'')+'|'+(e.getAttribute('aria-label')||e.getAttribute('placeholder')||e.getAttribute('role')||'')+'|'+(e.offsetParent!==null?'vis':'hid'));}var btns=[];var bs=[...document.querySelectorAll('button')].filter(function(b){return b.offsetParent!==null;});for(var j=0;j<bs.length;j++){var l=(bs[j].getAttribute('aria-label')||'').trim();var tx=(bs[j].textContent||'').trim();if(l)btns.push(l);else if(tx&&tx.length<40)btns.push(tx);}return out.join(';')+' ##TOMBOL## '+btns.join(',')+' ##URL## '+location.href;})()"""
+        webView.evaluateJavascript(js) { raw ->
+            val clean = raw?.trim()?.removeSurrounding("\"") ?: ""
+            failTts("$prefix. Inventaris halaman: $clean")
+        }
+    }
+
+    private fun runTtsDumpMenu(want: String) {
+        val js = """(function(){var items=[...document.querySelectorAll('[role="menuitem"],[role="option"],a,button,li')].filter(function(e){return e.offsetParent!==null;});var names=[];for(var i=0;i<items.length;i++){var t=(items[i].textContent||'').trim();if(t&&t.length<60)names.push(t);}return names.join(',');})()"""
+        webView.evaluateJavascript(js) { raw ->
+            val names = raw?.trim()?.removeSurrounding("\"") ?: ""
+            failTts("entri TTS / model '$want' tidak ketemu di menu navigasi. Isi menu: $names")
+        }
+    }
+
+    /** Langkah 5 (v0.1.41): isi STYLE suara (format Riko).
+     *  Klik tombol "Style" di editor -> isi kotak "Describe the
+     *  voice style" -> tutup lagi menunya -> lanjut ke Speaker.
+     *  Format Riko BUKAN nama voice - jangan dicari di daftar voice. */
+    private fun runTtsStyle() {
+        val voice = pendingTtsVoice ?: return runTtsSpeaker()
+        writeTtsStatus("running", "membuka pengaturan Style")
+        val clickJs = """(function(){var bs=[...document.querySelectorAll('button')].filter(function(b){return b.offsetParent!==null;});for(var i=0;i<bs.length;i++){if((bs[i].textContent||'').trim()==='Style'||(bs[i].textContent||'').trim().indexOf('Style')===0){bs[i].click();return '1';}}return '0';})()"""
+        webView.evaluateJavascript(clickJs) { raw ->
+            val clean = raw?.trim()?.removeSurrounding("\"") ?: ""
+            if (clean != "1") {
+                failTts("tombol Style tidak ketemu di editor dialog")
+                return@evaluateJavascript
+            }
+            ttsHandler.postDelayed({
+                webView.evaluateJavascript(ttsFillJs("voice", voice)) { raw2 ->
+                    val len = raw2?.trim()?.removeSurrounding("\"")?.toIntOrNull() ?: 0
+                    if (len > 0) {
+                        // Tutup menu Style (klik lagi tombolnya), lanjut.
+                        webView.evaluateJavascript(clickJs) { _ -> runTtsSpeaker() }
+                    } else {
+                        failTts("kolom 'Describe the voice style' tidak ketemu - format suara tidak terisi (VO bisa keluar dengan gaya yang salah, jadi dibatalkan)")
+                    }
+                }
+            }, 1000)
+        }
+    }
+
+    /** Langkah 6: pilih VOICE (nama) - klik dropdown "Speaker 1". */
+    private fun runTtsSpeaker() {
+        writeTtsStatus("running", "membuka pilihan Speaker")
+        val js = """(function(){var bs=[...document.querySelectorAll('button')].filter(function(b){return b.offsetParent!==null;});for(var i=0;i<bs.length;i++){if((bs[i].textContent||'').indexOf('Speaker 1')>=0){bs[i].click();return '1';}}return '0';})()"""
+        webView.evaluateJavascript(js) { raw ->
+            val clean = raw?.trim()?.removeSurrounding("\"") ?: ""
+            if (clean == "1") {
+                ttsHandler.postDelayed({ runTtsPickSpeaker() }, 1500)
+            } else {
+                failTts("dropdown Speaker 1 tidak ketemu di editor dialog")
+            }
+        }
+    }
+
+    /** Langkah 6b: klik nama voice (default "Sadaltager", Favorites). */
+    private fun runTtsPickSpeaker() {
+        val want = pendingTtsSpeaker ?: "Sadaltager"
+        val quoted = org.json.JSONObject.quote(want)
+        val js = """(function(){var want=$quoted.toLowerCase();var els=[...document.querySelectorAll('*')].filter(function(e){return e.offsetParent!==null&&e.children.length===0;});for(var i=0;i<els.length;i++){var t=(els[i].textContent||'').trim();if(t.toLowerCase()===want){els[i].click();return t;}}for(var j=0;j<els.length;j++){var u=(els[j].textContent||'').trim();if(u.toLowerCase().indexOf(want)>=0&&u.length<60){els[j].click();return u;}}return '';})()"""
         webView.evaluateJavascript(js) { raw ->
             val picked = raw?.trim()?.removeSurrounding("\"") ?: ""
             if (picked.isBlank()) {
-                failTts("model '$want' tidak ketemu di menu (model aktif tetap dipakai? cek /tts-status)")
+                runTtsDumpMenu(want)
             } else {
-                writeTtsStatus("running", "model dipilih: $picked")
-                ttsHandler.postDelayed({ runTtsVoice() }, 1500)
+                writeTtsStatus("running", "voice dipilih: $picked - mengisi naskah")
+                ttsHandler.postDelayed({ runTtsScript() }, 1500)
             }
         }
     }
@@ -1432,22 +1530,8 @@ abstract class BrowserActivity : AppCompatActivity() {
      *  native setter + event input untuk framework Angular/React). */
     private fun ttsFillJs(role: String, text: String): String {
         val quoted = org.json.JSONObject.quote(text)
-        val js = """(function(role,text){var tas=[...document.querySelectorAll('textarea,[contenteditable="true"],input[type="text"]')].filter(function(t){return t.offsetParent!==null;});var pick=null;if(role==='voice'){pick=tas.find(function(t){var s=((t.getAttribute('aria-label')||'')+' '+(t.getAttribute('placeholder')||'')).toLowerCase();return s.indexOf('style')>=0||s.indexOf('voice')>=0||s.indexOf('describe')>=0||s.indexOf('tone')>=0;});}else{pick=tas.find(function(t){var s=((t.getAttribute('aria-label')||'')+' '+(t.getAttribute('placeholder')||'')).toLowerCase();return s.indexOf('text')>=0||s.indexOf('script')>=0||s.indexOf('enter')>=0||s.indexOf('speech')>=0;});if(!pick&&tas.length>0){pick=tas.reduce(function(a,b){return (b.rows||0)>(a.rows||0)?b:a;});}}if(!pick)return '0';pick.focus();try{pick.setSelectionRange(0,pick.value.length);}catch(e){}var ok=false;try{ok=document.execCommand('insertText',false,text);}catch(e){}if(!ok||(pick.value||pick.textContent||'').length===0){if(pick.tagName==='TEXTAREA'){var setter=Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype,'value').set;setter.call(pick,text);}else if(pick.tagName==='INPUT'){var setter2=Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype,'value').set;setter2.call(pick,text);}else{pick.textContent=text;}pick.dispatchEvent(new Event('input',{bubbles:true}));}return String((pick.value||pick.textContent||'').length);})('$role',$quoted)"""
+        val js = """(function(role,text){var tas=[...document.querySelectorAll('textarea,[contenteditable],input,[role="textbox"]')].filter(function(t){return t.offsetParent!==null;});var pick=null;if(role==='voice'){pick=tas.find(function(t){var s=((t.getAttribute('aria-label')||'')+' '+(t.getAttribute('placeholder')||'')).toLowerCase();return s.indexOf('style')>=0||s.indexOf('voice')>=0||s.indexOf('describe')>=0||s.indexOf('tone')>=0;});}else{pick=tas.find(function(t){var s=((t.getAttribute('aria-label')||'')+' '+(t.getAttribute('placeholder')||'')).toLowerCase();return s.indexOf('text')>=0||s.indexOf('script')>=0||s.indexOf('enter')>=0||s.indexOf('speech')>=0||s.indexOf('tags')>=0;});if(!pick&&tas.length>0){pick=tas.reduce(function(a,b){return (b.offsetWidth*b.offsetHeight)>(a.offsetWidth*a.offsetHeight)?b:a;});}}if(!pick)return '0';pick.focus();try{pick.setSelectionRange(0,pick.value.length);}catch(e){}var ok=false;try{ok=document.execCommand('insertText',false,text);}catch(e){}if(!ok||(pick.value||pick.textContent||'').length===0){if(pick.tagName==='TEXTAREA'){var setter=Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype,'value').set;setter.call(pick,text);}else if(pick.tagName==='INPUT'){var setter2=Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype,'value').set;setter2.call(pick,text);}else{pick.textContent=text;}pick.dispatchEvent(new Event('input',{bubbles:true}));}return String((pick.value||pick.textContent||'').length);})('$role',$quoted)"""
         return js
-    }
-
-    /** Langkah 3: isi format suara. */
-    private fun runTtsVoice() {
-        val voice = pendingTtsVoice ?: return runTtsScript()
-        writeTtsStatus("running", "mengisi format suara")
-        webView.evaluateJavascript(ttsFillJs("voice", voice)) { raw ->
-            val len = raw?.trim()?.removeSurrounding("\"")?.toIntOrNull() ?: 0
-            if (len > 0) {
-                runTtsScript()
-            } else {
-                failTts("kolom gaya suara tidak ketemu - format suara tidak terisi (VO bisa keluar dengan suara yang salah, jadi dibatalkan)")
-            }
-        }
     }
 
     /** Langkah 4: isi naskah. */

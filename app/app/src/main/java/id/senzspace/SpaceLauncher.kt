@@ -21,7 +21,8 @@ object SpaceLauncher {
         ttsScript: String? = null,
         ttsVoice: String? = null,
         ttsModel: String? = null,
-        ttsUrl: String? = null
+        ttsUrl: String? = null,
+        ttsSpeaker: String? = null
     ): Intent {
         return Intent(ctx, SpaceRegistry.activityForSlot(entry.slot)).apply {
             flags = Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or
@@ -62,6 +63,9 @@ object SpaceLauncher {
                 if (ttsUrl != null) {
                     putExtra(MainActivity.EXTRA_API_TTS_URL, ttsUrl)
                 }
+                if (ttsSpeaker != null) {
+                    putExtra(MainActivity.EXTRA_API_TTS_SPEAKER, ttsSpeaker)
+                }
             }
             putExtra(MainActivity.EXTRA_SPACE_NAME, entry.name)
             putExtra(MainActivity.EXTRA_SPACE_COLOR, entry.color)
@@ -83,7 +87,8 @@ object SpaceLauncher {
         ttsScript: String? = null,
         ttsVoice: String? = null,
         ttsModel: String? = null,
-        ttsUrl: String? = null
+        ttsUrl: String? = null,
+        ttsSpeaker: String? = null
     ) {
         ctx.startActivity(
             intentFor(
@@ -91,7 +96,8 @@ object SpaceLauncher {
                 promptText = promptText, promptFiles = promptFiles,
                 promptUrl = promptUrl, promptProject = promptProject,
                 ttsScript = ttsScript, ttsVoice = ttsVoice,
-                ttsModel = ttsModel, ttsUrl = ttsUrl
+                ttsModel = ttsModel, ttsUrl = ttsUrl,
+                ttsSpeaker = ttsSpeaker
             )
         )
     }
