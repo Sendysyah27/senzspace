@@ -1,7 +1,12 @@
 package id.senzspace
 
 import android.app.ActivityManager
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
 import android.content.Context
+import android.os.Build
+import androidx.core.app.NotificationCompat
 import android.util.Log
 import java.io.File
 import java.io.InputStream
@@ -257,15 +262,35 @@ class ApiServer(private val ctx: Context) {
                     sendJson(client, 404, JSONObject().put("error", "no Space on slot $slot"))
                     return
                 }
+                // v0.1.37: JUJUR soal tampil. Android (BAL) melarang
+                // service di background menarik activity ke depan:
+                // Space ke-launch tapi task-nya visible=false (insiden
+                // 19 Nov 20:28, Space 3). Jadi: launch tetap jalan
+                // (pemanasan WebView), tapi balasan beda menurut
+                // keadaan app — foreground = langsung tampil,
+                // background = notifikasi-tap.
+                val visible = appHasVisibleWindow()
                 SpaceLauncher.open(
                     ctx, entry,
                     clearData = req.optBoolean("clearData", false),
                     splitWith = if (req.has("splitWith")) req.optInt("splitWith") else null
                 )
-                sendJson(client, 200, JSONObject().apply {
-                    put("opened", entry.name)
-                    put("slot", entry.slot)
-                })
+                if (visible) {
+                    sendJson(client, 200, JSONObject().apply {
+                        put("opened", entry.name)
+                        put("slot", entry.slot)
+                        put("visible", true)
+                    })
+                } else {
+                    postOpenNotification(entry)
+                    sendJson(client, 202, JSONObject().apply {
+                        put("opened", entry.name)
+                        put("slot", entry.slot)
+                        put("visible", false)
+                        put("needs_tap", true)
+                        put("note", "app di background — ketuk notifikasi 'Buka ${entry.name}' untuk menampilkan Space")
+                    })
+                }
             }
             method == "POST" && path == "/freeze" -> {
                 val req = JSONObject(body)
@@ -350,6 +375,54 @@ class ApiServer(private val ctx: Context) {
         if (!target.exists()) return null
         if (mustBeDir && !target.isDirectory) return null
         return target
+    }
+
+    // v0.1.37: app punya jendela yang terlihat? Benar hanya bila
+    // ada proses app ini dengan importance FOREGROUND (100, activity
+    // teratas) atau VISIBLE (200, activity terlihat tapi bukan
+    // teratas). Proses ApiService sendiri importance-nya
+    // FOREGROUND_SERVICE (125) — itu TIDAK dihitung, karena
+    // foreground service TIDAK memberi izin BAL.
+    private fun appHasVisibleWindow(): Boolean {
+        val am = ctx.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
+        return am.runningAppProcesses?.any {
+            it.processName.startsWith(ctx.packageName) &&
+                (it.importance == ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND ||
+                    it.importance == ActivityManager.RunningAppProcessInfo.IMPORTANCE_VISIBLE)
+        } == true
+    }
+
+    // v0.1.37: notifikasi "ketuk untuk menampilkan Space". PendingIntent
+    // dari notifikasi DIKECUALIKAN dari larangan BAL — ketukan user
+    // boleh menarik activity ke depan. Channel sama dengan ApiService.
+    private fun postOpenNotification(entry: SpaceRegistry.SpaceEntry) {
+        val mgr = ctx.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        if (Build.VERSION.SDK_INT >= 26 &&
+            mgr.getNotificationChannel(ApiService.CHANNEL_ID) == null
+        ) {
+            mgr.createNotificationChannel(
+                NotificationChannel(
+                    ApiService.CHANNEL_ID,
+                    "API kontrol",
+                    NotificationManager.IMPORTANCE_LOW
+                ).apply {
+                    description = "Server API lokal SenzSpace (localhost) untuk kontrol oleh Jhon"
+                }
+            )
+        }
+        val intent = SpaceLauncher.intentFor(ctx, entry, newTask = true)
+        val pending = PendingIntent.getActivity(
+            ctx, 1300 + entry.slot, intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        val notif = NotificationCompat.Builder(ctx, ApiService.CHANNEL_ID)
+            .setSmallIcon(R.drawable.ic_notification)
+            .setContentTitle("SenzSpace — Buka ${entry.name}")
+            .setContentText("Ketuk untuk menampilkan Space ini")
+            .setContentIntent(pending)
+            .setAutoCancel(true)
+            .build()
+        mgr.notify(1300 + entry.slot, notif)
     }
 
     private fun liveProcessNames(): Set<String> {

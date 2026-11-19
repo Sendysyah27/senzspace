@@ -16,7 +16,7 @@ Link ini **selalu** mengarah ke versi terbaru — tidak perlu cari-cari rilis. A
 
 Install langsung dari HP (izinkan "install dari sumber tidak dikenal" sekali saat diminta). Update berikutnya: **install menimpa, jangan uninstall** — uninstall menghapus semua sesi login di semua Space.
 
-Versi tertentu: [v0.1.36](https://raw.githubusercontent.com/Sendysyah27/senzspace/main/releases/SenzSpace-v0.1.36.apk) · [semua rilis](https://github.com/Sendysyah27/senzspace/releases)
+Versi tertentu: [v0.1.37](https://raw.githubusercontent.com/Sendysyah27/senzspace/main/releases/SenzSpace-v0.1.37.apk) · [semua rilis](https://github.com/Sendysyah27/senzspace/releases)
 
 ## Tampilan
 

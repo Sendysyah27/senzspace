@@ -118,3 +118,15 @@ Jangan cuma diagnosa dari kodenya.
   (BufferedReader bisa menelan byte body). senz.py v2 ngomong ke
   API via `adb forward tcp:19335 tcp:19335`; procs/shot/type/tap/
   key/home tetap ADB (level perangkat).
+- API 37 (19 Nov, v0.1.37): /open JUJUR soal tampil — v0.1.36
+  jawab "opened" padahal Space tidak muncul saat app di
+  background (BAL: service background tidak boleh menarik
+  activity ke depan; task Space visible=false). Fix:
+  appHasVisibleWindow() (proses app importance FOREGROUND 100 /
+  VISIBLE 200 — foreground service 125 TIDAK dihitung) +
+  background = launch tetap jalan (pemanasan) + notifikasi
+  "Buka <nama>" (PendingIntent dari notifikasi dikecualikan
+  dari BAL; id 1300+slot, channel ApiService, autoCancel) +
+  balas 202 needs_tap; foreground = 200 visible:true.
+  dumpsys topResumedActivity BISA BASI (pernah nunjuk Facebook
+  padahal user di Muse) — kebenaran foreground = screenshot.

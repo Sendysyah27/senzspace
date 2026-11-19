@@ -455,6 +455,32 @@ muncul (Ubah nama / Matikan Live / Hapus Space).
    "Beku" juga. Hapus Space yang beku → Space baru di slot yang sama
    tidak ikut beku.
 
+## Tes Open Jujur v0.1.37 di HP (bahasa bayi)
+
+v0.1.36 punya satu kebohongan: `open` via API jawab "opened"
+padahal Space-nya tidak muncul di layar kalau app lagi di
+background (aturan Android: service di background tidak boleh
+menarik layar ke depan). v0.1.37 memperbaikinya: API jawab jujur
++ kirim notifikasi yang bisa diketuk.
+
+1. **Install APK v0.1.37 (nimpa — JANGAN uninstall).** Tutup
+   SenzSpace sampai tidak ada di layar (buka app lain, misal
+   Muse). LULUS bila: SenzSpace tidak terlihat di layar.
+2. **Bilang ke Jhon "buka Space 3 via API".** LULUS bila: Jhon
+   jawab "needs_tap" (bukan "opened" polos) DAN di panel
+   notifikasi muncul "SenzSpace — Buka eneng127".
+3. **Ketuk notifikasi itu.** LULUS bila: Space eneng127 langsung
+   muncul di layar.
+4. **Sekarang, saat SenzSpace masih kebuka di layar, bilang ke
+   Jhon "buka Space 4 via API".** LULUS bila: Space sendy753
+   langsung muncul TANPA notifikasi (Jhon jawab "visible").
+5. **Bilang ke Jhon "bekukan Space 2 via API", lalu "buka
+   beku Space 2".** LULUS bila: Jhon jawab frozen true lalu
+   false, dan tile Space 2 di Beranda ikut berubah.
+
+Kalau langkah 2 tidak ada notifikasi: cek Pengaturan HP →
+Notifikasi → SenzSpace — izin notifikasi harus hidup.
+
 ## Tes API Kontrol v0.1.36 di HP (bahasa bayi)
 
 API = jalan khusus di dalam app supaya Jhon (Muse) bisa mengecek
