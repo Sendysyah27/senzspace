@@ -455,6 +455,41 @@ muncul (Ubah nama / Matikan Live / Hapus Space).
    "Beku" juga. Hapus Space yang beku → Space baru di slot yang sama
    tidak ikut beku.
 
+## Tes TTS API v0.1.39 di HP (bahasa bayi)
+
+v0.1.39 bikin Jhon bisa generate VO di AI Studio (Space 7) lewat
+API — tanpa kamu mengetik apa pun: Jhon yang memilih model TTS
+yang sudah kamu starred, mengisi format suara, mengisi naskah,
+menekan Run, menunggu sampai selesai, lalu mengunduh VO-nya.
+File VO (wav) langsung masuk File Manager → folder aistudio.
+Setiap generate HANYA jalan kalau kamu yang memerintahkan
+(Jhon tidak pernah generate sendiri).
+
+1. **Install APK v0.1.39 (nimpa — JANGAN uninstall).** Buka
+   SenzSpace sekali. LULUS bila: notifikasi "SenzSpace API aktif"
+   muncul di panel notifikasi.
+2. **Buka Space 7 (AI Studio).** Pastikan halaman TTS-nya
+   kebuka (Playground TTS — tempat kamu biasa generate VO).
+   LULUS bila: kamu melihat kolom naskah + tombol Run di layar.
+   (Kalau masih di halaman utama AI Studio, buka dulu halaman
+   TTS-nya seperti biasa — sekali saja, sesi-nya nempel.)
+3. **Bilang ke Jhon: "generate VO Kesemutan di Space 7".**
+   LULUS bila: Jhon jawab "queued" (bukan error).
+4. **Tunggu (VO naskah 1 menit biasanya selesai 1–3 menit).**
+   Jangan mengetuk apa pun di Space 7 selama Jhon bekerja.
+   LULUS bila: Jhon jawab "done" + nama file VO-nya, DAN file
+   wav itu ada di File Manager → aistudio.
+5. **Bilang ke Jhon "cek status TTS Space 7".** LULUS bila:
+   Jhon jawab "done". Kalau jawab "failed", dia juga menyebut
+   alasannya (misal "kolom naskah tidak ketemu" = halaman TTS
+   belum kebuka; "model tidak ketemu" = nama model berubah).
+
+Kalau langkah 4 file VO tidak muncul: kemungkinan besar tombol
+di halaman TTS berubah (AI Studio ganti tampilan) — Jhon yang
+memperbaiki selektornya, kamu tidak perlu apa-apa. VO yang
+dihasilkan pakai format suara Riko yang sudah kamu pilih
+("Very bright, high-pitched, cheerful..." + speed 1.4x).
+
 ## Tes Prompt API v0.1.38 di HP (bahasa bayi)
 
 v0.1.38 bikin Jhon bisa mengirim prompt + lampiran ke chat Claude di

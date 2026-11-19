@@ -159,6 +159,14 @@ abstract class BrowserActivity : AppCompatActivity() {
     private var promptRunning: Boolean = false
     private var promptChooserServed: Boolean = false
     private val promptHandler = Handler(Looper.getMainLooper())
+    /** v0.1.39 - payload TTS API (AI Studio Space 7). */
+    private var pendingTtsScript: String? = null
+    private var pendingTtsVoice: String? = null
+    private var pendingTtsModel: String? = null
+    private var pendingTtsUrl: String? = null
+    private var ttsRunning: Boolean = false
+    private var ttsFilesBefore: Set<String> = emptySet()
+    private val ttsHandler = Handler(Looper.getMainLooper())
 
     /** Callback unduhan file-chooser yang sedang menunggu pilihan user.
      *  WAJIB dipanggil tepat sekali (dengan array URI atau null). */
@@ -722,6 +730,8 @@ abstract class BrowserActivity : AppCompatActivity() {
                     // v0.1.38: halaman selesai - jalankan prompt API
                     // bila ada payload menunggu.
                     maybeRunApiPrompt()
+                    // v0.1.39: sama untuk TTS API.
+                    maybeRunApiTts()
                 }
 
                 override fun onRenderProcessGone(
@@ -959,6 +969,8 @@ abstract class BrowserActivity : AppCompatActivity() {
         startLiveCapture()
         // v0.1.38: payload prompt API dari intent (bila ada).
         consumeApiPrompt(intent)
+        // v0.1.39: payload TTS API dari intent (bila ada).
+        consumeApiTts(intent)
         // Guard anti-kill: service foreground di proses Space ini supaya
         // sistem tidak mematikan Space yang lama tidak dibuka. Hormati
         // pengaturan (Pengaturan → Guard anti-kill): bila dimatikan user,
@@ -1164,6 +1176,261 @@ abstract class BrowserActivity : AppCompatActivity() {
     }
     // ================= AKHIR PROMPT API =================
 
+
+    // ================= TTS API (v0.1.39) =================
+    // Generate VO di AI Studio (Space 7) dari naskah: pilih model
+    // starred (bila diminta) -> isi format suara -> isi naskah ->
+    // Run -> tunggu selesai -> klik unduh (blob trap menyimpan wav
+    // ke folder aistudio). Alur sama seperti PROMPT API: payload
+    // lewat intent extra, status ke api-tts-<suffix>.json.
+    // Halaman TTS AI Studio bisa ber-URL root "/" (lihat
+    // AiStudioActivity) — jadi eksekutor TIDAK mensyaratkan path
+    // tertentu, hanya host aistudio.google.com + ada kolom naskah.
+    // Selektor DOM AI Studio defensif; diagnose mengembalikan daftar
+    // textarea + tombol supaya log status memberi tahu nama kontrol
+    // yang sebenarnya bila selektor meleset. HANYA atas perintah
+    // eksplisit per generate (POST /tts) - tidak ada auto-generate.
+
+    private fun ttsStatusFile(): java.io.File =
+        java.io.File(filesDir, "api-tts-$dataDirectorySuffix.json")
+
+    private fun writeTtsStatus(status: String, detail: String) {
+        try {
+            val obj = org.json.JSONObject().apply {
+                put("status", status)
+                put("detail", detail)
+                put("updated", System.currentTimeMillis())
+            }
+            ttsStatusFile().writeText(obj.toString())
+        } catch (_: Exception) {
+        }
+    }
+
+    private fun failTts(detail: String) {
+        ttsRunning = false
+        pendingTtsScript = null
+        writeTtsStatus("failed", detail)
+    }
+
+    private fun consumeApiTts(intent: Intent) {
+        val script = intent.getStringExtra(MainActivity.EXTRA_API_TTS_SCRIPT)
+            ?: return
+        intent.removeExtra(MainActivity.EXTRA_API_TTS_SCRIPT)
+        val voice = intent.getStringExtra(MainActivity.EXTRA_API_TTS_VOICE)
+        intent.removeExtra(MainActivity.EXTRA_API_TTS_VOICE)
+        val model = intent.getStringExtra(MainActivity.EXTRA_API_TTS_MODEL)
+        intent.removeExtra(MainActivity.EXTRA_API_TTS_MODEL)
+        val url = intent.getStringExtra(MainActivity.EXTRA_API_TTS_URL)
+        intent.removeExtra(MainActivity.EXTRA_API_TTS_URL)
+        pendingTtsScript = script
+        pendingTtsVoice = voice
+        pendingTtsModel = model
+        pendingTtsUrl = url
+        ttsRunning = false
+        writeTtsStatus("queued", "payload TTS diterima Space $dataDirectorySuffix")
+        if (url != null && currentUrl != url) {
+            if (::webView.isInitialized) webView.loadUrl(url)
+        } else {
+            maybeRunApiTts()
+        }
+    }
+
+    private fun maybeRunApiTts() {
+        if (pendingTtsScript == null) return
+        if (ttsRunning) return
+        if (!::webView.isInitialized) return
+        val host = try {
+            android.net.Uri.parse(currentUrl).host
+        } catch (_: Exception) {
+            null
+        }
+        if (host == null) return
+        if (host != "aistudio.google.com") {
+            failTts("bukan halaman AI Studio: $currentUrl")
+            return
+        }
+        ttsRunning = true
+        writeTtsStatus("running", "mencari halaman TTS AI Studio")
+        runTtsDiagnose(5)
+    }
+
+    /** Langkah 1: kolom naskah + tombol Run ada? Balik
+     *  "ta|run|dl|model|taLabels|btnLabels". */
+    private fun runTtsDiagnose(triesLeft: Int) {
+        if (pendingTtsScript == null) return
+        val js = """(function(){var tas=[...document.querySelectorAll('textarea')].filter(function(t){return t.offsetParent!==null;});var taLabels=tas.map(function(t){return (t.getAttribute('aria-label')||t.getAttribute('placeholder')||'textarea').replace(/[|,]/g,' ');});var run=0,dl=0,model='';var bs=[...document.querySelectorAll('button')].filter(function(b){return b.offsetParent!==null;});var btnLabels=[];for(var i=0;i<bs.length;i++){var l=(bs[i].getAttribute('aria-label')||'').trim();var tx=(bs[i].textContent||'').trim();if(l)btnLabels.push(l.replace(/[|,]/g,' '));else if(tx&&tx.length<40)btnLabels.push(tx.replace(/[|,]/g,' '));if(!run&&(l==='Run'||tx==='Run'))run=1;if(!dl&&(l==='Download'||tx==='Download'))dl=1;if(!model&&/gemini/i.test(tx))model=tx.replace(/[|,]/g,' ').slice(0,60);}return tas.length+'|'+run+'|'+dl+'|'+model+'|'+taLabels.join(',')+'|'+btnLabels.join(',');})()"""
+        webView.evaluateJavascript(js) { raw ->
+            val clean = raw?.trim()?.removeSurrounding("\"") ?: ""
+            val parts = clean.split("|")
+            val taCount = parts.getOrNull(0)?.toIntOrNull() ?: 0
+            val modelText = parts.getOrNull(3) ?: ""
+            if (taCount > 0) {
+                writeTtsStatus(
+                    "running",
+                    "halaman TTS ketemu (textarea: ${parts.getOrElse(4) { "" }}; model aktif: $modelText)"
+                )
+                val want = pendingTtsModel
+                if (want != null && !modelText.contains(want, ignoreCase = true)) {
+                    runTtsMenu()
+                } else {
+                    runTtsVoice()
+                }
+            } else if (triesLeft > 1) {
+                ttsHandler.postDelayed({ runTtsDiagnose(triesLeft - 1) }, 2000)
+            } else {
+                failTts(
+                    "kolom naskah TTS tidak ketemu (textarea: ${parts.getOrElse(4) { "" }}; tombol: ${parts.getOrElse(5) { "" }} - mungkin bukan halaman TTS, buka halaman TTS dulu)"
+                )
+            }
+        }
+    }
+
+    /** Langkah 2a (bila model diminta + beda dari yang aktif): buka
+     *  menu garis tiga (kanan atas). */
+    private fun runTtsMenu() {
+        val js = """(function(){var b=document.querySelector('button[aria-label="Main menu"]')||document.querySelector('button[aria-label="Menu"]');if(!b)return '0';b.click();return '1';})()"""
+        writeTtsStatus("running", "membuka menu model (garis tiga)")
+        webView.evaluateJavascript(js) { raw ->
+            val clean = raw?.trim()?.removeSurrounding("\"") ?: ""
+            if (clean == "1") {
+                ttsHandler.postDelayed({ runTtsPickModel() }, 1500)
+            } else {
+                failTts("tombol menu (garis tiga) tidak ketemu")
+            }
+        }
+    }
+
+    /** Langkah 2b: klik entri menu yang namanya mengandung model. */
+    private fun runTtsPickModel() {
+        val want = pendingTtsModel ?: return runTtsVoice()
+        val quoted = org.json.JSONObject.quote(want)
+        val js = """(function(){var want=$quoted.toLowerCase();var items=[...document.querySelectorAll('[role="menuitem"],[role="option"],button,li')].filter(function(e){return e.offsetParent!==null;});for(var i=0;i<items.length;i++){var t=(items[i].textContent||'').trim();if(t.toLowerCase().indexOf(want)>=0&&t.length<120){items[i].click();return t;}}return '';})()"""
+        webView.evaluateJavascript(js) { raw ->
+            val picked = raw?.trim()?.removeSurrounding("\"") ?: ""
+            if (picked.isBlank()) {
+                failTts("model '$want' tidak ketemu di menu (model aktif tetap dipakai? cek /tts-status)")
+            } else {
+                writeTtsStatus("running", "model dipilih: $picked")
+                ttsHandler.postDelayed({ runTtsVoice() }, 1500)
+            }
+        }
+    }
+
+    /** JS isi satu kolom (voice = gaya suara, script = naskah):
+     *  cari textarea yang cocok, isi lewat insertText (fallback ke
+     *  native setter + event input untuk framework Angular/React). */
+    private fun ttsFillJs(role: String, text: String): String {
+        val quoted = org.json.JSONObject.quote(text)
+        val js = """(function(role,text){var tas=[...document.querySelectorAll('textarea')].filter(function(t){return t.offsetParent!==null;});var pick=null;if(role==='voice'){pick=tas.find(function(t){var s=((t.getAttribute('aria-label')||'')+' '+(t.getAttribute('placeholder')||'')).toLowerCase();return s.indexOf('style')>=0||s.indexOf('voice')>=0||s.indexOf('describe')>=0||s.indexOf('tone')>=0;});}else{pick=tas.find(function(t){var s=((t.getAttribute('aria-label')||'')+' '+(t.getAttribute('placeholder')||'')).toLowerCase();return s.indexOf('text')>=0||s.indexOf('script')>=0||s.indexOf('enter')>=0||s.indexOf('speech')>=0;});if(!pick&&tas.length>0){pick=tas.reduce(function(a,b){return (b.rows||0)>(a.rows||0)?b:a;});}}if(!pick)return '0';pick.focus();try{pick.setSelectionRange(0,pick.value.length);}catch(e){}var ok=false;try{ok=document.execCommand('insertText',false,text);}catch(e){}if(!ok||(pick.value||'').length===0){var setter=Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype,'value').set;setter.call(pick,text);pick.dispatchEvent(new Event('input',{bubbles:true}));}return String((pick.value||'').length);})('$role',$quoted)"""
+        return js
+    }
+
+    /** Langkah 3: isi format suara. */
+    private fun runTtsVoice() {
+        val voice = pendingTtsVoice ?: return runTtsScript()
+        writeTtsStatus("running", "mengisi format suara")
+        webView.evaluateJavascript(ttsFillJs("voice", voice)) { raw ->
+            val len = raw?.trim()?.removeSurrounding("\"")?.toIntOrNull() ?: 0
+            if (len > 0) {
+                runTtsScript()
+            } else {
+                failTts("kolom gaya suara tidak ketemu - format suara tidak terisi (VO bisa keluar dengan suara yang salah, jadi dibatalkan)")
+            }
+        }
+    }
+
+    /** Langkah 4: isi naskah. */
+    private fun runTtsScript() {
+        val script = pendingTtsScript ?: return
+        writeTtsStatus("running", "mengisi naskah")
+        webView.evaluateJavascript(ttsFillJs("script", script)) { raw ->
+            val len = raw?.trim()?.removeSurrounding("\"")?.toIntOrNull() ?: 0
+            if (len > 0) {
+                runTtsRun()
+            } else {
+                failTts("kolom naskah tidak terisi")
+            }
+        }
+    }
+
+    /** Langkah 5: klik Run, catat isi folder aistudio sebelum generate. */
+    private fun runTtsRun() {
+        val js = """(function(){var bs=[...document.querySelectorAll('button')].filter(function(b){return b.offsetParent!==null;});for(var i=0;i<bs.length;i++){var l=(bs[i].getAttribute('aria-label')||'').trim();var tx=(bs[i].textContent||'').trim();if(l==='Run'||tx==='Run'){if(bs[i].disabled)return 'disabled';bs[i].click();return '1';}}return '0';})()"""
+        writeTtsStatus("running", "menekan Run")
+        webView.evaluateJavascript(js) { raw ->
+            val clean = raw?.trim()?.removeSurrounding("\"") ?: ""
+            if (clean == "1") {
+                ttsFilesBefore = try {
+                    FileStore.listFiles(this, "aistudio").map { it.name }.toSet()
+                } catch (_: Exception) {
+                    emptySet()
+                }
+                writeTtsStatus("running", "VO sedang digenerate - tunggu sampai selesai")
+                waitTtsDone(60)
+            } else if (clean == "disabled") {
+                failTts("tombol Run nonaktif (naskah/format suara belum diterima)")
+            } else {
+                failTts("tombol Run tidak ketemu")
+            }
+        }
+    }
+
+    /** Langkah 6: tunggu tombol unduh / elemen audio muncul (10 mnt). */
+    private fun waitTtsDone(triesLeft: Int) {
+        if (pendingTtsScript == null) return
+        val js = """(function(){var dl=0,audio=0;var bs=[...document.querySelectorAll('button')].filter(function(b){return b.offsetParent!==null;});for(var i=0;i<bs.length;i++){var l=(bs[i].getAttribute('aria-label')||'').trim();var tx=(bs[i].textContent||'').trim();if(l==='Download'||tx==='Download'){dl=1;break;}}var aus=document.querySelectorAll('audio');for(var j=0;j<aus.length;j++){if(aus[j].src||aus[j].querySelector('source')){audio=1;break;}}return dl+'|'+audio;})()"""
+        webView.evaluateJavascript(js) { raw ->
+            val clean = raw?.trim()?.removeSurrounding("\"") ?: ""
+            val parts = clean.split("|")
+            if (parts.getOrNull(0) == "1" || parts.getOrNull(1) == "1") {
+                runTtsDownload()
+            } else if (triesLeft <= 0) {
+                failTts("VO tidak selesai dalam 10 menit (tombol unduh tidak muncul)")
+            } else {
+                ttsHandler.postDelayed({ waitTtsDone(triesLeft - 1) }, 10000)
+            }
+        }
+    }
+
+    /** Langkah 7: klik unduh (pojok kiri bawah), lalu tunggu file VO. */
+    private fun runTtsDownload() {
+        val js = """(function(){var bs=[...document.querySelectorAll('button')].filter(function(b){return b.offsetParent!==null;});for(var i=0;i<bs.length;i++){var l=(bs[i].getAttribute('aria-label')||'').trim();var tx=(bs[i].textContent||'').trim();if(l==='Download'||tx==='Download'){bs[i].click();return '1';}}return '0';})()"""
+        writeTtsStatus("running", "mengunduh VO")
+        webView.evaluateJavascript(js) { raw ->
+            val clean = raw?.trim()?.removeSurrounding("\"") ?: ""
+            if (clean == "1") {
+                waitTtsFile(6)
+            } else {
+                failTts("tombol unduh tidak ketemu")
+            }
+        }
+    }
+
+    private fun waitTtsFile(triesLeft: Int) {
+        if (pendingTtsScript == null) return
+        val now = try {
+            FileStore.listFiles(this, "aistudio")
+        } catch (_: Exception) {
+            emptyList()
+        }
+        val fresh = now.firstOrNull { f ->
+            f.isFile && f.name !in ttsFilesBefore &&
+                (f.name.endsWith(".wav", ignoreCase = true) ||
+                    f.name.endsWith(".mp3", ignoreCase = true) ||
+                    f.name.endsWith(".ogg", ignoreCase = true))
+        }
+        if (fresh != null) {
+            ttsRunning = false
+            pendingTtsScript = null
+            writeTtsStatus("done", "VO tersimpan: ${fresh.name} (${fresh.length()} byte)")
+        } else if (triesLeft <= 0) {
+            failTts("tombol unduh diklik tapi file VO tidak muncul di folder aistudio (cek _log-blob/blob-debug.txt)")
+        } else {
+            ttsHandler.postDelayed({ waitTtsFile(triesLeft - 1) }, 5000)
+        }
+    }
+    // ================= AKHIR TTS API =================
+
     /** Bersihkan data Space ini (v0.1.30) lalu muat halaman awal.
      *  Dijalankan DI DALAM proses Space (:spaceN) — CookieManager tiap
      *  proses punya toko cookie sendiri (dataDirectorySuffix), jadi
@@ -1366,6 +1633,8 @@ abstract class BrowserActivity : AppCompatActivity() {
             .takeIf { it > 0 }?.let { pendingSplitSlot = it }
         // v0.1.38: payload prompt API susulan (REORDER_TO_FRONT).
         consumeApiPrompt(intent)
+        // v0.1.39: payload TTS API susulan.
+        consumeApiTts(intent)
     }
 
     override fun onStop() {

@@ -51,6 +51,12 @@ class MainActivity : AppCompatActivity() {
         const val EXTRA_API_PROMPT_TEXT = "extra_api_prompt_text"
         const val EXTRA_API_PROMPT_FILES = "extra_api_prompt_files"
         const val EXTRA_API_PROMPT_URL = "extra_api_prompt_url"
+        // v0.1.39: payload TTS API - naskah + format suara + model
+        // + URL halaman TTS (mis. Playground TTS AI Studio).
+        const val EXTRA_API_TTS_SCRIPT = "extra_api_tts_script"
+        const val EXTRA_API_TTS_VOICE = "extra_api_tts_voice"
+        const val EXTRA_API_TTS_MODEL = "extra_api_tts_model"
+        const val EXTRA_API_TTS_URL = "extra_api_tts_url"
         const val EXTRA_SPACE_NAME = "extra_space_name"
         const val EXTRA_SPACE_COLOR = "extra_space_color"
         private const val PREFS_UI = "senzspace_ui"

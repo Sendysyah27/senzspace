@@ -118,6 +118,22 @@ Jangan cuma diagnosa dari kodenya.
   (BufferedReader bisa menelan byte body). senz.py v2 ngomong ke
   API via `adb forward tcp:19335 tcp:19335`; procs/shot/type/tap/
   key/home tetap ADB (level perangkat).
+- API 39 (19 Nov, v0.1.39): TTS API — POST /tts {slot=7, script,
+  voice?, model?, url?} (script max 50.000 char, voice default =
+  format Riko pilihan Sendy, url HARUS https://aistudio.google.com/...)
+  + GET /tts-status?slot=. HANYA atas perintah eksplisit per
+  generate — TIDAK ADA auto-generate. Payload lewat intent extra
+  (EXTRA_API_TTS_*, lihat UX 31) + status file internal
+  api-tts-<suffix>.json. BrowserActivity eksekusi di WebView Space 7:
+  diagnose (textarea + tombol Run/Download + model aktif) -> menu
+  garis tiga + pilih model starred (bila diminta + beda) -> isi format
+  suara -> isi naskah -> Run -> tunggu tombol unduh/audio max 10 mnt
+  -> klik unduh (blob trap simpan wav ke folder aistudio) -> status
+  done + nama file. Halaman TTS bisa ber-URL root "/" (lihat
+  AiStudioActivity) — eksekutor TIDAK mensyaratkan path, hanya host
+  aistudio.google.com + ada kolom naskah. Bila kolom gaya suara
+  tidak ketemu, run DIBATALKAN (jangan generate dengan suara salah).
+  JS-check (node --check) WAJIB tiap ubah string JS.
 - API 38 (19 Nov, v0.1.38): PROMPT API — POST /upload (byte mentah
   file ke folder kerja, default _inbox, maks 100MB, nama disaring)
   + POST /prompt {slot, text, files?, url?} (teks max 50.000 char,

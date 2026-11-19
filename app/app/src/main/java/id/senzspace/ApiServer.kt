@@ -84,6 +84,8 @@ object ApiToken {
 class ApiServer(private val ctx: Context) {
     companion object {
         const val PORT = 19335
+        // v0.1.39: format suara VO default (pilihan Sendy, 19 Nov).
+        const val DEFAULT_VOICE = "Very bright, high-pitched, cheerful Indonesian male voice, fast-paced, energetic, punchy, crisp, lively, natural Indonesian accent, speed 1.4x"
         private const val TAG = "SenzApi"
         private val FILE_KEYS = setOf(
             "space1", "space2", "space3", "space4", "space5", "space6",
@@ -415,6 +417,85 @@ class ApiServer(private val ctx: Context) {
                     sendJson(client, 200, JSONObject().put("status", "unreadable"))
                 }
             }
+            method == "POST" && path == "/tts" -> {
+                // v0.1.39: generate VO di AI Studio (Space 7) lewat API.
+                // HANYA atas perintah eksplisit per generate - tidak ada
+                // auto-generate. Payload lewat intent extra; AiStudio
+                // (proses Space) yang mengeksekusi di WebView-nya:
+                // pilih model starred (bila diminta) -> isi format suara
+                // -> isi naskah -> Run -> tunggu selesai -> klik unduh
+                // (blob trap menyimpan wav ke folder aistudio).
+                // Status ditulis ke api-tts-<suffix>.json.
+                val req = try {
+                    JSONObject(body)
+                } catch (_: Exception) {
+                    sendJson(client, 400, JSONObject().put("error", "body bukan JSON"))
+                    return
+                }
+                val slot = req.optInt("slot", 7)
+                val entry = SpaceRegistry.load(ctx).firstOrNull { it.slot == slot }
+                if (entry == null) {
+                    sendJson(client, 404, JSONObject().put("error", "no Space on slot $slot"))
+                    return
+                }
+                val script = req.optString("script", "")
+                if (script.isBlank() || script.length > 50000) {
+                    sendJson(client, 400, JSONObject().put("error", "naskah kosong / terlalu panjang"))
+                    return
+                }
+                val voice = req.optString("voice", "").ifBlank { DEFAULT_VOICE }
+                val model = req.optString("model", "").ifBlank { null }
+                val url = req.optString("url", "").ifBlank { null }
+                if (url != null && !url.startsWith("https://aistudio.google.com/")) {
+                    sendJson(client, 400, JSONObject().put("error", "url harus https://aistudio.google.com/..."))
+                    return
+                }
+                val suffix = SpaceRegistry.suffixForSlot(slot)
+                writeTtsStatus(suffix, "queued", "menunggu Space tampil")
+                val visible = appHasVisibleWindow()
+                SpaceLauncher.open(
+                    ctx, entry,
+                    ttsScript = script, ttsVoice = voice,
+                    ttsModel = model, ttsUrl = url
+                )
+                if (visible) {
+                    sendJson(client, 202, JSONObject().apply {
+                        put("queued", entry.name)
+                        put("slot", entry.slot)
+                        put("visible", true)
+                        put("status", "queued")
+                    })
+                } else {
+                    postOpenNotification(entry)
+                    sendJson(client, 202, JSONObject().apply {
+                        put("queued", entry.name)
+                        put("slot", entry.slot)
+                        put("visible", false)
+                        put("needs_tap", true)
+                        put("status", "queued")
+                        put("note", "app di background - ketuk notifikasi 'Buka ${entry.name}' supaya TTS dieksekusi")
+                    })
+                }
+            }
+            method == "GET" && path == "/tts-status" -> {
+                val slot = query["slot"]?.toIntOrNull() ?: 7
+                val entry = SpaceRegistry.load(ctx).firstOrNull { it.slot == slot }
+                if (entry == null) {
+                    sendJson(client, 404, JSONObject().put("error", "no Space on slot $slot"))
+                    return
+                }
+                val suffix = SpaceRegistry.suffixForSlot(slot)
+                val f = java.io.File(ctx.filesDir, "api-tts-$suffix.json")
+                if (!f.exists()) {
+                    sendJson(client, 200, JSONObject().put("status", "none"))
+                    return
+                }
+                try {
+                    sendJson(client, 200, JSONObject(f.readText()))
+                } catch (_: Exception) {
+                    sendJson(client, 200, JSONObject().put("status", "unreadable"))
+                }
+            }
             method == "POST" && path == "/freeze" -> {
                 val req = JSONObject(body)
                 val slot = req.optInt("slot", -1)
@@ -489,6 +570,23 @@ class ApiServer(private val ctx: Context) {
                 put("updated", System.currentTimeMillis())
             }
             java.io.File(ctx.filesDir, "api-prompt-$suffix.json")
+                .writeText(obj.toString())
+        } catch (_: Exception) {
+        }
+    }
+
+    /** Tulis status eksekusi TTS ke filesDir internal
+     *  (api-tts-<suffix>.json). File yang SAMA ditulis
+     *  BrowserActivity dari proses Space; main process hanya
+     *  membaca + menulis status awal "queued". */
+    private fun writeTtsStatus(suffix: String, status: String, detail: String) {
+        try {
+            val obj = JSONObject().apply {
+                put("status", status)
+                put("detail", detail)
+                put("updated", System.currentTimeMillis())
+            }
+            java.io.File(ctx.filesDir, "api-tts-$suffix.json")
                 .writeText(obj.toString())
         } catch (_: Exception) {
         }

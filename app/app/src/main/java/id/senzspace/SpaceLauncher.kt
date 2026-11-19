@@ -16,7 +16,11 @@ object SpaceLauncher {
         newTask: Boolean = false,
         promptText: String? = null,
         promptFiles: List<String>? = null,
-        promptUrl: String? = null
+        promptUrl: String? = null,
+        ttsScript: String? = null,
+        ttsVoice: String? = null,
+        ttsModel: String? = null,
+        ttsUrl: String? = null
     ): Intent {
         return Intent(ctx, SpaceRegistry.activityForSlot(entry.slot)).apply {
             flags = Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or
@@ -42,6 +46,19 @@ object SpaceLauncher {
                     putExtra(MainActivity.EXTRA_API_PROMPT_URL, promptUrl)
                 }
             }
+            // v0.1.39: payload TTS API.
+            if (ttsScript != null) {
+                putExtra(MainActivity.EXTRA_API_TTS_SCRIPT, ttsScript)
+                if (ttsVoice != null) {
+                    putExtra(MainActivity.EXTRA_API_TTS_VOICE, ttsVoice)
+                }
+                if (ttsModel != null) {
+                    putExtra(MainActivity.EXTRA_API_TTS_MODEL, ttsModel)
+                }
+                if (ttsUrl != null) {
+                    putExtra(MainActivity.EXTRA_API_TTS_URL, ttsUrl)
+                }
+            }
             putExtra(MainActivity.EXTRA_SPACE_NAME, entry.name)
             putExtra(MainActivity.EXTRA_SPACE_COLOR, entry.color)
             putExtra(MainActivity.EXTRA_URL, entry.url)
@@ -57,13 +74,19 @@ object SpaceLauncher {
         splitWith: Int? = null,
         promptText: String? = null,
         promptFiles: List<String>? = null,
-        promptUrl: String? = null
+        promptUrl: String? = null,
+        ttsScript: String? = null,
+        ttsVoice: String? = null,
+        ttsModel: String? = null,
+        ttsUrl: String? = null
     ) {
         ctx.startActivity(
             intentFor(
                 ctx, entry, clearData, splitWith, newTask = true,
                 promptText = promptText, promptFiles = promptFiles,
-                promptUrl = promptUrl
+                promptUrl = promptUrl,
+                ttsScript = ttsScript, ttsVoice = ttsVoice,
+                ttsModel = ttsModel, ttsUrl = ttsUrl
             )
         )
     }
