@@ -45,6 +45,12 @@ class MainActivity : AppCompatActivity() {
         // menghapus — pengaman lintas-Space) + slot split-screen.
         const val EXTRA_CLEAR_SUFFIX = "extra_clear_suffix"
         const val EXTRA_SPLIT_WITH = "extra_split_with"
+        // v0.1.38: payload prompt API - teks + daftar file _inbox +
+        // URL tujuan (mis. halaman Project Claude). Dikirim lewat
+        // intent extra (bukan static lintas-proses, lihat UX 31).
+        const val EXTRA_API_PROMPT_TEXT = "extra_api_prompt_text"
+        const val EXTRA_API_PROMPT_FILES = "extra_api_prompt_files"
+        const val EXTRA_API_PROMPT_URL = "extra_api_prompt_url"
         const val EXTRA_SPACE_NAME = "extra_space_name"
         const val EXTRA_SPACE_COLOR = "extra_space_color"
         private const val PREFS_UI = "senzspace_ui"

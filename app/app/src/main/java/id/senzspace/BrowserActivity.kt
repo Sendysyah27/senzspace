@@ -148,6 +148,18 @@ abstract class BrowserActivity : AppCompatActivity() {
         return TRAP_HOSTS.any { host.endsWith(".$it") }
     }
 
+    /** v0.1.38 - payload prompt API yang sedang dieksekusi di Space
+     *  ini (datang lewat intent extra, lihat consumeApiPrompt).
+     *  pendingPromptFiles = file _inbox yang disodorkan ke chooser
+     *  saat JS mengklik tombol attach; promptChooserServed =
+     *  chooser sudah dipanggil (dipakai tunggu attach). */
+    private var pendingPromptText: String? = null
+    private var pendingPromptFiles: List<java.io.File>? = null
+    private var pendingPromptUrl: String? = null
+    private var promptRunning: Boolean = false
+    private var promptChooserServed: Boolean = false
+    private val promptHandler = Handler(Looper.getMainLooper())
+
     /** Callback unduhan file-chooser yang sedang menunggu pilihan user.
      *  WAJIB dipanggil tepat sekali (dengan array URI atau null). */
     private var fileChooserCallback: android.webkit.ValueCallback<Array<android.net.Uri>>? = null
@@ -707,6 +719,9 @@ abstract class BrowserActivity : AppCompatActivity() {
                     // v0.1.16: penangkap blob (cache/inject) DIHAPUS — blob
                     // null-origin tidak bisa ditangkap dari frame utama.
                     if (!isForeground) captureLiveThumbnail()
+                    // v0.1.38: halaman selesai - jalankan prompt API
+                    // bila ada payload menunggu.
+                    maybeRunApiPrompt()
                 }
 
                 override fun onRenderProcessGone(
@@ -833,6 +848,33 @@ abstract class BrowserActivity : AppCompatActivity() {
                     filePathCallback: android.webkit.ValueCallback<Array<android.net.Uri>>,
                     fileChooserParams: WebChromeClient.FileChooserParams
                 ): Boolean {
+                    // v0.1.38: prompt API sedang melampirkan file - JANGAN
+                    // buka pemilih file, sodorkan langsung URI file
+                    // _inbox lewat FileProvider (otoritas
+                    // ${applicationId}.fileprovider, lihat file_paths).
+                    if (pendingPromptFiles != null) {
+                        val staged = pendingPromptFiles
+                        pendingPromptFiles = null
+                        try {
+                            val uris = staged!!.map { f ->
+                                val uri = androidx.core.content.FileProvider
+                                    .getUriForFile(
+                                        this@BrowserActivity,
+                                        "${packageName}.fileprovider", f
+                                    )
+                                grantUriPermission(
+                                    packageName, uri,
+                                    Intent.FLAG_GRANT_READ_URI_PERMISSION
+                                )
+                                uri
+                            }.toTypedArray()
+                            promptChooserServed = true
+                            filePathCallback.onReceiveValue(uris)
+                        } catch (e: Exception) {
+                            filePathCallback.onReceiveValue(null)
+                        }
+                        return true
+                    }
                     // Batalkan chooser sebelumnya bila ada (callback lama
                     // tidak boleh digantung — halaman menunggu jawabannya).
                     fileChooserCallback?.onReceiveValue(null)
@@ -915,6 +957,8 @@ abstract class BrowserActivity : AppCompatActivity() {
                 .takeIf { it > 0 }?.let { pendingSplitSlot = it }
         }
         startLiveCapture()
+        // v0.1.38: payload prompt API dari intent (bila ada).
+        consumeApiPrompt(intent)
         // Guard anti-kill: service foreground di proses Space ini supaya
         // sistem tidak mematikan Space yang lama tidak dibuka. Hormati
         // pengaturan (Pengaturan → Guard anti-kill): bila dimatikan user,
@@ -927,6 +971,198 @@ abstract class BrowserActivity : AppCompatActivity() {
         }
         if (guardOn) KeepAlive.start(this, dataDirectorySuffix, spaceName)
     }
+
+
+    // ================= PROMPT API (v0.1.38) =================
+    // Eksekusi prompt + lampiran ke chat Claude di WebView Space ini.
+    // Alur: consumeApiPrompt (intent extra) -> maybeRunApiPrompt
+    // (dipanggil tiap onPageFinished) -> diagnose -> attach (bila ada
+    // file) -> isi teks -> kirim. Status tiap langkah ditulis ke file
+    // api-prompt-<suffix>.json (filesDir internal, dibaca ApiServer
+    // untuk /prompt-status). Selektor DOM Claude (ProseMirror +
+    // aria-label) dicoba defensif: diagnose mengembalikan daftar
+    // aria-label tombol di form composer, jadi log status memberi tahu
+    // nama tombol attach yang sebenarnya bila selektor meleset.
+    // HANYA atas perintah eksplisit per kirim (POST /prompt) - tidak
+    // ada auto-kirim.
+
+    private fun promptStatusFile(): java.io.File =
+        java.io.File(filesDir, "api-prompt-$dataDirectorySuffix.json")
+
+    private fun writePromptStatus(status: String, detail: String) {
+        try {
+            val obj = org.json.JSONObject().apply {
+                put("status", status)
+                put("detail", detail)
+                put("updated", System.currentTimeMillis())
+            }
+            promptStatusFile().writeText(obj.toString())
+        } catch (_: Exception) {
+        }
+    }
+
+    private fun failPrompt(detail: String) {
+        promptRunning = false
+        pendingPromptText = null
+        pendingPromptFiles = null
+        writePromptStatus("failed", detail)
+    }
+
+    private fun consumeApiPrompt(intent: Intent) {
+        val text = intent.getStringExtra(MainActivity.EXTRA_API_PROMPT_TEXT)
+            ?: return
+        intent.removeExtra(MainActivity.EXTRA_API_PROMPT_TEXT)
+        val names = intent.getStringArrayListExtra(
+            MainActivity.EXTRA_API_PROMPT_FILES
+        )
+        intent.removeExtra(MainActivity.EXTRA_API_PROMPT_FILES)
+        val url = intent.getStringExtra(MainActivity.EXTRA_API_PROMPT_URL)
+        intent.removeExtra(MainActivity.EXTRA_API_PROMPT_URL)
+        val files = names?.mapNotNull { n ->
+            val f = java.io.File(FileStore.folderDir(this, "_inbox"), n)
+            if (f.isFile) f else null
+        } ?: emptyList()
+        pendingPromptText = text
+        pendingPromptFiles = files
+        pendingPromptUrl = url
+        promptRunning = false
+        promptChooserServed = false
+        writePromptStatus("queued", "payload diterima Space $dataDirectorySuffix")
+        if (url != null && currentUrl != url) {
+            // Masuk ke halaman tujuan dulu (mis. Project Claude);
+            // eksekusi jalan dari onPageFinished setelah halaman muat.
+            if (::webView.isInitialized) webView.loadUrl(url)
+        } else {
+            maybeRunApiPrompt()
+        }
+    }
+
+    private fun maybeRunApiPrompt() {
+        val text = pendingPromptText ?: return
+        if (promptRunning) return
+        if (!::webView.isInitialized) return
+        val host = try {
+            android.net.Uri.parse(currentUrl).host
+        } catch (_: Exception) {
+            null
+        }
+        if (host == null) return
+        if (host != "claude.ai") {
+            failPrompt("bukan halaman Claude: $currentUrl")
+            return
+        }
+        promptRunning = true
+        writePromptStatus("running", "mencari kolom chat Claude")
+        runPromptDiagnose(5)
+    }
+
+    /** Langkah 1: kolom chat (ProseMirror) ada? Balik "1|1|label,label"
+     *  = composer ada | tombol kirim ada | aria-label tombol form. */
+    private fun runPromptDiagnose(triesLeft: Int) {
+        if (pendingPromptText == null) return
+        val js = """(function(){var c=document.querySelector('div.ProseMirror[contenteditable="true"]')||document.querySelector('div[contenteditable="true"]');var s=document.querySelector('button[aria-label="Send message"]');var btns=[];var root=c?c.closest('form'):null;if(root){var bs=root.querySelectorAll('button');for(var i=0;i<bs.length;i++){var l=bs[i].getAttribute('aria-label');if(l)btns.push(l);}}return (c?'1':'0')+'|'+(s?'1':'0')+'|'+btns.join(',');})()"""
+        webView.evaluateJavascript(js) { raw ->
+            val clean = raw?.trim()?.removeSurrounding("\"") ?: ""
+            val parts = clean.split("|")
+            if (parts.size >= 2 && parts[0] == "1") {
+                writePromptStatus(
+                    "running",
+                    "kolom chat ketemu; tombol: ${parts.getOrElse(2) { "" }}"
+                )
+                val files = pendingPromptFiles
+                if (!files.isNullOrEmpty()) runPromptAttach() else runPromptFill()
+            } else if (triesLeft > 1) {
+                promptHandler.postDelayed({ runPromptDiagnose(triesLeft - 1) }, 2000)
+            } else {
+                failPrompt(
+                    "kolom chat Claude tidak ketemu (tombol: ${parts.getOrElse(2) { "" }} - mungkin belum login)"
+                )
+            }
+        }
+    }
+
+    /** Langkah 2 (bila ada file): klik tombol attach, tunggu chooser
+     *  disodori file, tunggu 3 dtk, cek chip lampiran muncul. */
+    private fun runPromptAttach() {
+        val files = pendingPromptFiles ?: emptyList()
+        val js = """(function(){var labels=['Add files','Attach files','Upload files','Add content','Attach'];for(var k=0;k<labels.length;k++){var b=document.querySelector('button[aria-label="'+labels[k]+'"]');if(b){b.click();return labels[k];}}var bs=document.querySelectorAll('button');for(var i=0;i<bs.length;i++){var l=bs[i].getAttribute('aria-label')||'';if(/attach|add file|upload/i.test(l)){bs[i].click();return l;}}return '';})()"""
+        promptChooserServed = false
+        writePromptStatus("running", "mengklik tombol attach (${files.size} file)")
+        webView.evaluateJavascript(js) { raw ->
+            val label = raw?.trim()?.removeSurrounding("\"") ?: ""
+            if (label.isBlank()) {
+                failPrompt("tombol attach Claude tidak ketemu - cek /prompt-status tombol")
+                return@evaluateJavascript
+            }
+            writePromptStatus("running", "tombol attach diklik: $label")
+            waitPromptChooser(20)
+        }
+    }
+
+    private fun waitPromptChooser(triesLeft: Int) {
+        if (promptChooserServed) {
+            promptHandler.postDelayed({ runPromptCheckAttached() }, 3000)
+            return
+        }
+        if (triesLeft <= 0) {
+            failPrompt("tombol attach diklik tapi pemilih file tidak muncul")
+            return
+        }
+        promptHandler.postDelayed({ waitPromptChooser(triesLeft - 1) }, 500)
+    }
+
+    private fun runPromptCheckAttached() {
+        val files = pendingPromptFiles ?: emptyList()
+        val namesJson = org.json.JSONArray(files.map { it.name }).toString()
+        val js = """(function(){var root=document.querySelector('div.ProseMirror[contenteditable="true"]');var area=root?root.closest('form'):document.body;var t=(area.innerText||'');var names=$namesJson;var found=[];for(var i=0;i<names.length;i++){if(t.indexOf(names[i])>=0)found.push(names[i]);}return found.join(',');})()"""
+        webView.evaluateJavascript(js) { raw ->
+            val found = raw?.trim()?.removeSurrounding("\"") ?: ""
+            val n = if (found.isBlank()) 0 else found.split(",").size
+            if (n >= files.size) {
+                writePromptStatus("running", "lampiran muncul: $found")
+                runPromptFill()
+            } else {
+                failPrompt("lampiran tidak muncul semua ($found dari ${files.size})")
+            }
+        }
+    }
+
+    /** Langkah 3: isi teks prompt ke kolom chat (insertText). */
+    private fun runPromptFill() {
+        val text = pendingPromptText ?: return
+        val quoted = org.json.JSONObject.quote(text)
+        val js = """(function(){var c=document.querySelector('div.ProseMirror[contenteditable="true"]')||document.querySelector('div[contenteditable="true"]');if(!c)return '0|0';c.focus();var ok=document.execCommand('insertText',false,$quoted);return String((c.innerText||'').length)+'|'+(ok?'1':'0');})()"""
+        writePromptStatus("running", "mengisi teks prompt")
+        webView.evaluateJavascript(js) { raw ->
+            val clean = raw?.trim()?.removeSurrounding("\"") ?: ""
+            val parts = clean.split("|")
+            val len = parts.getOrNull(0)?.toIntOrNull() ?: 0
+            if (len > 0) {
+                runPromptSend()
+            } else {
+                failPrompt("teks prompt tidak masuk ke kolom chat")
+            }
+        }
+    }
+
+    /** Langkah 4: klik tombol kirim. */
+    private fun runPromptSend() {
+        val js = """(function(){var b=document.querySelector('button[aria-label="Send message"]');if(!b)return '0';if(b.disabled)return 'disabled';b.click();return '1';})()"""
+        webView.evaluateJavascript(js) { raw ->
+            val clean = raw?.trim()?.removeSurrounding("\"") ?: ""
+            if (clean == "1") {
+                promptRunning = false
+                pendingPromptText = null
+                pendingPromptFiles = null
+                writePromptStatus("sent", "terkirim - Claude sedang menjawab")
+            } else if (clean == "disabled") {
+                failPrompt("tombol kirim nonaktif (teks/lampiran belum diterima Claude)")
+            } else {
+                failPrompt("tombol kirim tidak ketemu")
+            }
+        }
+    }
+    // ================= AKHIR PROMPT API =================
 
     /** Bersihkan data Space ini (v0.1.30) lalu muat halaman awal.
      *  Dijalankan DI DALAM proses Space (:spaceN) — CookieManager tiap
@@ -1128,6 +1364,8 @@ abstract class BrowserActivity : AppCompatActivity() {
         }
         intent.getIntExtra(MainActivity.EXTRA_SPLIT_WITH, -1)
             .takeIf { it > 0 }?.let { pendingSplitSlot = it }
+        // v0.1.38: payload prompt API susulan (REORDER_TO_FRONT).
+        consumeApiPrompt(intent)
     }
 
     override fun onStop() {

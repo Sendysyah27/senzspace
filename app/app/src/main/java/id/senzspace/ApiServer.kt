@@ -175,6 +175,7 @@ class ApiServer(private val ctx: Context) {
                 read += n
             }
             val body = String(bodyBytes, 0, read, Charsets.UTF_8)
+            val bodyRaw = bodyBytes.copyOf(read)
             if (!ApiToken.check(ctx, headers["authorization"])) {
                 send(client, 401, "application/json", errJson("unauthorized"))
                 return
@@ -182,7 +183,7 @@ class ApiServer(private val ctx: Context) {
             val qIdx = rawTarget.indexOf('?')
             val path = if (qIdx >= 0) rawTarget.substring(0, qIdx) else rawTarget
             val query = if (qIdx >= 0) parseQuery(rawTarget.substring(qIdx + 1)) else emptyMap()
-            route(client, method, path, query, body)
+            route(client, method, path, query, body, bodyRaw)
         } catch (e: Exception) {
             Log.w(TAG, "handle gagal: ${e.message}")
             try {
@@ -238,7 +239,7 @@ class ApiServer(private val ctx: Context) {
         send(client, code, "application/json", obj.toString().toByteArray(Charsets.UTF_8))
     }
 
-    private fun route(client: Socket, method: String, path: String, query: Map<String, String>, body: String) {
+    private fun route(client: Socket, method: String, path: String, query: Map<String, String>, body: String, bodyBytes: ByteArray = ByteArray(0)) {
         when {
             method == "GET" && path == "/ping" -> {
                 sendJson(client, 200, JSONObject().apply {
@@ -290,6 +291,128 @@ class ApiServer(private val ctx: Context) {
                         put("needs_tap", true)
                         put("note", "app di background — ketuk notifikasi 'Buka ${entry.name}' untuk menampilkan Space")
                     })
+                }
+            }
+            method == "POST" && path == "/upload" -> {
+                // v0.1.38: kirim file dari VM ke folder kerja app
+                // (biasanya _inbox, untuk dilampirkan /prompt). Body =
+                // byte mentah file, BUKAN JSON (String body merusak
+                // byte biner). Nama file disaring: tanpa pemisah path.
+                val folder = query["folder"] ?: "_inbox"
+                val name = query["name"] ?: ""
+                if (folder !in FILE_KEYS) {
+                    sendJson(client, 400, JSONObject().put("error", "folder tidak diizinkan"))
+                    return
+                }
+                if (name.isBlank() || name.contains('/') || name.contains('\\') ||
+                    name == "." || name == ".." || name.contains("..")
+                ) {
+                    sendJson(client, 400, JSONObject().put("error", "nama file tidak valid"))
+                    return
+                }
+                if (bodyBytes.size > 100 * 1024 * 1024) {
+                    sendJson(client, 413, JSONObject().put("error", "file > 100MB"))
+                    return
+                }
+                val dir = FileStore.folderDir(ctx, folder)
+                dir.mkdirs()
+                val dest = java.io.File(dir, name)
+                dest.writeBytes(bodyBytes)
+                sendJson(client, 200, JSONObject().apply {
+                    put("uploaded", name)
+                    put("folder", folder)
+                    put("size", bodyBytes.size)
+                })
+            }
+            method == "POST" && path == "/prompt" -> {
+                // v0.1.38: kirim prompt (+ lampiran _inbox) ke chat
+                // Claude di satu Space. HANYA atas perintah eksplisit
+                // per kirim - tidak ada auto-kirim di mana pun.
+                // API menitipkan payload lewat intent extra;
+                // BrowserActivity (proses Space) yang mengeksekusi di
+                // WebView-nya sendiri, lalu menulis status ke file
+                // api-prompt-<suffix>.json (baca via /prompt-status).
+                val req = try {
+                    JSONObject(body)
+                } catch (_: Exception) {
+                    sendJson(client, 400, JSONObject().put("error", "body bukan JSON"))
+                    return
+                }
+                val slot = req.optInt("slot", -1)
+                val entry = SpaceRegistry.load(ctx).firstOrNull { it.slot == slot }
+                if (entry == null) {
+                    sendJson(client, 404, JSONObject().put("error", "no Space on slot $slot"))
+                    return
+                }
+                val text = req.optString("text", "")
+                if (text.isBlank() || text.length > 50000) {
+                    sendJson(client, 400, JSONObject().put("error", "teks kosong / terlalu panjang"))
+                    return
+                }
+                val url = req.optString("url", "").ifBlank { null }
+                if (url != null && !url.startsWith("https://claude.ai/")) {
+                    sendJson(client, 400, JSONObject().put("error", "url harus https://claude.ai/..."))
+                    return
+                }
+                val files = mutableListOf<String>()
+                val filesArr = req.optJSONArray("files")
+                if (filesArr != null) {
+                    for (i in 0 until filesArr.length()) {
+                        val name = filesArr.optString(i, "")
+                        val f = resolveFile("_inbox", name, mustBeDir = false)
+                        if (f == null || !f.isFile) {
+                            sendJson(client, 404, JSONObject().put("error", "file _inbox tidak ketemu: $name"))
+                            return
+                        }
+                        files.add(name)
+                    }
+                }
+                val suffix = SpaceRegistry.suffixForSlot(slot)
+                writePromptStatus(suffix, "queued", "menunggu Space tampil")
+                val visible = appHasVisibleWindow()
+                SpaceLauncher.open(
+                    ctx, entry,
+                    promptText = text, promptFiles = files,
+                    promptUrl = url
+                )
+                if (visible) {
+                    sendJson(client, 202, JSONObject().apply {
+                        put("queued", entry.name)
+                        put("slot", entry.slot)
+                        put("files", org.json.JSONArray(files))
+                        put("visible", true)
+                        put("status", "queued")
+                    })
+                } else {
+                    postOpenNotification(entry)
+                    sendJson(client, 202, JSONObject().apply {
+                        put("queued", entry.name)
+                        put("slot", entry.slot)
+                        put("files", org.json.JSONArray(files))
+                        put("visible", false)
+                        put("needs_tap", true)
+                        put("status", "queued")
+                        put("note", "app di background - ketuk notifikasi 'Buka ${entry.name}' supaya prompt dieksekusi")
+                    })
+                }
+            }
+            method == "GET" && path == "/prompt-status" -> {
+                val slot = query["slot"]?.toIntOrNull() ?: -1
+                val entry = SpaceRegistry.load(ctx).firstOrNull { it.slot == slot }
+                if (entry == null) {
+                    sendJson(client, 404, JSONObject().put("error", "no Space on slot $slot"))
+                    return
+                }
+                val suffix = SpaceRegistry.suffixForSlot(slot)
+                val f = java.io.File(ctx.filesDir, "api-prompt-$suffix.json")
+                if (!f.exists()) {
+                    sendJson(client, 200, JSONObject().put("status", "none"))
+                    return
+                }
+                try {
+                    sendJson(client, 200, JSONObject(f.readText()))
+                } catch (_: Exception) {
+                    sendJson(client, 200, JSONObject().put("status", "unreadable"))
                 }
             }
             method == "POST" && path == "/freeze" -> {
@@ -351,6 +474,23 @@ class ApiServer(private val ctx: Context) {
                 send(client, 200, "image/jpeg", file.readBytes())
             }
             else -> sendJson(client, 404, JSONObject().put("error", "rute tidak dikenal"))
+        }
+    }
+
+    /** Tulis status eksekusi prompt ke filesDir internal
+     *  (api-prompt-<suffix>.json). File yang SAMA ditulis
+     *  BrowserActivity dari proses Space; main process hanya
+     *  membaca + menulis status awal "queued". */
+    private fun writePromptStatus(suffix: String, status: String, detail: String) {
+        try {
+            val obj = JSONObject().apply {
+                put("status", status)
+                put("detail", detail)
+                put("updated", System.currentTimeMillis())
+            }
+            java.io.File(ctx.filesDir, "api-prompt-$suffix.json")
+                .writeText(obj.toString())
+        } catch (_: Exception) {
         }
     }
 
@@ -457,6 +597,16 @@ class ApiServer(private val ctx: Context) {
                 put("process_alive", procs.contains("id.senzspace.debug:$suffix"))
                 put("files", FileStore.count(ctx, suffix))
                 put("thumb_age_sec", thumbAgeSec)
+                val newest = FileStore.listFiles(ctx, suffix)
+                    .maxByOrNull { it.lastModified() }
+                if (newest != null) {
+                    put("last_file", JSONObject().apply {
+                        put("name", newest.name)
+                        put("modified", newest.lastModified())
+                    })
+                } else {
+                    put("last_file", JSONObject.NULL)
+                }
             }
         }
     }

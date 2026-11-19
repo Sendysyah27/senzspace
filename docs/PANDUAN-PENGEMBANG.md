@@ -455,6 +455,41 @@ muncul (Ubah nama / Matikan Live / Hapus Space).
    "Beku" juga. Hapus Space yang beku → Space baru di slot yang sama
    tidak ikut beku.
 
+## Tes Prompt API v0.1.38 di HP (bahasa bayi)
+
+v0.1.38 bikin Jhon bisa mengirim prompt + lampiran ke chat Claude di
+satu Space — lewat API, bukan lewat ketuk layar. Alurnya: file
+(Production Packet + Episode Prompt) diunggah dulu ke folder
+`_inbox` di HP, lalu Jhon kirim perintah `prompt` — app yang
+mengisi kolom chat Claude, melampirkan 2 file itu, dan menekan
+kirim. Setiap kirim HANYA jalan kalau kamu yang memerintahkan
+(Jhon tidak pernah mengirim sendiri).
+
+1. **Install APK v0.1.38 (nimpa — JANGAN uninstall).** Buka
+   SenzSpace sekali. LULUS bila: notifikasi "SenzSpace API aktif"
+   muncul di panel notifikasi.
+2. **Pilih satu Space Claude yang kosong** (sesi terakhirnya sudah
+   beres, video sudah jadi). Bilang ke Jhon: "upload 2 file
+   Kesemutan, kirim prompt tes ke Space <nomor>". LULUS bila:
+   Jhon jawab "queued" (bukan error).
+3. **Buka Space itu (atau ketuk notifikasi "Buka ..." bila ada).**
+   LULUS bila: di chat Claude Space itu muncul prompt tes + 2
+   file terlampir + Claude mulai menjawab.
+4. **Bilang ke Jhon "cek status prompt Space <nomor>".** LULUS
+   bila: Jhon jawab "sent". Kalau jawab "failed", dia juga
+   menyebut alasannya (misal "kolom chat tidak ketemu" atau
+   "tombol attach tidak ketemu") — itu jujur, bukan gagal diam-diam.
+5. **Tes `continue last checkpoint`:** setelah Claude berhenti
+   (jeda), bilang ke Jhon "kirim 'continue last checkpoint' ke
+   Space <nomor>". LULUS bila: pesan itu terkirim dan Claude
+   lanjut bekerja.
+
+Kalau langkah 3 prompt tidak muncul: kemungkinan besar selektor
+tombol Claude berubah (Claude ganti tampilan) — Jhon yang
+memperbaiki selektornya, kamu tidak perlu apa-apa. Jangan
+mengetuk apa pun di layar Space itu selama Jhon mengirim (nanti
+kolom chat-nya ketutup).
+
 ## Tes Open Jujur v0.1.37 di HP (bahasa bayi)
 
 v0.1.36 punya satu kebohongan: `open` via API jawab "opened"

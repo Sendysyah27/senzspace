@@ -118,6 +118,24 @@ Jangan cuma diagnosa dari kodenya.
   (BufferedReader bisa menelan byte body). senz.py v2 ngomong ke
   API via `adb forward tcp:19335 tcp:19335`; procs/shot/type/tap/
   key/home tetap ADB (level perangkat).
+- API 38 (19 Nov, v0.1.38): PROMPT API — POST /upload (byte mentah
+  file ke folder kerja, default _inbox, maks 100MB, nama disaring)
+  + POST /prompt {slot, text, files?, url?} (teks max 50.000 char,
+  files HARUS sudah ada di _inbox, url HARUS https://claude.ai/...)
+  + GET /prompt-status?slot=. HANYA atas perintah eksplisit per
+  kirim — TIDAK ADA auto-kirim. Payload lewat intent extra
+  (EXTRA_API_PROMPT_*, lihat UX 31) + status file internal
+  api-prompt-<suffix>.json (proses Space tulis, ApiServer baca).
+  BrowserActivity eksekusi di WebView-nya sendiri: diagnose
+  composer (ProseMirror) -> klik attach -> chooser disodori URI
+  FileProvider file _inbox (TANPA pemilih file) -> cek chip ->
+  insertText -> klik Send. JS-check (node --check) WAJIB tiap ubah
+  string JS — ekstraksi dari baris 'val js =' DI DALAM fungsi yang
+  sama. Selektor DOM Claude defensif (coba beberapa aria-label);
+  diagnose mengembalikan daftar aria-label tombol form composer
+  supaya log status memberi tahu nama tombol yang sebenarnya bila
+  selektor meleset (Claude ganti UI). /spaces tambah last_file per
+  Space (bantu pilih Space kosong).
 - API 37 (19 Nov, v0.1.37): /open JUJUR soal tampil — v0.1.36
   jawab "opened" padahal Space tidak muncul saat app di
   background (BAL: service background tidak boleh menarik
