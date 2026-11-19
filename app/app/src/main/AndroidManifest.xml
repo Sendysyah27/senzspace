@@ -227,5 +227,16 @@
                 android:value="Menjaga sesi dan tampilan live Space 10 tetap berjalan untuk Multi Live Display." />
         </service>
 
+        <!-- API kontrol lokal (v0.1.36): server HTTP localhost untuk
+             kontrol oleh Jhon (proses utama, START_STICKY). -->
+        <service
+            android:name=".ApiService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Menjalankan server API lokal SenzSpace (localhost) untuk kontrol oleh Jhon." />
+        </service>
+
     </application>
 </manifest>

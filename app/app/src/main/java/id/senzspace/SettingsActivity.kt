@@ -30,6 +30,9 @@ class SettingsActivity : AppCompatActivity() {
     // v0.1.31: folder ekspor custom + tampilkan file tersembunyi.
     private lateinit var exportPathValue: TextView
     private lateinit var hiddenSwitch: Switch
+    // v0.1.36: saklar + token API kontrol lokal.
+    private lateinit var apiSwitch: Switch
+    private lateinit var apiTokenValue: TextView
     private var expectingLockResult = false
 
     private val lockLauncher = registerForActivityResult(
@@ -379,6 +382,71 @@ class SettingsActivity : AppCompatActivity() {
             uiPrefs().edit().putBoolean("fm_show_hidden", checked).apply()
         }
 
+        // ---------- API Kontrol (v0.1.36) ----------
+        root.addView(sectionTitle("API Kontrol (untuk Jhon)"))
+        val apiRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, 0, 0, 8)
+        }
+        apiRow.addView(TextView(this).apply {
+            text = "API kontrol (localhost)"
+            textSize = 16f
+            setTextColor(Color.parseColor("#E8ECF4"))
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+        })
+        apiSwitch = Switch(this)
+        apiRow.addView(apiSwitch)
+        root.addView(apiRow)
+        root.addView(TextView(this).apply {
+            text = "Server API lokal di 127.0.0.1:19335 — dipakai Jhon (Muse) " +
+                "untuk mengecek status, membuka Space, dan membaca file/log. " +
+                "Hanya bisa diakses dari HP ini (via ADB). Matikan bila tidak dipakai."
+            textSize = 12f
+            setTextColor(Color.parseColor("#8A94A6"))
+            setPadding(0, 0, 0, 16)
+        })
+        apiTokenValue = TextView(this).apply {
+            textSize = 12f
+            typeface = Typeface.MONOSPACE
+            setTextColor(Color.parseColor("#5B5BD6"))
+            setPadding(0, 0, 0, 8)
+        }
+        apiTokenValue.setOnClickListener {
+            val token = ApiToken.getOrCreate(this)
+            val cm = getSystemService(CLIPBOARD_SERVICE) as android.content.ClipboardManager
+            cm.setPrimaryClip(android.content.ClipData.newPlainText("SenzSpace API token", token))
+            Toast.makeText(this, "Token disalin — jangan dibagikan ke orang lain", Toast.LENGTH_LONG).show()
+        }
+        root.addView(apiTokenValue)
+        root.addView(TextView(this).apply {
+            text = "Ketuk token untuk menyalin. Token ini rahasia — hanya untuk Jhon."
+            textSize = 12f
+            setTextColor(Color.parseColor("#8A94A6"))
+            setPadding(0, 0, 0, 16)
+        })
+        val apiRegenBtn = Button(this).apply {
+            text = "Buat token baru"
+            setTextColor(Color.parseColor("#E8ECF4"))
+            setBackgroundResource(R.drawable.btn_dark)
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            )
+        }
+        apiRegenBtn.setOnClickListener {
+            ApiToken.regenerate(this)
+            Toast.makeText(this, "Token baru dibuat — Jhon membaca ulang otomatis", Toast.LENGTH_LONG).show()
+            refresh()
+        }
+        root.addView(apiRegenBtn)
+        apiSwitch.setOnCheckedChangeListener { _, checked ->
+            if (checked == ApiToken.isEnabled(this)) return@setOnCheckedChangeListener
+            ApiToken.setEnabled(this, checked)
+            if (checked) ApiService.start(this) else ApiService.stop(this)
+            refresh()
+        }
+
         // ---------- Perawatan ----------
         root.addView(sectionTitle("Perawatan"))
         storageInfo = TextView(this).apply {
@@ -546,6 +614,12 @@ class SettingsActivity : AppCompatActivity() {
         }
         if (::hiddenSwitch.isInitialized) {
             hiddenSwitch.isChecked = uiPrefs().getBoolean("fm_show_hidden", false)
+        }
+        if (::apiSwitch.isInitialized) {
+            apiSwitch.isChecked = ApiToken.isEnabled(this)
+        }
+        if (::apiTokenValue.isInitialized) {
+            apiTokenValue.text = ApiToken.getOrCreate(this)
         }
         if (::storageInfo.isInitialized) {
             val rootDir = FileStore.rootDir(this)

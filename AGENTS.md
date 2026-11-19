@@ -99,3 +99,22 @@ Jangan cuma diagnosa dari kodenya.
   selalu "Semua live"). Timer Claude nyangkut = sisi Claude —
   ikut ke-reset oleh reload pemulihan renderer; tidak ada kode
   khusus untuk itu.
+- KONTROL MCP (19 Nov, Jhon): tool `senz.py` di `~/workspace/custom-connectors/custom.senzspace/` + skill `senzspace-control` — kontrol app dari VM lewat ADB relay POVA (status/spaces/procs/shot terverifikasi live; open/type/tap/key belum dites live). File unduhan + thumbnail + _status + _log TIDAK BISA dibaca dari VM (scoped storage) — butuh perubahan app bila mau.
+- API 36 (19 Nov, v0.1.36): KONTROL LEWAT API, bukan ADB mentah
+  (perintah Sendy "pake jalur API"). ApiServer HTTP minimal stdlib
+  (ServerSocket 127.0.0.1:19335, TANPA TLS — loopback saja, JANGAN
+  bind 0.0.0.0) + ApiService foreground START_STICKY (notif LOW
+  "SenzSpace API aktif"; tanpa izin notifikasi jalan tanpa
+  foreground — JANGAN panggil startForegroundService dalam keadaan
+  itu, nanti dituduh tidak kunjung foreground). Auth: Bearer token
+  acak per install (ApiToken, prefs senzspace_ui kunci api_token;
+  tampil + regenerate di Pengaturan → API Kontrol; Jhon baca via
+  run-as; token TIDAK PERNAH di repo/chat/memori). Rute: GET
+  /ping /status /spaces /files /download /thumb; POST /open
+  /freeze. /files + /download: kunci folder allowlist + canonical
+  path WAJIB di dalam folder kerja (tolak ../). open/freeze pakai
+  SpaceLauncher (satu tempat bangun Intent — Beranda + API
+  identik). Baca header byte-per-byte dari stream mentah
+  (BufferedReader bisa menelan byte body). senz.py v2 ngomong ke
+  API via `adb forward tcp:19335 tcp:19335`; procs/shot/type/tap/
+  key/home tetap ADB (level perangkat).

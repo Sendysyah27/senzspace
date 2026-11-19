@@ -173,6 +173,9 @@ class MainActivity : AppCompatActivity() {
         CrashLog.install(this)
         setContentView(R.layout.activity_main)
         FileStore.ensure(this)
+        // v0.1.36: nyalakan server API lokal (kontrol Jhon) bila
+        // saklarnya hidup (default hidup).
+        if (ApiToken.isEnabled(this)) ApiService.start(this)
         spaceList = findViewById(R.id.spaceList)
         liveGrid = findViewById(R.id.liveGrid)
         toggleLive = findViewById(R.id.toggleLive)
@@ -1076,20 +1079,8 @@ class MainActivity : AppCompatActivity() {
         // onNewIntent di BrowserActivity (extra tetap sampai, activity
         // lain tidak disentuh). Clear juga membawa suffix target yang
         // dicek ulang di BrowserActivity sebelum menghapus apa pun.
-        val intent = Intent(this, SpaceRegistry.activityForSlot(entry.slot)).apply {
-            flags = Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
-            if (clearData) {
-                putExtra(EXTRA_CLEAR_DATA, true)
-                putExtra(
-                    EXTRA_CLEAR_SUFFIX,
-                    SpaceRegistry.suffixForSlot(entry.slot)
-                )
-            }
-            if (splitWith != null) putExtra(EXTRA_SPLIT_WITH, splitWith)
-            putExtra(EXTRA_SPACE_NAME, entry.name)
-            putExtra(EXTRA_SPACE_COLOR, entry.color)
-            putExtra(EXTRA_URL, entry.url)
-        }
-        startActivity(intent)
+        // v0.1.36: Intent dibangun SpaceLauncher (dipakai Beranda +
+        // API supaya perilakunya identik).
+        startActivity(SpaceLauncher.intentFor(this, entry, clearData, splitWith))
     }
 }

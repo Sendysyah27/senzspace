@@ -455,6 +455,37 @@ muncul (Ubah nama / Matikan Live / Hapus Space).
    "Beku" juga. Hapus Space yang beku → Space baru di slot yang sama
    tidak ikut beku.
 
+## Tes API Kontrol v0.1.36 di HP (bahasa bayi)
+
+API = jalan khusus di dalam app supaya Jhon (Muse) bisa mengecek
+dan menggerakkan SenzSpace dari komputernya — lewat jalur API
+(HTTP localhost), bukan lewat perintah ADB mentah. Token = kata
+sandi khusus API ini (acak, cuma Jhon yang pakai).
+
+1. **Install APK v0.1.36 (nimpa — JANGAN uninstall).** Buka
+   SenzSpace sekali. LULUS bila: di panel notifikasi muncul satu
+   baris "SenzSpace API aktif" (sekali saja, tidak bunyi).
+2. **Buka Pengaturan (ikon gerigi di Beranda).** Cari bagian
+   "API Kontrol (untuk Jhon)". LULUS bila: saklarnya HIDUP dan ada
+   token (huruf-angka panjang) di bawahnya.
+3. **Matikan saklar API, tunggu 5 detik, hidupkan lagi.** LULUS
+   bila: notifikasi "SenzSpace API aktif" hilang saat dimatikan
+   dan muncul lagi saat dihidupkan.
+4. **Ketuk token sekali.** LULUS bila: muncul toast "Token
+   disalin". (Jangan kirim token itu ke siapa pun.)
+5. **Bilang ke Jhon "cek status via API".** Jhon membaca status
+   8 Space dari API tanpa mengganggu layar HP kamu. LULUS bila:
+   Jhon bisa menyebut nama Space, mana yang login, mana yang
+   prosesnya mati — tanpa kamu membuka apa pun.
+6. **Bilang ke Jhon "buka Space 3 via API".** LULUS bila: Space
+   eneng127 terbuka di HP kamu. Lalu bilang "baca blob-debug.txt
+   via API" — LULUS bila Jhon bisa menampilkan isi log itu
+   (dulu tidak bisa dibaca dari jauh sama sekali).
+
+Kalau langkah 1 gagal (tidak ada notifikasi API): cek Pengaturan
+→ API Kontrol — saklarnya harus HIDUP. Kalau langkah 5/6 gagal,
+kirim screenshot Pengaturan → API Kontrol ke Jhon.
+
 ## Tes Live Jujur v0.1.35 di HP (bahasa bayi)
 
 Latar: cek POVA 5, 19 Nov 09:42–09:53 (8 Space, RAM free ~412MB).
@@ -885,15 +916,36 @@ aktif lain.
 4. Tap tombol top bar (⌄ ↻ ⌂ ⬇) tetap berfungsi normal — geser
    tidak merusak tap.
 
-## Kontrol app dari Jhon (via Termux bridge)
+## Kontrol app dari Jhon (jalur API — v0.1.36)
 
-SenzSpace menulis statusnya ke file JSON di HP (hanya status yang
-tampil di Beranda — tanpa sesi/cookie/token):
-`Android/data/id.senzspace.debug/files/SenzSpace/_status/senzspace-status.json`
+Jhon mengontrol SenzSpace lewat **API lokal di dalam app**
+(HTTP 127.0.0.1:19335, token Bearer) — BUKAN lewat perintah ADB
+mentah. Server dijalankan `ApiService` (foreground, START_STICKY)
+dan hidup setelah app dibuka sekali. Satu perintah `senz.py` =
+satu fungsi tool, lihat
+`~/workspace/custom-connectors/custom.senzspace/` + skill
+`senzspace-control`.
 
-- Baca status: `termux-exec "cat /sdcard/Android/data/id.senzspace.debug/files/SenzSpace/_status/senzspace-status.json"`
-- Buka Space dari Jhon: `termux-exec "am start -n id.senzspace.debug/.Space1Activity"` (ganti Space1 dengan Space2…Space6, AiStudioActivity, Space8…Space10)
-- Buka Beranda: `termux-exec "am start -n id.senzspace.debug/.MainActivity"`
+```bash
+python3 ~/workspace/custom-connectors/custom.senzspace/bin/senz.py status
+python3 ~/workspace/custom-connectors/custom.senzspace/bin/senz.py spaces
+python3 ~/workspace/custom-connectors/custom.senzspace/bin/senz.py files --space space3
+python3 ~/workspace/custom-connectors/custom.senzspace/bin/senz.py download --space _log-blob --path blob-debug.txt
+python3 ~/workspace/custom-connectors/custom.senzspace/bin/senz.py open --slot 3
+```
+
+- `status`/`spaces`/`files`/`download`/`thumb`/`ping` lewat API:
+  status lengkap, daftar file per Space, unduh file apa pun di
+  folder kerja (termasuk log `_log-blob`/`_log-crash` dan
+  thumbnail live — dulu TIDAK BISA dibaca dari VM).
+- `procs`/`shot`/`type`/`tap`/`key`/`home` tetap lewat ADB
+  (bukan urusan app — itu level perangkat).
+- `open`/`freeze`/`type`/`tap`/`key` mengambil alih layar HP —
+  hanya atas perintah eksplisit Sendy untuk aksi itu persis.
+- Token API: acak per install, di `senzspace_ui` (kunci
+  `api_token`), tampil + bisa dibuat ulang di Pengaturan → API
+  Kontrol. Jhon membaca token dari HP via `run-as` — token
+  TIDAK PERNAH ditulis di repo, chat, atau memori.
 
 ## Keamanan
 
