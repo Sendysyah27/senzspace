@@ -735,7 +735,7 @@ abstract class BrowserActivity : AppCompatActivity() {
                         ).format(java.util.Date())
                         f.appendText(
                             "$ts [${dataDirectorySuffix}] " +
-                                "crash=${detail.didCrash}\n"
+                                "crash=${detail.didCrash()}\n"
                         )
                     } catch (e: Exception) {
                     }
