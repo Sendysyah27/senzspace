@@ -601,10 +601,12 @@ class MainActivity : AppCompatActivity() {
         val spaces = SpaceRegistry.load(this)
         val now = System.currentTimeMillis()
         var liveCount = 0
+        var loggedInCount = 0
         for (entry in spaces) {
             val tile = liveTiles[entry.slot] ?: continue
             val suffix = SpaceRegistry.suffixForSlot(entry.slot)
             val loggedIn = SpaceStatus.readLogin(this, suffix)
+            if (loggedIn) loggedInCount++
             val limit = SpaceStatus.readLimit(this, suffix)
             val frozen = LiveFreeze.isFrozen(this, suffix)
             // Chip status: Limit (amber) mengalahkan Aktif — akun Claude
@@ -666,16 +668,56 @@ class MainActivity : AppCompatActivity() {
                                 bmp.recycle()
                             }
                         }
+                    } else {
+                        // v0.1.35: thumbnail korup (tulis terpotong saat
+                        // proses mati — tile mentok skeleton selamanya,
+                        // senzwh 19 Nov 09:43). Hapus supaya Space yang
+                        // hidup bisa menangkap ulang dengan bersih.
+                        try {
+                            thumbFile.delete()
+                        } catch (e: Exception) {
+                        }
+                        liveHandler.post { tile.lastMod = 0L }
                     }
                 }.start()
             }
+            // v0.1.35: status live dari proses Space (file
+            // _live/<suffix>-status.txt: alive|dom|pixels). Tanpa file
+            // = Space belum pernah jalan di build ini — perlakukan
+            // seperti dulu (berdasarkan thumbnail saja).
+            val liveStatus = try {
+                val f = FileStore.liveStatusFile(this, suffix)
+                if (!f.exists()) null else {
+                    val p = f.readText().trim().split("|")
+                    if (p.size == 3) Triple(
+                        p[0].toLong(), p[1].toLong(), p[2].toLong()
+                    ) else null
+                }
+            } catch (e: Exception) {
+                null
+            }
+            // Proses mati: tidak ada detak 30 dtk terakhir.
+            val processAlive = liveStatus == null ||
+                (now - liveStatus.first < 30_000)
+            // Gambar basi: DOM baru berubah (<60 dtk) tapi piksel tidak
+            // berubah >2 menit — renderer beku, draw() mengulang frame
+            // lama (eneng127: banner limit 1:50 AM padahal kuota reset).
+            val pixelStale = liveStatus != null &&
+                liveStatus.second > 0 && liveStatus.third > 0 &&
+                (now - liveStatus.second < 60_000) &&
+                (now - liveStatus.third > 120_000)
             val ageSec = if (mod > 0) (now - mod) / 1000 else -1
-            val fresh = ageSec in 0 until LIVE_FRESH_SEC && !frozen
+            val fresh = ageSec in 0 until LIVE_FRESH_SEC && !frozen &&
+                processAlive && !pixelStale
             if (fresh) liveCount++
             tile.badge.visibility = if (fresh) View.VISIBLE else View.GONE
+            // Thumbnail Space mati diredupkan — jangan tampil seolah live.
+            tile.preview.alpha = if (!processAlive) 0.4f else 1f
             val subText = when {
                 frozen -> "$site • live dibekukan"
                 limit != null -> "$site • limit, reset ${if (limit == "LIMIT") "segera" else limit}"
+                !processAlive -> "$site • Space tidak berjalan, tap untuk membuka"
+                pixelStale -> "$site • gambar tidak update, tap untuk membuka"
                 mod > 0 -> "$site • live ${ageText(ageSec)}"
                 else -> "$site • $fileCount file baru"
             }
@@ -685,6 +727,13 @@ class MainActivity : AppCompatActivity() {
                 tile.lastSub = subText
                 tile.sub.text = subText
             }
+        }
+        // v0.1.35: subtitle jujur — dulu selalu "Semua live" walau
+        // ada tile skeleton / gambar basi (temuan 19 Nov 09:43).
+        tvSubtitle.text = "${spaces.size} Space • " + when {
+            loggedInCount == 0 -> "belum ada yang live"
+            liveCount >= loggedInCount -> "Semua live"
+            else -> "$liveCount dari $loggedInCount live"
         }
         // Ringkasan notifikasi grup + status JSON untuk kontrol luar.
         KeepAliveService.refreshSummary(this, liveCount)

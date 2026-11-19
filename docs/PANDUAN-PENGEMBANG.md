@@ -455,6 +455,41 @@ muncul (Ubah nama / Matikan Live / Hapus Space).
    "Beku" juga. Hapus Space yang beku → Space baru di slot yang sama
    tidak ikut beku.
 
+## Tes Live Jujur v0.1.35 di HP (bahasa bayi)
+
+Latar: cek POVA 5, 19 Nov 09:42–09:53 (8 Space, RAM free ~412MB).
+SENDY09 dibuka setelah idle 649 menit: layar HITAM total 60–90
+detik. Tile senzwh mentok gambar skeleton padahal sesinya jalan.
+Tile eneng127 nunjukin banner basi "limit sampai 1:50 AM" padahal
+kuota sudah reset — tapi tulisannya "live baru saja". Penyebab:
+renderer WebView dibunuh sistem saat RAM menipis, dan app tidak
+punya penangan untuk itu — WebView diam hitam, gambar tile ikut
+basi. v0.1.35 memperbaikinya: renderer mati langsung dimuat ulang
+otomatis; tiap Space kirim detak ke Beranda; Beranda tidak lagi
+bilang "Semua live" kalau ada Space yang mati/gambarnya basi.
+
+1. Install APK v0.1.35-s1live35 (NIMPA — JANGAN uninstall).
+   Tutup total app dulu (hapus dari recent apps), lalu buka lagi.
+2. Buka Space yang sudah lama tidak dibuka (mis. SENDY09).
+   **LULUS** bila: konten langsung muncul (tidak hitam 60–90
+   detik). Kalau sempat muncul toast "Renderer Space mati —
+   memuat ulang", itu normal: artinya renderer memang mati dan
+   app sudah memulihkannya sendiri.
+3. Di Beranda, lihat tulisan di bawah "SenzSpace".
+   **LULUS** bila: tulisannya jujur — "Semua live" hanya bila
+   semua Space yang login memang live; kalau ada yang mati,
+   tulisannya "7 dari 8 live" (angka sesuai kenyataan).
+4. Cari tile yang sub-nya "Space tidak berjalan, tap untuk
+   membuka" (kalau ada). **LULUS** bila: gambar tile-nya redup
+   (bukan terang seolah live) dan tidak ada badge LIVE. Tap tile
+   itu → Space terbuka normal → balik ke Beranda, tile jadi LIVE.
+5. Buka satu Space, biarkan Claude mengetik jawaban, balik ke
+   Beranda selagi dia mengetik. **LULUS** bila: gambar tile ikut
+   berubah mengikuti ketikan (bukan diam di gambar lama).
+6. Regresi unduhan (jangan rusak yang sudah benar): 1x unduh
+   audio AI Studio + 1x unduh lampiran Claude. **LULUS** bila:
+   keduanya tersimpan dengan nama benar (lihat tes v0.1.34).
+
 ## Tes Unduhan AI Studio v0.1.34 di HP (bahasa bayi)
 
 Latar: unduhan audio AI Studio gagal intermiten — log 17 Nov

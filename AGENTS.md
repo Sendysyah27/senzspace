@@ -81,3 +81,21 @@ Jangan cuma diagnosa dari kodenya.
   (node --check) WAJIB tiap ubah string JS — ekstraksi harus
   mulai dari baris 'val js =' DI DALAM fungsi yang sama (bukan
   kemunculan pertama di file).
+- LIVE 35 (19 Nov, v0.1.35): WebView HITAM 60-90 dtk setelah idle
+  lama + tile bohong (skeleton selamanya / snapshot basi dibilang
+  "live baru saja") — POVA 5, 8 Space, RAM free ~412MB. Akar:
+  TIDAK ADA onRenderProcessGone (renderer dibunuh sistem -> hitam
+  selamanya; draw() tile mengulang frame lama). Fix: (a)
+  onRenderProcessGone di WebViewClient UTAMA -> toast + reload
+  (log ke _log-crash/renderer-gone.txt); (b) HEARTBEAT per Space —
+  file _live/<suffix>-status.txt "alive|dom|pixels" (tulis max 1/5
+  dtk): detak 2 dtk, DOM berubah (onChanged), piksel berubah
+  (sameAs vs tangkapan sebelumnya); (c) TILE JUJUR — proses mati
+  (detak >30 dtk) -> sub "Space tidak berjalan, tap untuk
+  membuka" + gambar diredupkan 0.4 + tanpa badge LIVE; gambar basi
+  (DOM <60 dtk tapi piksel >2 mnt) -> sub "gambar tidak update";
+  thumbnail korup (decode gagal) -> file dihapus biar bisa
+  ditangkap ulang; (d) SUBTITLE Beranda "N dari M live" (dulu
+  selalu "Semua live"). Timer Claude nyangkut = sisi Claude —
+  ikut ke-reset oleh reload pemulihan renderer; tidak ada kode
+  khusus untuk itu.

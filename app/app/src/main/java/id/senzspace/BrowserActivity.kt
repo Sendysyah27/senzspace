@@ -198,6 +198,15 @@ abstract class BrowserActivity : AppCompatActivity() {
     private var isForeground = false
     private var lastCaptureMs = 0L
 
+    // v0.1.35: status live per Space (dibaca Beranda) — detak proses,
+    // perubahan DOM, perubahan piksel thumbnail. Dipakai Beranda untuk
+    // membedakan "Space mati" vs "gambar basi" vs "live beneran".
+    private var lastAliveMs = 0L
+    private var lastDomMs = 0L
+    private var lastPixelMs = 0L
+    private var lastStatusWriteMs = 0L
+    private var lastThumbBmp: android.graphics.Bitmap? = null
+
     /** Interval tangkap live (Pengaturan → "Refresh Multi Live",
      *  default 2 detik). Dibaca segar tiap tick supaya ganti pengaturan
      *  langsung terasa tanpa buka-tutup Space. */
@@ -213,6 +222,10 @@ abstract class BrowserActivity : AppCompatActivity() {
     private val liveRunnable = object : Runnable {
         override fun run() {
             if (!liveRunning) return
+            // v0.1.35: detak proses — Beranda tahu Space ini masih jalan
+            // atau sudah mati dibunuh sistem (RAM menipis).
+            lastAliveMs = System.currentTimeMillis()
+            writeLiveStatus()
             if (!isForeground) captureLiveThumbnail()
             liveHandler.postDelayed(this, liveIntervalMs())
         }
@@ -227,6 +240,23 @@ abstract class BrowserActivity : AppCompatActivity() {
     private fun stopLiveCapture() {
         liveRunning = false
         liveHandler.removeCallbacks(liveRunnable)
+        lastThumbBmp?.recycle()
+        lastThumbBmp = null
+    }
+
+    /** Status live (v0.1.35) — satu file kecil di _live, ditulis proses
+     *  Space, dibaca Beranda: detak proses | DOM berubah | gambar berubah.
+     *  Dibatasi 1 tulis / 5 dtk supaya tidak membebani storage. */
+    private fun writeLiveStatus() {
+        val now = System.currentTimeMillis()
+        if (now - lastStatusWriteMs < 5000) return
+        lastStatusWriteMs = now
+        try {
+            val f = FileStore.liveStatusFile(this, dataDirectorySuffix)
+            f.parentFile?.mkdirs()
+            f.writeText("$lastAliveMs|$lastDomMs|$lastPixelMs")
+        } catch (e: Exception) {
+        }
     }
 
     private fun captureLiveThumbnail() {
@@ -258,12 +288,32 @@ abstract class BrowserActivity : AppCompatActivity() {
             val offsetY = ((scaledH - th) / 2f).coerceAtLeast(0f) / scale
             canvas.translate(0f, -offsetY)
             webView.draw(canvas)
+            // v0.1.35: deteksi renderer beku — draw() pada WebView latar
+            // yang renderernya mati mengembalikan frame lama yang sama
+            // terus-menerus (tile jadi "live baru saja" padahal gambar
+            // basi berjam-jam — eneng127, 19 Nov 09:43). Bandingkan
+            // piksel dengan tangkapan sebelumnya.
+            val changed = try {
+                lastThumbBmp?.let { !it.sameAs(bmp) } ?: true
+            } catch (e: Exception) {
+                true
+            }
+            if (changed) {
+                lastPixelMs = now
+                lastThumbBmp?.recycle()
+                lastThumbBmp = try {
+                    android.graphics.Bitmap.createBitmap(bmp)
+                } catch (e: Exception) {
+                    null
+                }
+            }
             val file = FileStore.liveThumbFile(this, dataDirectorySuffix)
             file.parentFile?.mkdirs()
             FileOutputStream(file).use { out ->
                 bmp.compress(Bitmap.CompressFormat.JPEG, 80, out)
             }
             bmp.recycle()
+            writeLiveStatus()
             // Bersihkan file PNG lama (format v0.1.8) supaya tidak menumpuk.
             val oldPng = java.io.File(file.parentFile, "$dataDirectorySuffix.png")
             if (oldPng.exists()) oldPng.delete()
@@ -281,6 +331,10 @@ abstract class BrowserActivity : AppCompatActivity() {
         @android.webkit.JavascriptInterface
         fun onChanged() {
             liveHandler.post {
+                // v0.1.35: catat DOM berubah — Beranda pakai ini untuk
+                // membedakan "halaman diam (idle)" vs "renderer beku".
+                lastDomMs = System.currentTimeMillis()
+                writeLiveStatus()
                 if (!isForeground) captureLiveThumbnail()
             }
         }
@@ -653,6 +707,52 @@ abstract class BrowserActivity : AppCompatActivity() {
                     // v0.1.16: penangkap blob (cache/inject) DIHAPUS — blob
                     // null-origin tidak bisa ditangkap dari frame utama.
                     if (!isForeground) captureLiveThumbnail()
+                }
+
+                override fun onRenderProcessGone(
+                    view: WebView,
+                    detail: android.webkit.RenderProcessGoneDetail
+                ): Boolean {
+                    // v0.1.35: renderer mati (biasanya dibunuh sistem saat
+                    // RAM menipis — POVA 5, 8 Space, free ~412MB) bikin
+                    // WebView HITAM total sampai dimuat ulang (temuan 19
+                    // Nov 09:42: SENDY09 hitam 60-90 dtk; refresh tidak
+                    // langsung memunculkan konten, home baru memunculkan).
+                    // Tanpa handler ini WebView diam hitam selamanya — dan
+                    // draw() untuk tile ikut mengembalikan frame basi
+                    // berjam-jam. Muat ulang di sini juga membersihkan
+                    // timer Claude yang nyangkut (sisi Claude).
+                    try {
+                        val f = java.io.File(
+                            FileStore.folderDir(
+                                this@BrowserActivity, "_log-crash"
+                            ),
+                            "renderer-gone.txt"
+                        )
+                        f.parentFile?.mkdirs()
+                        val ts = java.text.SimpleDateFormat(
+                            "yyyy-MM-dd HH:mm:ss", java.util.Locale.US
+                        ).format(java.util.Date())
+                        f.appendText(
+                            "$ts [${dataDirectorySuffix}] " +
+                                "crash=${detail.didCrash}\n"
+                        )
+                    } catch (e: Exception) {
+                    }
+                    Toast.makeText(
+                        this@BrowserActivity,
+                        "Renderer Space mati — memuat ulang",
+                        Toast.LENGTH_LONG
+                    ).show()
+                    try {
+                        view.reload()
+                    } catch (e: Exception) {
+                        try {
+                            view.loadUrl(homeUrl)
+                        } catch (_: Exception) {
+                        }
+                    }
+                    return true
                 }
 
                 override fun shouldInterceptRequest(

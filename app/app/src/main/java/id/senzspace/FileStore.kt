@@ -54,6 +54,14 @@ object FileStore {
     fun liveThumbFile(ctx: Context, suffix: String): File =
         File(liveDir(ctx), "$suffix.jpg")
 
+    /** Status live per Space (v0.1.35): satu baris "alive|dom|pixels"
+     *  (epoch-ms) — ditulis proses :spaceN, dibaca Beranda (proses utama).
+     *  alive = detak terakhir proses; dom = perubahan DOM terakhir
+     *  (Claude mengetik / timer jalan); pixels = terakhir kali gambar
+     *  thumbnail BERUBAH. Isinya cuma angka — tanpa sesi/secret. */
+    fun liveStatusFile(ctx: Context, suffix: String): File =
+        File(liveDir(ctx), "$suffix-status.txt")
+
     fun folderDir(ctx: Context, key: String): File {
         return File(rootDir(ctx), key)
     }
