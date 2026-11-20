@@ -377,10 +377,23 @@ abstract class BrowserActivity : AppCompatActivity() {
      *  Reset: EN "resets at 10:50 PM", ID "pukul 00.20". Generating
      *  (best effort): tombol Stop ada di halaman.
      *  v0.1.53 - field ke-8: daftar link chat sidebar (maks 20,
-     *  "judul^url" dipisah "~"): semua <a href="/chat/<id>"> di DOM
-     *  — sidebar ketutup pun link-nya tetap ada di DOM, jadi chat
-     *  produksi bisa dibuka lagi lewat POST /navigate tanpa ketuk.
-     *  Judul dibersihkan dari "^" dan "~" supaya pemisah aman. */
+     *  "judul^url" dipisah "~"): semua <a href="/chat/<id>"> di DOM.
+     *  v0.1.54 - sidebar ketutup = link TIDAK ada di DOM (bukti tes
+     *  21:32, chats[] kosong), jadi snapshot membuka sidebar dulu:
+     *  bila link 0 dan belum pernah dicoba di halaman ini, klik
+     *  tombol sidebar (label "Toggle/Open sidebar", "Open navigation
+     *  menu", "Menu", atau mengandung "sidebar"/"menu" — selektor
+     *  yang sama dengan navigasi Project v0.1.40, hanya tombol yang
+     *  terlihat); link dibaca di snapshot berikut (~20 dtk), lalu
+     *  sidebar ditutup lagi ("Close sidebar") supaya tampilan
+     *  kembali seperti semula. Hasil bagus disimpan di
+     *  window.__senzSbChats dan dipakai lagi bila kumpul berikut
+     *  kosong (jangan sampai file ketimpa daftar kosong); sesudah
+     *  sekali berhasil (__senzSbDone) sidebar tidak dibuka lagi.
+     *  URL dinormalisasi dari /chat/<id> di href (terima absolut,
+     *  query, trailing slash; dedupe by id). Field ke-9 =
+     *  chatLinksSeen (jumlah mentah a[href*="/chat/"] sebelum
+     *  filter — diagnosa: 0 = memang tidak ada link di DOM). */
     private fun pageSnapshotJs(): String = """
         (function(){try{
         var txt=document.body?document.body.innerText:'';
@@ -394,18 +407,30 @@ abstract class BrowserActivity : AppCompatActivity() {
         var m=txt.match(/resets at ([0-9:]+ [AP]M)/)||txt.match(/pukul ([0-9]{1,2}\.[0-9]{2})/);
         var reset=m?m[1]:'';
         var u='';try{u=location.origin+location.pathname;}catch(e){}
+        var raw=document.querySelectorAll('a[href*="/chat/"]');
+        var seenCount=raw.length;
         var links=[];var seen={};
-        var as=document.querySelectorAll('a[href*="/chat/"]');
-        for(var i=0;i<as.length&&links.length<20;i++){
-        var h=as[i].getAttribute('href')||'';
-        if(!/^\/chat\/[A-Za-z0-9-]+$/.test(h)) continue;
-        if(seen[h]) continue;seen[h]=1;
-        var t=clean(as[i].innerText||'').replace(/[\^~]/g,' ');
+        for(var i=0;i<raw.length&&links.length<20;i++){
+        var h=raw[i].getAttribute('href')||'';
+        var mm=h.match(/\/chat\/([A-Za-z0-9-]+)/);
+        if(!mm) continue;
+        if(seen[mm[1]]) continue;seen[mm[1]]=1;
+        var t=clean(raw[i].innerText||'').replace(/[\^~]/g,' ');
         if(!t) continue;
-        links.push(t+'^'+location.origin+h);
+        links.push(t+'^'+location.origin+'/chat/'+mm[1]);
         }
-        return [u,clean(document.title),stop?'1':'0',lim?'1':'0',reset,head,tail,links.join('~')].join('§');
-        }catch(e){return '§§0§0§§§§';}})()
+        var sbBtns=[...document.querySelectorAll('button')].filter(function(b){return b.offsetParent!==null;});
+        var sbClick=function(want){for(var a=0;a<want.length;a++){for(var b=0;b<sbBtns.length;b++){if((sbBtns[b].getAttribute('aria-label')||'').trim()===want[a]){sbBtns[b].click();return true;}}}return false;};
+        if(links.length===0&&!window.__senzSbDone&&!window.__senzSbTried){
+        if(sbClick(['Toggle sidebar','Open sidebar','Open navigation menu','Menu'])){window.__senzSbTried=true;}
+        else{for(var k=0;k<sbBtns.length;k++){var al=(sbBtns[k].getAttribute('aria-label')||'').toLowerCase();if(al.indexOf('sidebar')>=0||al.indexOf('menu')>=0){sbBtns[k].click();window.__senzSbTried=true;break;}}}
+        }else if(links.length>0&&window.__senzSbTried){
+        sbClick(['Close sidebar']);window.__senzSbTried=false;
+        }
+        if(links.length>0){window.__senzSbChats=links.join('~');window.__senzSbDone=true;}
+        var linksField=links.length>0?links.join('~'):(window.__senzSbChats||'');
+        return [u,clean(document.title),stop?'1':'0',lim?'1':'0',reset,head,tail,linksField,String(seenCount)].join('§');
+        }catch(e){return '§§0§0§§§§§';}})()
     """.trimIndent()
 
     /** v0.1.52 - tulis snapshot halaman ke api-page-<suffix>.json
@@ -429,7 +454,7 @@ abstract class BrowserActivity : AppCompatActivity() {
                 try {
                     val s = raw?.removeSurrounding("\"") ?: return@evaluateJavascript
                     val p = s.split("§")
-                    if (p.size < 8) return@evaluateJavascript
+                    if (p.size < 9) return@evaluateJavascript
                     val limited = p[3] == "1"
                     val reset = p[4]
                     if (limited) {
@@ -459,6 +484,7 @@ abstract class BrowserActivity : AppCompatActivity() {
                         put("text", p[5])
                         put("tail", p[6])
                         put("chats", chats)
+                        put("chatLinksSeen", p[8].toIntOrNull() ?: 0)
                         put("updated", System.currentTimeMillis())
                     }
                     pageStatusFile().writeText(obj.toString())

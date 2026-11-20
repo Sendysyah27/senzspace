@@ -118,6 +118,26 @@ Jangan cuma diagnosa dari kodenya.
   (BufferedReader bisa menelan byte body). senz.py v2 ngomong ke
   API via `adb forward tcp:19335 tcp:19335`; procs/shot/type/tap/
   key/home tetap ADB (level perangkat).
+- API 54 (20 Nov, v0.1.54): BUKA SIDEBAR DULU SEBELUM KUMPULKAN
+  LINK CHAT (Gas Sendy 21:33 — "Gas, bangun v0.1.54"). Tes live
+  v0.1.53 (21:32) GAGAL: chats[] kosong walau snapshot segar —
+  asumsi "link sidebar tetap ada di DOM selagi ketutup" GUGUR.
+  Isi: pageSnapshotJs kini membuka sidebar dulu bila link 0 dan
+  belum pernah dicoba di halaman ini — klik tombol sidebar
+  (label "Toggle/Open sidebar", "Open navigation menu", "Menu",
+  atau mengandung "sidebar"/"menu"; selektor yang sama dengan
+  navigasi Project v0.1.40, hanya tombol terlihat); link dibaca
+  di snapshot berikut (~20 dtk), lalu sidebar ditutup lagi
+  ("Close sidebar"). Hasil bagus disimpan di window.__senzSbChats
+  dan dipakai lagi bila kumpul berikut kosong (file jangan
+  ketimpa daftar kosong); sesudah sekali berhasil (__senzSbDone)
+  sidebar tidak dibuka lagi. URL dinormalisasi dari /chat/<id>
+  di href (terima absolut, query, trailing slash; dedupe by id).
+  Field ke-9 = chatLinksSeen (jumlah mentah a[href*="/chat/"]
+  sebelum filter — diagnosa: 0 = memang tidak ada link di DOM).
+  Tes live: sesudah install + buka Space, tunggu ~40 dtk (2
+  tick: buka, kumpul+tutup), /page harus bawa chats[] berisi
+  chat produksi + chatLinksSeen > 0.
 - API 53 (20 Nov, v0.1.53): SNAPSHOT BAWA DAFTAR LINK CHAT SIDEBAR
   (Gas Sendy 21:16 — "Gas, bangun v0.1.53", jawaban atas "lu buka
   aja lewat API" 21:14). Masalah: chat produksi (Charger/Gigi/

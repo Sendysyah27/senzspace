@@ -455,6 +455,23 @@ muncul (Ubah nama / Matikan Live / Hapus Space).
    "Beku" juga. Hapus Space yang beku → Space baru di slot yang sama
    tidak ikut beku.
 
+## Tes Sidebar v0.1.54 di HP (bahasa bayi)
+
+v0.1.54 memperbaiki v0.1.53 yang daftar chat-nya kosong: ternyata
+daftar chat di sidebar baru muncul di halaman SETELAH sidebar-nya
+dibuka. Sekarang tiap Space membuka dulu sidebar-nya sendiri
+(lewat tombol di dalam halaman, tanpa ketukan kamu), mencatat
+daftar chat, lalu menutup lagi sidebar-nya supaya tampilan kembali
+seperti semula.
+
+1. Install APK v0.1.54 (nimpa — JANGAN uninstall).
+2. Buka Space 1 (Charger) sekali dari Beranda, lalu kembali ke
+   Muse. TUNGGU sekitar 1 menit (Space-nya butuh 2 putaran
+   ~20 detik: putaran pertama membuka sidebar, putaran kedua
+   mencatat + menutupnya). Bilang ke Jhon: "cek chat Space 1".
+3. LULUS bila: Jhon bisa menyebut judul + alamat chat Charger
+   dari daftar chat, plus angka "link ketemu" di atas 0.
+
 ## Tes Link Chat v0.1.53 di HP (bahasa bayi)
 
 v0.1.53 bikin Jhon bisa MEMBUKA LAGI chat produksi (Charger,
