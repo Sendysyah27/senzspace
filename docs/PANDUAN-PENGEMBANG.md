@@ -455,6 +455,34 @@ muncul (Ubah nama / Matikan Live / Hapus Space).
    "Beku" juga. Hapus Space yang beku → Space baru di slot yang sama
    tidak ikut beku.
 
+## Tes Unduh Tap v0.1.51 di HP (bahasa bayi)
+
+v0.1.51 menyempurnakan sisa 10% dari v0.1.50. Dua hal yang
+dulu masih dikerjakan Jhon pakai tangan, sekarang dikerjakan
+eksekutor sendiri: (1) sesudah pilih suara Sadaltager, lembar
+pilihan suara (sheet Speaker) DITUTUP dulu oleh eksekutor —
+dulu lembarnya ketinggalan kebuka; (2) tombol unduh sekarang
+DITAP BENERAN oleh eksekutor (sentuhan, bukan klik lewat kode)
+— dulu klik lewat kode TIDAK PERNAH memicu unduhan sama sekali
+di 4 kali percobaan, sedangkan tap beneran selalu berhasil.
+Kalau file VO tetap tidak muncul, eksekutor mengetuk tombol
+unduhnya SEKALI LAGI sebelum menyerah. Pesan "done" sekarang
+juga memberitahu percobaan Style ke-berapa yang berhasil
+(misalnya "Style percobaan 4").
+
+1. Install APK v0.1.51 (nimpa — JANGAN uninstall).
+2. Tutup SenzSpace, kembali ke Muse. JANGAN buka Space 7.
+   Bilang ke Jhon: "generate VO Gigi Ngilu di Space 7" (atau
+   topik lain yang belum dieksekusi). LULUS bila: Jhon jawab
+   "done" + nama file VO, DAN file wav ada di File Manager →
+   aistudio — tanpa kamu ketuk apa pun, termasuk tombol unduh.
+3. Cek suara: buka Space 7, putar file VO — harus terdengar
+   ceria, cepat, dan bersemangat (gaya Riko). Kalau suaranya
+   datar/normal, format Style tidak menempel — kabari Jhon.
+4. Kalau "failed", baca alasannya dan kirim ke Jhon (ada
+   "ditap beneran (1 dari …)" + "tap rect=..." di ujung alasan
+   — itu bukti buat perbaikan berikutnya).
+
 ## Tes Style v0.1.50 di HP (bahasa bayi)
 
 v0.1.50 memperbaiki satu bug v0.1.49: sesudah verifikasi

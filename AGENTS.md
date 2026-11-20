@@ -118,6 +118,36 @@ Jangan cuma diagnosa dari kodenya.
   (BufferedReader bisa menelan byte body). senz.py v2 ngomong ke
   API via `adb forward tcp:19335 tcp:19335`; procs/shot/type/tap/
   key/home tetap ADB (level perangkat).
+- API 51 (20 Nov, v0.1.51): TUTUP SHEET SPEAKER + UNDUH PAKAI TAP
+  BENERAN + CATAT PERCOBAAN STYLE (Gas Sendy 19:42 — "penyempurnaan
+  sisa 10%"). Sisa 10% dari run batch 19 Nov (Charger/Gigi/Paper
+  Cut/Lupa): (a) eksekutor TIDAK PERNAH menutup sheet Speaker —
+  sesudah pilih Sadaltager sheet ketinggalan kebuka + Gboard naik
+  di Run 13 + Paper Cut + Lupa, Jhon yang menutup via X (1015,385)
+  di run screencast; (b) JS .click() tombol Download NOL aktivitas
+  blob di 4 run (Run 5 + 3 run v0.1.50) — blob-debug.txt cuma INJECT,
+  tanpa TRAP data / core: req; yang jalan cuma TAP BENERAN.
+  Fix: (a) closeSpeakerSheet (JS cari tombol tutup: aria-label
+  close/tutup atau teks ×/✕/Close) dipanggil sesudah pilih speaker
+  (lalu isi naskah, 800 ms) DAN sebelum tap unduh (best effort —
+  gagal ketemu tombol tutup BUKAN gagal run, naskah tetap terisi
+  dengan sheet kebuka, terbukti 3 run); (b) runTtsDownload kini
+  baca rect tengah tombol Download TERAKHIR
+  (ttsDownloadButtonRectJs, 'x|y|count') lalu ttsTapAt
+  (dispatchTouchEvent DOWN+UP, pola yang sama dengan tap kotak
+  Style v0.1.48 — CSS px x webView.scale); ttsDownloadInfo kini
+  "ditap beneran (1 dari N, titik=…)" supaya alasan gagal jujur;
+  (c) waitTtsFile: file belum muncul sesudah 6x cek -> TAP SEKALI
+  LAGI (ttsDownloadRetried, sekali saja), baru gagal jujur;
+  (d) ttsStyleAttempt dicatat (0 = sudah menempel sebelum
+  percobaan 1) — status sukses Style kini bawa nomor percobaan,
+  dan status "done" VO membawa "(Style percobaan N)" supaya run
+  berikutnya ketahuan percobaan mana yang lolos. RISIKO JUJUR:
+  tap sintetis dari dalam app mungkin tetap tidak memicu handler
+  yang sama dengan jari beneran — bila gagal, bukti di
+  blob-debug.txt + ttsDownloadInfo; kandidat v0.1.52 = tap ikon
+  unduh di bar player (215,2360 di screencast), bukan tombol
+  Download di dialog.
 - API 50 (20 Nov, v0.1.50): PASTIKAN MENU KEBUKA DULU + NOMOR
   PERCOBAAN DIBAWA TERUS (Gas Sendy 18:03 — lanjutan dari STOP
   17:32 kemarin, sesudah VO Charger TERBUKTI lewat screencast

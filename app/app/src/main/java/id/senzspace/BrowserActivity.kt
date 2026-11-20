@@ -178,6 +178,10 @@ abstract class BrowserActivity : AppCompatActivity() {
     private var ttsFilesBefore: Set<String> = emptySet()
     private var ttsDownloadInfo: String = ""
     private var ttsLastTapInfo: String = ""
+    // v0.1.51: percobaan Style yang akhirnya lolos (0 = sudah menempel
+    // sebelum percobaan 1), + apakah tap unduh sudah diulang sekali.
+    private var ttsStyleAttempt: Int = 0
+    private var ttsDownloadRetried: Boolean = false
     private val ttsHandler = Handler(Looper.getMainLooper())
 
     /** Callback unduhan file-chooser yang sedang menunggu pilihan user.
@@ -1488,13 +1492,14 @@ abstract class BrowserActivity : AppCompatActivity() {
     private fun runTtsStyle() {
         val voice = pendingTtsVoice ?: return runTtsSpeaker()
         val probe = voice.take(11) // "Very bright" — penanda isi menempel
+        ttsStyleAttempt = 0
         // v0.1.49: style mungkin SUDAH menempel (diisi manual / run
         // sebelumnya) — tombol Style menampilkan formatnya, bukan
         // kata "Style". Bila label sudah berisi probe, lewati isi.
         webView.evaluateJavascript(ttsStyleButtonLabelJs(probe)) { raw ->
             val label = raw?.trim()?.removeSurrounding("\"") ?: ""
             if (label.contains(probe)) {
-                writeTtsStatus("running", "format suara sudah menempel (tombol Style menampilkan format) - lanjut pilih speaker")
+                writeTtsStatus("running", "format suara sudah menempel (sebelum percobaan 1) - lanjut pilih speaker")
                 runTtsSpeaker()
                 return@evaluateJavascript
             }
@@ -1679,7 +1684,8 @@ abstract class BrowserActivity : AppCompatActivity() {
                         if (!label.contains(probe)) {
                             retryTtsStyle(voice, probe, attempt)
                         } else {
-                            writeTtsStatus("running", "format suara menempel (tombol Style menampilkan format) - lanjut pilih speaker")
+                            ttsStyleAttempt = attempt
+                            writeTtsStatus("running", "format suara menempel (percobaan $attempt, tombol Style menampilkan format) - lanjut pilih speaker")
                             runTtsSpeaker()
                         }
                     }
@@ -1863,6 +1869,34 @@ abstract class BrowserActivity : AppCompatActivity() {
         }
     }
 
+    /** JS: klik tombol tutup sheet Speaker — v0.1.51. Bukti Run 13
+     *  + Paper Cut + Lupa: sesudah pilih Sadaltager, sheet-nya
+     *  TERTINGGAL kebuka (Gboard naik) dan eksekutor tidak pernah
+     *  menutupnya — di run screencast Jhon yang menutup via X.
+     *  Cari tombol tutup: aria-label berisi close/tutup, atau teks
+     *  '×'/'✕'/'Close'. Hasil '1' (diklik) / '0' (tidak ketemu —
+     *  lanjut saja, sheet kebuka tidak menghalangi isi naskah). */
+    private fun ttsCloseSpeakerSheetJs(): String {
+        return """(function(){var bs=[...document.querySelectorAll('button,[role="button"]')].filter(function(b){return b.offsetParent!==null;});for(var i=0;i<bs.length;i++){var al=(bs[i].getAttribute('aria-label')||'').toLowerCase();if(al.indexOf('close')>=0||al.indexOf('tutup')>=0){bs[i].click();return '1';}}for(var j=0;j<bs.length;j++){var t=(bs[j].textContent||'').trim();if(t==='×'||t==='✕'||t==='Close'){bs[j].click();return '1';}}return '0';})()"""
+    }
+
+    /** JS: posisi tengah tombol Download TERAKHIR (CSS px) — v0.1.51.
+     *  Hasil 'x|y|count' atau '0|count' bila tidak ketemu. */
+    private fun ttsDownloadButtonRectJs(): String {
+        return """(function(){var bs=[...document.querySelectorAll('button')].filter(function(b){return b.offsetParent!==null;});var found=[];for(var i=0;i<bs.length;i++){var l=(bs[i].getAttribute('aria-label')||'').trim();var tx=(bs[i].textContent||'').trim();if(l==='Download'||tx==='Download'){found.push(bs[i]);}}if(found.length===0)return '0|0';var r=found[found.length-1].getBoundingClientRect();return (r.left+r.width/2)+'|'+(r.top+r.height/2)+'|'+found.length;})()"""
+    }
+
+    /** Tutup sheet Speaker (best effort) lalu onDone(clicked) —
+     *  v0.1.51. Gagal ketemu tombol tutup BUKAN gagal run: lanjut
+     *  saja, naskah tetap bisa diisi dengan sheet kebuka (terbukti
+     *  Run 13 + Paper Cut + Lupa). */
+    private fun closeSpeakerSheet(onDone: (Boolean) -> Unit) {
+        webView.evaluateJavascript(ttsCloseSpeakerSheetJs()) { raw ->
+            val clean = raw?.trim()?.removeSurrounding("\"") ?: ""
+            onDone(clean == "1")
+        }
+    }
+
     /** Langkah 6: pilih VOICE (nama) - klik dropdown "Speaker 1". */
     private fun runTtsSpeaker() {
         writeTtsStatus("running", "membuka pilihan Speaker")
@@ -1887,8 +1921,11 @@ abstract class BrowserActivity : AppCompatActivity() {
             if (picked.isBlank()) {
                 runTtsDumpMenu(want)
             } else {
-                writeTtsStatus("running", "voice dipilih: $picked - mengisi naskah")
-                ttsHandler.postDelayed({ runTtsScript() }, 1500)
+                writeTtsStatus("running", "voice dipilih: $picked - menutup sheet Speaker lalu mengisi naskah")
+                closeSpeakerSheet { closed ->
+                    writeTtsStatus("running", "voice dipilih: $picked - sheet Speaker ${if (closed) "ditutup" else "tidak ketemu tombol tutupnya, lanjut"} - mengisi naskah")
+                    ttsHandler.postDelayed({ runTtsScript() }, 800)
+                }
             }
         }
     }
@@ -1940,6 +1977,8 @@ abstract class BrowserActivity : AppCompatActivity() {
                 } catch (_: Exception) {
                     emptySet()
                 }
+                ttsDownloadRetried = false
+                ttsDownloadInfo = ""
                 writeTtsStatus("running", "VO sedang digenerate - tunggu sampai selesai")
                 waitTtsDone(60)
             } else if (clean == "disabled") {
@@ -1974,21 +2013,36 @@ abstract class BrowserActivity : AppCompatActivity() {
         }
     }
 
-    /** Langkah 7: klik unduh dialog TERBARU, lalu tunggu file VO — v0.1.43.
-     *  Pelajaran 20 Nov 14:13: klik tombol Download PERTAMA di DOM
-     *  bisa kena dialog LAMA (19 Nov) — kliknya tidak memicu blob.
-     *  Sekarang klik tombol TERAKHIR (dialog terbaru = paling bawah). */
+    /** Langkah 7: TAP BENERAN tombol unduh dialog TERBARU, lalu
+     *  tunggu file VO — v0.1.51. Pelajaran Run 5 + Run 13 + Paper
+     *  Cut + Lupa (20 Nov): JS .click() pada tombol Download TIDAK
+     *  PERNAH memicu blob — blob-debug.txt NOL aktivitas sesudah
+     *  klik (INJECT ada, TRAP data / core: req tidak ada). Yang
+     *  jalan di semua run screencast adalah TAP BENERAN (jari Jhon
+     *  di ikon unduh player, dan tap+IME di kotak Style v0.1.48).
+     *  Jadi eksekutor kini: tutup sheet Speaker dulu (best effort,
+     *  supaya tap tidak jatuh ke sheet) -> baca rect tengah tombol
+     *  Download TERAKHIR -> dispatchTouchEvent DOWN+UP di titik itu
+     *  (ttsTapAt, pola yang sama dengan tap kotak Style) -> tunggu
+     *  file. RISIKO JUJUR: tap sintetis dari dalam app mungkin
+     *  tetap tidak memicu handler yang sama dengan jari beneran —
+     *  bila gagal, bukti ada di blob-debug.txt + ttsDownloadInfo. */
     private fun runTtsDownload() {
-        val js = """(function(){var bs=[...document.querySelectorAll('button')].filter(function(b){return b.offsetParent!==null;});var found=[];for(var i=0;i<bs.length;i++){var l=(bs[i].getAttribute('aria-label')||'').trim();var tx=(bs[i].textContent||'').trim();if(l==='Download'||tx==='Download'){found.push(bs[i]);}}if(found.length===0)return '0|0';found[found.length-1].click();return '1|'+found.length;})()"""
-        writeTtsStatus("running", "mengunduh VO")
-        webView.evaluateJavascript(js) { raw ->
-            val clean = raw?.trim()?.removeSurrounding("\"") ?: ""
-            val parts = clean.split("|")
-            if (parts.getOrNull(0) == "1") {
-                ttsDownloadInfo = "tombol unduh terbaru diklik (1 dari ${parts.getOrNull(1) ?: "?"})"
-                waitTtsFile(6)
-            } else {
-                failTts("tombol unduh tidak ketemu")
+        closeSpeakerSheet { _ ->
+            webView.evaluateJavascript(ttsDownloadButtonRectJs()) { raw ->
+                val clean = raw?.trim()?.removeSurrounding("\"") ?: ""
+                val parts = clean.split("|")
+                if (parts.size < 3 || parts[0] == "0") {
+                    failTts("tombol unduh tidak ketemu")
+                    return@evaluateJavascript
+                }
+                val scale = webView.scale
+                val cx = (parts[0].toFloatOrNull() ?: 0f) * scale
+                val cy = (parts[1].toFloatOrNull() ?: 0f) * scale
+                ttsDownloadInfo = "tombol unduh terbaru ditap beneran (1 dari ${parts[2]}, titik=${cx.toInt()}x${cy.toInt()})"
+                writeTtsStatus("running", "mengunduh VO ($ttsDownloadInfo)")
+                ttsTapAt(cx, cy)
+                ttsHandler.postDelayed({ waitTtsFile(6) }, 1000)
             }
         }
     }
@@ -2009,9 +2063,19 @@ abstract class BrowserActivity : AppCompatActivity() {
         if (fresh != null) {
             ttsRunning = false
             pendingTtsScript = null
-            writeTtsStatus("done", "VO tersimpan: ${fresh.name} (${fresh.length()} byte)")
+            val styleNote = if (ttsStyleAttempt == 0) "Style sudah menempel" else "Style percobaan $ttsStyleAttempt"
+            writeTtsStatus("done", "VO tersimpan: ${fresh.name} (${fresh.length()} byte) ($styleNote)")
         } else if (triesLeft <= 0) {
-            failTts("${ttsDownloadInfo.ifBlank { "tombol unduh diklik" }} tapi file VO tidak muncul di folder aistudio (cek _log-blob/blob-debug.txt)")
+            if (!ttsDownloadRetried) {
+                // v0.1.51: tap pertama belum memunculkan file — tap
+                // sekali lagi (bisa saja tap pertama jatuh ke sheet
+                // yang belum ketutup / halaman masih animasi).
+                ttsDownloadRetried = true
+                writeTtsStatus("running", "file VO belum muncul - tap tombol unduh sekali lagi")
+                runTtsDownload()
+            } else {
+                failTts("${ttsDownloadInfo.ifBlank { "tombol unduh ditap" }} tapi file VO tidak muncul di folder aistudio (cek _log-blob/blob-debug.txt)")
+            }
         } else {
             ttsHandler.postDelayed({ waitTtsFile(triesLeft - 1) }, 5000)
         }
