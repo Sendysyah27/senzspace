@@ -9,6 +9,8 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- v0.1.42: izin "tampil di atas aplikasi lain" — membebaskan launch Space dari background (BAL), supaya tugas API jalan tanpa ketuk walau activity Space sudah dihancurkan Android. Diminta sekali di Beranda + Pengaturan. -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <!-- Guard anti-kill lengkap (v0.1.10): minta user mengecualikan app
          dari optimasi baterai supaya Doze tidak menidurkan Space.
          Izinnya lewat dialog sistem di Pengaturan (tidak bisa diam-diam). -->

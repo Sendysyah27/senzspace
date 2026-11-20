@@ -33,6 +33,7 @@ class SettingsActivity : AppCompatActivity() {
     // v0.1.36: saklar + token API kontrol lokal.
     private lateinit var apiSwitch: Switch
     private lateinit var apiTokenValue: TextView
+    private lateinit var overlayStatusValue: TextView
     private var expectingLockResult = false
 
     private val lockLauncher = registerForActivityResult(
@@ -447,6 +448,40 @@ class SettingsActivity : AppCompatActivity() {
             refresh()
         }
 
+        // ---------- v0.1.42: izin overlay (BAL) ----------
+        // "Tampil di atas aplikasi lain" — tanpa ini, tugas API dari
+        // background mentok bila activity Space sudah dihancurkan
+        // Android (RAM). Status + tombol beri izin di sini.
+        overlayStatusValue = TextView(this).apply {
+            textSize = 12f
+            setTextColor(Color.parseColor("#8A94A6"))
+            setPadding(0, 8, 0, 8)
+        }
+        root.addView(overlayStatusValue)
+        val overlayBtn = Button(this).apply {
+            text = "Beri izin tampil di atas aplikasi lain"
+            setTextColor(Color.parseColor("#E8ECF4"))
+            setBackgroundResource(R.drawable.btn_dark)
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            )
+        }
+        overlayBtn.setOnClickListener {
+            val intent = android.content.Intent(
+                android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                android.net.Uri.parse("package:$packageName")
+            )
+            startActivity(intent)
+        }
+        root.addView(overlayBtn)
+        root.addView(TextView(this).apply {
+            text = "Izin ini membuat Jhon bisa membuka Space dari background tanpa ketuk, walau layar Space sudah dihancurkan Android. Minta sekali — setelah diberikan, tugas API jalan sendiri."
+            textSize = 12f
+            setTextColor(Color.parseColor("#8A94A6"))
+            setPadding(0, 8, 0, 16)
+        })
+
         // ---------- Perawatan ----------
         root.addView(sectionTitle("Perawatan"))
         storageInfo = TextView(this).apply {
@@ -620,6 +655,14 @@ class SettingsActivity : AppCompatActivity() {
         }
         if (::apiTokenValue.isInitialized) {
             apiTokenValue.text = ApiToken.getOrCreate(this)
+        }
+        if (::overlayStatusValue.isInitialized) {
+            val granted = android.provider.Settings.canDrawOverlays(this)
+            overlayStatusValue.text = "Tampil di atas aplikasi lain: " +
+                if (granted) "Diberikan" else "Belum diberikan"
+            overlayStatusValue.setTextColor(
+                Color.parseColor(if (granted) "#34D399" else "#FBBF24")
+            )
         }
         if (::storageInfo.isInitialized) {
             val rootDir = FileStore.rootDir(this)

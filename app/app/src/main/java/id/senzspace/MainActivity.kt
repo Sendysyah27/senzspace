@@ -74,6 +74,74 @@ class MainActivity : AppCompatActivity() {
 
     private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
 
+    /** v0.1.42: minta izin SYSTEM_ALERT_WINDOW ("Tampil di atas
+     *  aplikasi lain") SEKALI. Izin ini membebaskan launch Space
+     *  dari background (BAL): tanpa izin, tugas API bisa mentok
+     *  "menunggu Space tampil" bila activity Space sudah
+     *  dihancurkan Android saat RAM menipis (insiden VO Charger
+     *  00:28-00:41). Ditanya sekali saja (pref overlay_asked);
+     *  penolakan tidak mengganggu app — tugas tetap coba jalan
+     *  dan gagal jujur dalam 60 detik. */
+    private fun maybeAskOverlayPermission() {
+        if (android.provider.Settings.canDrawOverlays(this)) return
+        val prefs = getSharedPreferences("senzspace_ui", MODE_PRIVATE)
+        if (prefs.getBoolean("overlay_asked", false)) return
+        val dialog = android.app.Dialog(this)
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = UiKit.roundedBg("#16233A", 18, this@MainActivity)
+            setPadding(dp(20), dp(20), dp(20), dp(12))
+        }
+        root.addView(TextView(this).apply {
+            text = "Buka Space tanpa ketuk"
+            textSize = 17f
+            typeface = Typeface.DEFAULT_BOLD
+            setTextColor(Color.parseColor("#E8ECF4"))
+        })
+        root.addView(TextView(this).apply {
+            text = "Supaya Jhon bisa membuka Space dari background saat layarnya mati (Android sering menghancurkan layar Space saat RAM menipis), SenzSpace butuh izin sekali: \"Tampil di atas aplikasi lain\". Tanpa izin ini, tugas dari Jhon bisa mentok di \"menunggu Space tampil\"."
+            textSize = 13f
+            setTextColor(Color.parseColor("#8A94A6"))
+            setPadding(0, dp(12), 0, dp(12))
+        })
+        val grantBtn = Button(this).apply {
+            text = "Beri izin"
+            setTextColor(Color.parseColor("#FFFFFF"))
+            setBackgroundResource(R.drawable.btn_primary)
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            )
+        }
+        grantBtn.setOnClickListener {
+            prefs.edit().putBoolean("overlay_asked", true).apply()
+            val intent = android.content.Intent(
+                android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                android.net.Uri.parse("package:$packageName")
+            )
+            startActivity(intent)
+            dialog.dismiss()
+        }
+        root.addView(grantBtn)
+        root.addView(TextView(this).apply {
+            text = "Nanti"
+            textSize = 14f
+            typeface = Typeface.DEFAULT_BOLD
+            setTextColor(Color.parseColor("#5B5BD6"))
+            gravity = Gravity.END
+            setPadding(0, dp(12), dp(4), dp(8))
+            setOnClickListener {
+                prefs.edit().putBoolean("overlay_asked", true).apply()
+                dialog.dismiss()
+            }
+        })
+        dialog.setContentView(root)
+        dialog.window?.setBackgroundDrawable(
+            android.graphics.drawable.ColorDrawable(Color.TRANSPARENT)
+        )
+        dialog.show()
+    }
+
     /** Interval refresh Multi Live (Pengaturan, default 2 detik) —
      *  dipakai Beranda dan tiap Space supaya seirama. */
     private fun liveIntervalMs(): Long {
@@ -207,6 +275,10 @@ class MainActivity : AppCompatActivity() {
         findViewById<View>(R.id.navSettings).setOnClickListener {
             startActivity(Intent(this, SettingsActivity::class.java))
         }
+        // v0.1.42: minta izin "Tampil di atas aplikasi lain" SEKALI
+        // (kecuali bila kunci app aktif — dialog jangan menumpuk di
+        // atas layar kunci; jalurnya tetap ada di Pengaturan).
+        if (!LockStore.isEnabled(this)) maybeAskOverlayPermission()
         // Guard anti-kill butuh izin notifikasi (Android 13+): tanpa ini
         // service tetap jalan tapi tidak bisa foreground — guard melemah.
         // Minta sekali di awal; kalau ditolak, app tetap jalan normal.

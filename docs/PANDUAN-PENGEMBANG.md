@@ -455,6 +455,34 @@ muncul (Ubah nama / Matikan Live / Hapus Space).
    "Beku" juga. Hapus Space yang beku → Space baru di slot yang sama
    tidak ikut beku.
 
+## Tes Tanpa Ketuk v0.1.42 di HP (bahasa bayi)
+
+v0.1.42 memperbaiki satu hal besar: tugas dari Jhon harus jalan
+tanpa kamu ketuk apa pun, walau layar Space sudah dihancurkan
+Android saat RAM menipis (itu yang bikin VO Charger mentok
+"menunggu Space tampil" 12 menit di v0.1.41).
+
+Caranya: SenzSpace minta izin sekali — "Tampil di atas aplikasi
+lain". Izin ini membuat app boleh membuka layar Space dari
+background. Kalau izin belum diberikan dan tugas mentok, status
+tugas berubah jadi "failed" dengan alasan jelas dalam 60 detik
+(jangan diam di "menunggu" lagi).
+
+1. Install APK v0.1.42 (nimpa — JANGAN uninstall). Buka SenzSpace
+   sekali. Kalau muncul kotak "Buka Space tanpa ketuk", ketuk
+   "Beri izin" lalu di halaman sistem nyalakan "Izinkan tampil
+   di atas aplikasi lain" (cuma sekali ini). Kalau kotaknya tidak
+   muncul, buka Pengaturan → API Kontrol → "Beri izin tampil di
+   atas aplikasi lain".
+2. Tutup SenzSpace, kembali ke Muse. JANGAN buka Space 7.
+   Bilang ke Jhon: "generate VO Charger di Space 7". LULUS bila:
+   Jhon jawab "done" + nama file VO, DAN file wav ada di File
+   Manager → aistudio — tanpa kamu ketuk apa pun.
+3. Kalau "failed" dalam 60 detik, baca alasan yang Jhon kirim:
+   "izin belum diberikan" berarti langkah 1 belum selesai;
+   "activity dimatikan RAM" berarti Android membunuh layar
+   Space walau izin sudah ada — kabari Jhon, itu bahan v0.1.43.
+
 ## Tes TTS API v0.1.41 di HP (bahasa bayi)
 
 v0.1.41 membangun ulang TTS pakai alur ASLI dari 8 screenshot

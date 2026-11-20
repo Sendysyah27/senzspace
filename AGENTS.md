@@ -118,6 +118,30 @@ Jangan cuma diagnosa dari kodenya.
   (BufferedReader bisa menelan byte body). senz.py v2 ngomong ke
   API via `adb forward tcp:19335 tcp:19335`; procs/shot/type/tap/
   key/home tetap ADB (level perangkat).
+- API 42 (20 Nov, v0.1.42): TANPA KETUK — BENERAN (perintah Sendy,
+  voice call 13:42: "Space-nya Jhon yang buka, browser-nya Jhon
+  yang jalanin, semuanya lewat API"). Akar insiden 00:28-00:41:
+  proses :aistudio HIDUP tapi activity-nya sudah dihancurkan
+  Android (tekanan RAM) — intent /tts tidak pernah sampai,
+  status diam "queued" 12 menit. "Process alive" BUKAN "activity
+  hidup". Fix: (a) IZIN SYSTEM_ALERT_WINDOW ("Tampil di atas
+  aplikasi lain", manifest + minta SEKALI di Beranda saat kunci
+  app mati + baris status/tombol di Pengaturan → API Kontrol) —
+  pemegang izin ini DIKECUALIKAN dari BAL, jadi launch Space
+  dari background boleh menarik activity ke depan tanpa ketuk;
+  /open, /prompt, /tts: visible = appHasVisibleWindow() ATAU
+  overlay (balasan "via": "overlay" bila overlay yang
+  menghidupkan); /status tambah field overlay_permission supaya
+  Jhon bisa cek dari VM. (b) GAGAL-JUJUR 60 DETIK: sesudah /prompt
+  dan /tts menulis "queued", thread pengawas (watchPickup) tidur
+  60 dtk lalu cek file status — bila masih "queued" dengan
+  timestamp YANG SAMA (BrowserActivity tidak pernah jalan),
+  tulis failed + alasan jelas (izin overlay belum diberikan,
+  atau activity dimatikan RAM walau izin sudah ada). Bila
+  activity akhirnya jalan telat, tulisannya (running/done)
+  menimpa failed itu — tidak ada konflik. (c) Izin overlay
+  SATU KALI — sesudah diberikan, tugas API jalan sendiri;
+  penolakan tidak mengganggu app.
 - API 41 (19 Nov, v0.1.41): TTS ALUR ASLI (screenshot Sendy 23:28-23:32).
   (a) Urutan eksekusi: Run settings (ikon slider kanan atas) ->
   kartu model aktif -> tab Starred -> entri "Gemini 3.8 Flash Lite
