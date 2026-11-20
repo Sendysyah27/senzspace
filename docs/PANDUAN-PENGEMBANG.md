@@ -455,6 +455,28 @@ muncul (Ubah nama / Matikan Live / Hapus Space).
    "Beku" juga. Hapus Space yang beku → Space baru di slot yang sama
    tidak ikut beku.
 
+## Tes Style v0.1.46 di HP (bahasa bayi)
+
+v0.1.46 memperbaiki satu hal kecil tapi fatal: di tes v0.1.45,
+eksekutor gagal karena "tombol Style tidak ketemu" — padahal
+screenshot membuktikan tombolnya ada di layar. Kemungkinan
+halamannya belum selesai loading waktu dia klik, atau tombol di
+dialog baru bukan jenis tombol biasa. Sekarang kliknya diulang
+sampai 10 detik, dan dicari di tiga tempat (tombol biasa,
+tombol peran, teks "Style").
+
+1. Install APK v0.1.46 (nimpa — JANGAN uninstall).
+2. Tutup SenzSpace, kembali ke Muse. JANGAN buka Space 7.
+   Bilang ke Jhon: "generate VO Charger di Space 7". LULUS bila:
+   Jhon jawab "done" + nama file VO, DAN file wav ada di File
+   Manager → aistudio — tanpa kamu ketuk apa pun.
+3. Cek suara: buka Space 7, putar file VO — harus terdengar
+   ceria, cepat, dan bersemangat (gaya Riko). Kalau suaranya
+   datar/normal, format Style tidak menempel — kabari Jhon.
+4. Kalau "failed", baca alasannya dan kirim ke Jhon (ada
+   "Dump tombol" atau "Dump kolom" + "probe=..." di ujung alasan
+   — itu bukti buat perbaikan berikutnya).
+
 ## Tes Style v0.1.45 di HP (bahasa bayi)
 
 v0.1.45 mencoba cara ketiga supaya format suara Riko masuk ke

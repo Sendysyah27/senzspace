@@ -1476,31 +1476,51 @@ abstract class BrowserActivity : AppCompatActivity() {
      *  Klik tombol "Style" di editor -> isi kotak "Describe the
      *  voice style" -> tutup lagi menunya -> lanjut ke Speaker.
      *  Format Riko BUKAN nama voice - jangan dicari di daftar voice. */
-    /** Langkah 5b: isi STYLE (format suara Riko) — v0.1.43.
-     *  Pelajaran 20 Nov 14:15 (screenshot Sendy): fill lama
-     *  mengembalikan len>0 tapi kotak Style TETAP KOSONG — entah kena
-     *  kolom lain, entah framework menghapus nilai saat menu ditutup.
-     *  Karena itu v0.1.43 MEMBACA BALIK kotaknya: isi -> cek -> tutup
-     *  -> buka lagi -> cek lagi. Kalau setelah 2 percobaan tetap
-     *  kosong, GAGAL dengan jelas (jangan generate VO dengan gaya
-     *  suara yang salah). */
+    /** Langkah 5b: isi STYLE (format suara Riko) — v0.1.46.
+     *  Pelajaran 20 Nov 15:21: klik Style SEKALI langsung gagal
+     *  ("tombol tidak ketemu") padahal screenshot membuktikan
+     *  tombolnya ADA — halaman masih loading/transisi, atau kontrol
+     *  di dialog baru bukan <button>. Karena itu kliknya DIULANG
+     *  (poll 10x1 dtk) + selektor diperluas (button -> role=button
+     *  -> elemen daun teks "Style"). */
     private fun runTtsStyle() {
         val voice = pendingTtsVoice ?: return runTtsSpeaker()
-        val probe = voice.take(11) // "Very bright" — penanda isi menempel
         writeTtsStatus("running", "membuka pengaturan Style")
+        waitTtsStyleButton(10, voice)
+    }
+
+    /** Tunggu tombol Style muncul (poll 10x1 dtk), lalu klik. */
+    private fun waitTtsStyleButton(triesLeft: Int, voice: String) {
         webView.evaluateJavascript(ttsClickStyleJs()) { raw ->
             val clean = raw?.trim()?.removeSurrounding("\"") ?: ""
-            if (clean != "1") {
-                failTts("tombol Style tidak ketemu di editor dialog")
+            if (clean == "0") {
+                if (triesLeft <= 0) {
+                    runTtsDumpButtons()
+                } else {
+                    ttsHandler.postDelayed({ waitTtsStyleButton(triesLeft - 1, voice) }, 1000)
+                }
                 return@evaluateJavascript
             }
+            writeTtsStatus("running", "tombol Style ketemu (via $clean) - mengisi format suara")
+            val probe = voice.take(11) // "Very bright" — penanda isi menempel
             waitTtsStyleField(10, voice, probe, 1)
         }
     }
 
-    /** JS klik tombol "Style" (buka/tutup menu). */
+    /** JS klik tombol "Style" (buka/tutup menu) — v0.1.46: tiga
+     *  lapis selektor (button, [role=button], elemen daun), hasil
+     *  'btn'|'role'|'leaf'|'0'. */
     private fun ttsClickStyleJs(): String {
-        return """(function(){var bs=[...document.querySelectorAll('button')].filter(function(b){return b.offsetParent!==null;});for(var i=0;i<bs.length;i++){if((bs[i].textContent||'').trim()==='Style'||(bs[i].textContent||'').trim().indexOf('Style')===0){bs[i].click();return '1';}}return '0';})()"""
+        return """(function(){var vis=function(e){return e.offsetParent!==null;};var txt=function(e){return (e.textContent||'').trim();};var bs=[...document.querySelectorAll('button')].filter(vis);for(var i=0;i<bs.length;i++){var t=txt(bs[i]);if(t==='Style'||t.indexOf('Style')===0){bs[i].click();return 'btn';}}var rs=[...document.querySelectorAll('[role="button"]')].filter(vis);for(var j=0;j<rs.length;j++){var u=txt(rs[j]);if(u==='Style'||u.indexOf('Style')===0){rs[j].click();return 'role';}}var els=[...document.querySelectorAll('*')].filter(function(e){return vis(e)&&e.children.length===0;});for(var k=0;k<els.length;k++){if(txt(els[k])==='Style'){els[k].click();return 'leaf';}}return '0';})()"""
+    }
+
+    /** Gagal cari tombol Style: dump label tombol + path URL (bukti). */
+    private fun runTtsDumpButtons() {
+        val js = """(function(){var out=[];var bs=[...document.querySelectorAll('button,[role="button"]')].filter(function(b){return b.offsetParent!==null;});for(var i=0;i<bs.length&&i<15;i++){var t=(bs[i].textContent||'').trim().replace(/\s+/g,' ').slice(0,30);out.push(bs[i].tagName+':'+t);}return location.origin+location.pathname+' || '+out.join(' ;; ');})()"""
+        webView.evaluateJavascript(js) { raw ->
+            val dump = raw?.trim()?.removeSurrounding("\"") ?: ""
+            failTts("tombol Style tidak ketemu di editor dialog setelah 10 dtk. Dump tombol: $dump")
+        }
     }
 
     /** JS baca isi kotak "Describe the voice style" ('' bila tak ada). */

@@ -118,6 +118,21 @@ Jangan cuma diagnosa dari kodenya.
   (BufferedReader bisa menelan byte body). senz.py v2 ngomong ke
   API via `adb forward tcp:19335 tcp:19335`; procs/shot/type/tap/
   key/home tetap ADB (level perangkat).
+- API 46 (20 Nov, v0.1.46): KLIK STYLE DIULANG + SELEKTOR LUAS
+  (Gas Sendy 15:23). Tes v0.1.45 (15:21): GAGAL +30 dtk —
+  "tombol Style tidak ketemu" — padahal screenshot HP
+  membuktikan tombolnya ADA di editor (dialog fresh: Speaker
+  Fola, naskah kosong). Dugaan: eksekutor menembak terlalu dini
+  (halaman masih loading/transisi) ATAU kontrol Style di dialog
+  baru bukan <button>. Fix: (a) klik Style DIULANG — poll
+  10x1 dtk (waitTtsStyleButton) sebelum gagal, seperti tunggu
+  kolom; (b) ttsClickStyleJs tiga lapis — <button> dulu (hasil
+  'btn'), lalu [role="button"] ('role'), lalu elemen daun teks
+  persis "Style" ('leaf'); status mencatat lapis yang kena;
+  (c) gagal total = runTtsDumpButtons: maks 15 label tombol
+  terlihat + origin+path URL (tanpa query) ke detail gagal.
+  Tutup/buka menu di verifikasi tetap pakai ttsClickStyleJs yang
+  sama (hasilnya diabaikan, urutan lapis tidak berubah).
 - API 45 (20 Nov, v0.1.45): KETIK KEYEVENT + PROBE SATU-TUGAS
   (Gas Sendy 15:03). Tes v0.1.44 (15:00): GAGAL +30 dtk — dump
   BEKERJA: kotaknya TEXTAREA biasa (placeholder + aria-label
