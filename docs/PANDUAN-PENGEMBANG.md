@@ -455,6 +455,28 @@ muncul (Ubah nama / Matikan Live / Hapus Space).
    "Beku" juga. Hapus Space yang beku → Space baru di slot yang sama
    tidak ikut beku.
 
+## Tes Style v0.1.45 di HP (bahasa bayi)
+
+v0.1.45 mencoba cara ketiga supaya format suara Riko masuk ke
+kotak Style (dump v0.1.44 membuktikan kotaknya TEXTAREA biasa
+yang terlihat, tapi isinya tetap 0 sesudah isi lewat kode dan
+ketik lewat keyboard): ketik lewat tombol keyboard fisik
+(dikirim per karakter dari aplikasi, tanpa keyboard layar).
+Sekalian ada probe yang menjawab: nilai yang dimasukkan itu
+dicegat langsung, atau dihapus sesaat sesudahnya.
+
+1. Install APK v0.1.45 (nimpa — JANGAN uninstall).
+2. Tutup SenzSpace, kembali ke Muse. JANGAN buka Space 7.
+   Bilang ke Jhon: "generate VO Charger di Space 7". LULUS bila:
+   Jhon jawab "done" + nama file VO, DAN file wav ada di File
+   Manager → aistudio — tanpa kamu ketuk apa pun.
+3. Cek suara: buka Space 7, putar file VO — harus terdengar
+   ceria, cepat, dan bersemangat (gaya Riko). Kalau suaranya
+   datar/normal, format Style tidak menempel — kabari Jhon.
+4. Kalau "failed", baca alasannya dan kirim ke Jhon (ada
+   "Dump kolom" + "probe=..." di ujung alasan — itu bukti buat
+   perbaikan berikutnya).
+
 ## Tes Style v0.1.44 di HP (bahasa bayi)
 
 v0.1.44 mencoba dua cara baru supaya format suara Riko masuk ke

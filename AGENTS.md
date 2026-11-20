@@ -118,6 +118,24 @@ Jangan cuma diagnosa dari kodenya.
   (BufferedReader bisa menelan byte body). senz.py v2 ngomong ke
   API via `adb forward tcp:19335 tcp:19335`; procs/shot/type/tap/
   key/home tetap ADB (level perangkat).
+- API 45 (20 Nov, v0.1.45): KETIK KEYEVENT + PROBE SATU-TUGAS
+  (Gas Sendy 15:03). Tes v0.1.44 (15:00): GAGAL +30 dtk — dump
+  BEKERJA: kotaknya TEXTAREA biasa (placeholder + aria-label
+  "Describe the voice style"), terlihat, tapi len=0 sesudah JS
+  fill DAN commitText. Dugaan: commitText tidak sampai ke halaman
+  (InputConnection manual mati bila WebView tidak pegang fokus
+  window) dan/atau framework me-reset nilai async. Fix: (a)
+  percobaan 3 = KETIK LEWAT TOMBOL KEYBOARD: fokus kolom lalu
+  dispatchKeyEvent DOWN+UP per karakter dari Kotlin (huruf,
+  angka, spasi, koma, titik, strip; shift untuk huruf besar;
+  25 ms antar event) — tanpa IME, tanpa koneksi input, seperti
+  keyboard fisik; (b) probe satu-tugas di runTtsDumpStyle: set
+  'PROBE123' via setter lalu baca balik DALAM JS call yang sama
+  — eq=true berarti setter jalan dan nilai dihapus framework
+  secara async, eq=false berarti setter dicegat langsung; (c)
+  dump tambah activeElement + disabled + readOnly per kolom.
+  Alur percobaan kini 1 (JS) -> 2 (commitText) -> 3 (KeyEvent)
+  -> dump + gagal jujur.
 - API 44 (20 Nov, v0.1.44): KETIK BENERAN + DUMP BUKTI (Gas Sendy
   14:46, lanjut perbaikan Style). Tes v0.1.43 (14:43-14:44):
   GAGAL CEPAT +30 dtk — verifikasi BEKERJA (menangkap Style

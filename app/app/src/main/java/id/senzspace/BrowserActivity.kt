@@ -9,6 +9,8 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.os.Message
+import android.os.SystemClock
+import android.view.KeyEvent
 import android.view.ViewGroup
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputConnection
@@ -1510,7 +1512,10 @@ abstract class BrowserActivity : AppCompatActivity() {
      *  v0.1.44: percobaan 1 = isi lewat JS (ttsFillJs, kini dengan
      *  InputEvent ber-data + setter dipaksa untuk voice); percobaan 2
      *  = KETIK BENERAN lewat jalur IME (InputConnection.commitText)
-     *  — event input-nya trusted seperti ketikan pengguna. */
+     *  — event input-nya trusted seperti ketikan pengguna.
+     *  v0.1.45: percobaan 3 = KETIK LEWAT TOMBOL KEYBOARD
+     *  (dispatchKeyEvent per karakter, tanpa IME) — commitText
+     *  terbukti tidak sampai (dump v0.1.44: len=0 sesudah dua cara). */
     private fun waitTtsStyleField(triesLeft: Int, voice: String, probe: String, attempt: Int) {
         val findJs = """(function(){var tas=[...document.querySelectorAll('textarea,[contenteditable],input,[role="textbox"]')].filter(function(t){return t.offsetParent!==null;});for(var i=0;i<tas.length;i++){var p=(tas[i].getAttribute('placeholder')||'').toLowerCase();if(p.indexOf('describe the voice style')>=0)return '1';}return '0';})()"""
         webView.evaluateJavascript(findJs) { raw ->
@@ -1532,7 +1537,7 @@ abstract class BrowserActivity : AppCompatActivity() {
                     }
                     verifyTtsStyleClosed(voice, probe, attempt)
                 }
-            } else {
+            } else if (attempt == 2) {
                 // Percobaan 2: fokus kolom, lalu ketik lewat IME.
                 webView.evaluateJavascript(ttsFocusStyleJs()) { _ ->
                     ttsHandler.postDelayed({
@@ -1541,7 +1546,54 @@ abstract class BrowserActivity : AppCompatActivity() {
                         ttsHandler.postDelayed({ verifyTtsStyleClosed(voice, probe, attempt) }, 800)
                     }, 400)
                 }
+            } else {
+                // Percobaan 3: fokus kolom, lalu ketik lewat KeyEvent.
+                webView.evaluateJavascript(ttsFocusStyleJs()) { _ ->
+                    ttsHandler.postDelayed({
+                        ttsTypeKeys(voice) { verifyTtsStyleClosed(voice, probe, attempt) }
+                    }, 400)
+                }
             }
+        }
+    }
+
+    /** Ketik lewat KeyEvent hardware (percobaan 3) — tanpa IME, tanpa
+     *  koneksi input: tiap karakter dikirim sebagai DOWN+UP langsung
+     *  ke WebView, seperti keyboard fisik. onDone dipanggil 800 ms
+     *  sesudah karakter terakhir. */
+    private fun ttsTypeKeys(text: String, onDone: () -> Unit) {
+        val events = ArrayList<KeyEvent>()
+        var skipped = 0
+        for (ch in text) {
+            val code = keyCodeFor(ch)
+            if (code == -1) { skipped++; continue }
+            val meta = if (ch.isUpperCase()) KeyEvent.META_SHIFT_ON else 0
+            val now = SystemClock.uptimeMillis()
+            events.add(KeyEvent(now, now, KeyEvent.ACTION_DOWN, code, 0, meta))
+            events.add(KeyEvent(now, now, KeyEvent.ACTION_UP, code, 0, meta))
+        }
+        writeTtsStatus("running", "mengetik format suara lewat tombol keyboard (percobaan 3, ${events.size / 2} karakter, $skipped dilewati)")
+        Thread {
+            for (ev in events) {
+                ttsHandler.post { webView.dispatchKeyEvent(ev) }
+                Thread.sleep(25)
+            }
+            ttsHandler.postDelayed({ onDone() }, 800)
+        }.start()
+    }
+
+    /** Petakan satu karakter ke KeyEvent (huruf, angka, spasi, koma,
+     *  titik, strip). -1 = karakter tidak didukung, dilewati. */
+    private fun keyCodeFor(ch: Char): Int {
+        return when {
+            ch in 'a'..'z' -> KeyEvent.KEYCODE_A + (ch - 'a')
+            ch in 'A'..'Z' -> KeyEvent.KEYCODE_A + (ch - 'A')
+            ch in '0'..'9' -> KeyEvent.KEYCODE_0 + (ch - '0')
+            ch == ' ' -> KeyEvent.KEYCODE_SPACE
+            ch == ',' -> KeyEvent.KEYCODE_COMMA
+            ch == '.' -> KeyEvent.KEYCODE_PERIOD
+            ch == '-' -> KeyEvent.KEYCODE_MINUS
+            else -> -1
         }
     }
 
@@ -1599,23 +1651,29 @@ abstract class BrowserActivity : AppCompatActivity() {
         }
     }
 
-    /** Isi Style gagal verifikasi: percobaan 1 -> ketik keyboard
-     *  (percobaan 2); percobaan 2 gagal -> dump bukti + gagal jujur. */
+    /** Isi Style gagal verifikasi: percobaan 1 -> ketik IME
+     *  (percobaan 2); percobaan 2 -> ketik KeyEvent (percobaan 3);
+     *  percobaan 3 gagal -> dump bukti + gagal jujur. */
     private fun retryTtsStyle(voice: String, probe: String, attempt: Int) {
-        if (attempt < 2) {
-            writeTtsStatus("running", "format suara belum menempel (percobaan $attempt) - coba ketik lewat keyboard")
+        if (attempt < 3) {
+            val next = if (attempt == 1) "coba ketik lewat keyboard" else "coba ketik lewat tombol keyboard"
+            writeTtsStatus("running", "format suara belum menempel (percobaan $attempt) - $next")
             ttsHandler.postDelayed({ waitTtsStyleField(10, voice, probe, attempt + 1) }, 1000)
         } else {
             runTtsDumpStyle()
         }
     }
 
-    /** Gagal total isi Style: dump anatomi kolom ke detail gagal (bukti). */
+    /** Gagal total isi Style: dump anatomi kolom + probe satu-tugas
+     *  ke detail gagal (bukti). Probe: set nilai 'PROBE123' via
+     *  setter lalu baca balik DALAM JS call yang sama — eq=true
+     *  berarti setter jalan dan nilai dihapus framework secara async;
+     *  eq=false berarti setter dicegat langsung. */
     private fun runTtsDumpStyle() {
-        val js = """(function(){var tas=[...document.querySelectorAll('textarea,[contenteditable],input,[role="textbox"]')].filter(function(t){return t.offsetParent!==null;});var out=[];for(var i=0;i<tas.length&&i<8;i++){var t=tas[i];var ph=(t.getAttribute('placeholder')||'').slice(0,40);var al=(t.getAttribute('aria-label')||'').slice(0,40);var v=(t.value||t.textContent||'');out.push(t.tagName+'|ph='+ph+'|al='+al+'|len='+v.length+'|hasProbe='+(v.indexOf('Very bright')>=0));}return out.join(' ;; ');})()"""
+        val js = """(function(){var tas=[...document.querySelectorAll('textarea,[contenteditable],input,[role="textbox"]')].filter(function(t){return t.offsetParent!==null;});var out=[];var ae=document.activeElement;out.push('active='+(ae?(ae.tagName+'|'+((ae.getAttribute('placeholder')||'').slice(0,30))):'none'));for(var i=0;i<tas.length&&i<8;i++){var t=tas[i];var ph=(t.getAttribute('placeholder')||'').slice(0,40);var al=(t.getAttribute('aria-label')||'').slice(0,40);var v=(t.value||t.textContent||'');out.push(t.tagName+'|ph='+ph+'|al='+al+'|len='+v.length+'|hasProbe='+(v.indexOf('Very bright')>=0)+'|dis='+t.disabled+'|ro='+t.readOnly);}var st=null;for(var j=0;j<tas.length;j++){var p=(tas[j].getAttribute('placeholder')||'').toLowerCase();if(p.indexOf('describe the voice style')>=0){st=tas[j];break;}}if(st){var setter=null;try{setter=Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype,'value').set;}catch(e){}try{if(setter){setter.call(st,'PROBE123');}else{st.value='PROBE123';}}catch(e2){}var back=(st.value||st.textContent||'');out.push('probe=set8-read'+back.length+'|eq='+(back==='PROBE123'));try{if(setter){setter.call(st,'');}else{st.value='';}}catch(e3){}}else{out.push('probe=no-field');}return out.join(' ;; ');})()"""
         webView.evaluateJavascript(js) { raw ->
             val dump = raw?.trim()?.removeSurrounding("\"") ?: ""
-            failTts("format suara tidak menempel di kotak Style setelah 2 percobaan (JS + ketik keyboard) - VO dibatalkan. Dump kolom: $dump")
+            failTts("format suara tidak menempel di kotak Style setelah 3 percobaan (JS + ketik keyboard + tombol keyboard) - VO dibatalkan. Dump kolom: $dump")
         }
     }
 
