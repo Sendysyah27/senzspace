@@ -118,6 +118,28 @@ Jangan cuma diagnosa dari kodenya.
   (BufferedReader bisa menelan byte body). senz.py v2 ngomong ke
   API via `adb forward tcp:19335 tcp:19335`; procs/shot/type/tap/
   key/home tetap ADB (level perangkat).
+- API 44 (20 Nov, v0.1.44): KETIK BENERAN + DUMP BUKTI (Gas Sendy
+  14:46, lanjut perbaikan Style). Tes v0.1.43 (14:43-14:44):
+  GAGAL CEPAT +30 dtk — verifikasi BEKERJA (menangkap Style
+  kosong dalam 30 dtk, VO dibatalkan, tidak generate suara
+  default seperti v0.1.41/42), tapi fill-nya TIDAK PERNAH
+  menempel: setter + event 'input'/'change' sintetis ditolak
+  framework AI Studio (nilai hilang sebelum Run; kotak naskah
+  biasa masuk, kotak Style tidak). Fix: (a) ttsFillJs untuk voice
+  — setter + event SELALU dijalankan walau execCommand mengaku
+  sukses, event pertama InputEvent ber-data (inputType
+  insertText, data = teks) karena sebagian framework menghitung
+  nilai baru dari event.data dan Event polos bisa mengosongkan
+  model; (b) percobaan 2 = KETIK BENERAN lewat jalur IME:
+  fokus kolom (ttsFocusStyleJs: focus + select-all) lalu
+  InputConnection.commitText dari Kotlin
+  (webView.onCreateInputConnection(EditorInfo())) — event
+  input-nya trusted seperti ketikan pengguna; (c) gagal total =
+  runTtsDumpStyle: dump anatomi maks 8 kolom input terlihat
+  (tag | placeholder | aria-label | panjang isi | hasProbe
+  'Very bright') ke detail gagal supaya perbaikan berikutnya
+  berbasis bukti. Verifikasi baca-balik 2x (sebelum tutup +
+  tutup-buka) tetap berlaku untuk kedua percobaan.
 - API 43 (20 Nov, v0.1.43): STYLE MENEMPEL + UNDUH TEPAT WAKTU
   (perintah Sendy, screenshot 14:15: "lu ngga masukin prompt
   [format Riko] ini bro, sebelum run harusnya lu masukin ini").

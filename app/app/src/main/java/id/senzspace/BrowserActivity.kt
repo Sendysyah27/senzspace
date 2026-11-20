@@ -10,6 +10,8 @@ import android.os.Handler
 import android.os.Looper
 import android.os.Message
 import android.view.ViewGroup
+import android.view.inputmethod.EditorInfo
+import android.view.inputmethod.InputConnection
 import android.webkit.CookieManager
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceError
@@ -1504,7 +1506,11 @@ abstract class BrowserActivity : AppCompatActivity() {
         return """(function(){var tas=[...document.querySelectorAll('textarea,[contenteditable],input,[role="textbox"]')].filter(function(t){return t.offsetParent!==null;});for(var i=0;i<tas.length;i++){var p=(tas[i].getAttribute('placeholder')||'').toLowerCase();if(p.indexOf('describe the voice style')>=0)return (tas[i].value||tas[i].textContent||'');}return '';})()"""
     }
 
-    /** Tunggu kolom Style muncul, isi, lalu VERIFIKASI baca-balik. */
+    /** Tunggu kolom Style muncul, isi, lalu VERIFIKASI baca-balik.
+     *  v0.1.44: percobaan 1 = isi lewat JS (ttsFillJs, kini dengan
+     *  InputEvent ber-data + setter dipaksa untuk voice); percobaan 2
+     *  = KETIK BENERAN lewat jalur IME (InputConnection.commitText)
+     *  — event input-nya trusted seperti ketikan pengguna. */
     private fun waitTtsStyleField(triesLeft: Int, voice: String, probe: String, attempt: Int) {
         val findJs = """(function(){var tas=[...document.querySelectorAll('textarea,[contenteditable],input,[role="textbox"]')].filter(function(t){return t.offsetParent!==null;});for(var i=0;i<tas.length;i++){var p=(tas[i].getAttribute('placeholder')||'').toLowerCase();if(p.indexOf('describe the voice style')>=0)return '1';}return '0';})()"""
         webView.evaluateJavascript(findJs) { raw ->
@@ -1517,49 +1523,99 @@ abstract class BrowserActivity : AppCompatActivity() {
                 }
                 return@evaluateJavascript
             }
-            webView.evaluateJavascript(ttsFillJs("voice", voice)) { raw2 ->
-                val len = raw2?.trim()?.removeSurrounding("\"")?.toIntOrNull() ?: 0
-                if (len <= 0) {
-                    failTts("kolom 'Describe the voice style' tidak terisi (percobaan $attempt)")
-                    return@evaluateJavascript
-                }
-                // Verifikasi 1: baca balik SEBELUM menu ditutup.
-                webView.evaluateJavascript(ttsStyleValueJs()) { raw3 ->
-                    val v1 = raw3?.trim()?.removeSurrounding("\"") ?: ""
-                    if (!v1.contains(probe)) {
-                        retryTtsStyle(voice, probe, attempt)
+            if (attempt == 1) {
+                webView.evaluateJavascript(ttsFillJs("voice", voice)) { raw2 ->
+                    val len = raw2?.trim()?.removeSurrounding("\"")?.toIntOrNull() ?: 0
+                    if (len <= 0) {
+                        failTts("kolom 'Describe the voice style' tidak terisi (percobaan $attempt)")
                         return@evaluateJavascript
                     }
-                    // Tutup menu, buka lagi, verifikasi 2 (framework
-                    // bisa menghapus nilai saat menu ditutup — itu yang
-                    // terjadi 20 Nov 14:15).
-                    webView.evaluateJavascript(ttsClickStyleJs()) { _ ->
-                        ttsHandler.postDelayed({
-                            webView.evaluateJavascript(ttsClickStyleJs()) { _ ->
-                                ttsHandler.postDelayed({
-                                    webView.evaluateJavascript(ttsStyleValueJs()) { raw4 ->
-                                        val v2 = raw4?.trim()?.removeSurrounding("\"") ?: ""
-                                        if (!v2.contains(probe)) {
-                                            retryTtsStyle(voice, probe, attempt)
-                                        } else {
-                                            webView.evaluateJavascript(ttsClickStyleJs()) { _ -> runTtsSpeaker() }
-                                        }
-                                    }
-                                }, 1000)
-                            }
-                        }, 1000)
-                    }
+                    verifyTtsStyleClosed(voice, probe, attempt)
+                }
+            } else {
+                // Percobaan 2: fokus kolom, lalu ketik lewat IME.
+                webView.evaluateJavascript(ttsFocusStyleJs()) { _ ->
+                    ttsHandler.postDelayed({
+                        val typed = ttsTypeReal(voice)
+                        writeTtsStatus("running", "mengetik format suara lewat keyboard (percobaan 2, commitText=$typed)")
+                        ttsHandler.postDelayed({ verifyTtsStyleClosed(voice, probe, attempt) }, 800)
+                    }, 400)
                 }
             }
         }
     }
 
-    /** Isi Style gagal verifikasi: coba ulang sekali, lalu gagal jujur. */
+    /** Verifikasi 1 (sebelum tutup) + verifikasi 2 (tutup-buka) isi Style. */
+    private fun verifyTtsStyleClosed(voice: String, probe: String, attempt: Int) {
+        // Verifikasi 1: baca balik SEBELUM menu ditutup.
+        webView.evaluateJavascript(ttsStyleValueJs()) { raw3 ->
+            val v1 = raw3?.trim()?.removeSurrounding("\"") ?: ""
+            if (!v1.contains(probe)) {
+                retryTtsStyle(voice, probe, attempt)
+                return@evaluateJavascript
+            }
+            // Tutup menu, buka lagi, verifikasi 2 (framework bisa
+            // menghapus nilai saat menu ditutup — itu yang terjadi
+            // 20 Nov 14:15).
+            webView.evaluateJavascript(ttsClickStyleJs()) { _ ->
+                ttsHandler.postDelayed({
+                    webView.evaluateJavascript(ttsClickStyleJs()) { _ ->
+                        ttsHandler.postDelayed({
+                            webView.evaluateJavascript(ttsStyleValueJs()) { raw4 ->
+                                val v2 = raw4?.trim()?.removeSurrounding("\"") ?: ""
+                                if (!v2.contains(probe)) {
+                                    retryTtsStyle(voice, probe, attempt)
+                                } else {
+                                    webView.evaluateJavascript(ttsClickStyleJs()) { _ -> runTtsSpeaker() }
+                                }
+                            }
+                        }, 1000)
+                    }
+                }, 1000)
+            }
+        }
+    }
+
+    /** JS fokus + blok semua isi kolom Style (siap diketik ulang). */
+    private fun ttsFocusStyleJs(): String {
+        return """(function(){var tas=[...document.querySelectorAll('textarea,[contenteditable],input,[role="textbox"]')].filter(function(t){return t.offsetParent!==null;});for(var i=0;i<tas.length;i++){var p=(tas[i].getAttribute('placeholder')||'').toLowerCase();if(p.indexOf('describe the voice style')>=0){tas[i].focus();try{tas[i].setSelectionRange(0,tas[i].value.length);}catch(e){}try{tas[i].select();}catch(e){}return '1';}}return '0';})()"""
+    }
+
+    /** Ketik beneran lewat jalur IME (InputConnection.commitText) —
+     *  event input-nya trusted seperti ketikan pengguna, bukan set
+     *  nilai lewat kode. Mengembalikan true bila commitText diterima. */
+    private fun ttsTypeReal(text: String): Boolean {
+        return try {
+            val ic: InputConnection? = webView.onCreateInputConnection(EditorInfo())
+            if (ic == null) {
+                writeTtsStatus("running", "InputConnection tidak tersedia (percobaan 2)")
+                false
+            } else {
+                ic.commitText(text, 1)
+            }
+        } catch (e: Exception) {
+            writeTtsStatus("running", "commitText error: ${e.message}")
+            false
+        }
+    }
+
+    /** Isi Style gagal verifikasi: percobaan 1 -> ketik keyboard
+     *  (percobaan 2); percobaan 2 gagal -> dump bukti + gagal jujur. */
     private fun retryTtsStyle(voice: String, probe: String, attempt: Int) {
         if (attempt < 2) {
+            writeTtsStatus("running", "format suara belum menempel (percobaan $attempt) - coba ketik lewat keyboard")
             ttsHandler.postDelayed({ waitTtsStyleField(10, voice, probe, attempt + 1) }, 1000)
         } else {
-            failTts("format suara tidak menempel di kotak Style setelah 2 percobaan (isi terbaca kosong) - VO dibatalkan supaya tidak keluar dengan gaya yang salah")
+            runTtsDumpStyle()
+        }
+    }
+
+    /** Gagal total isi Style: dump anatomi kolom ke detail gagal (bukti). */
+    private fun runTtsDumpStyle() {
+        val js = """(function(){var tas=[...document.querySelectorAll('textarea,[contenteditable],input,[role="textbox"]')].filter(function(t){return t.offsetParent!==null;});var out=[];for(var i=0;i<tas.length&&i<8;i++){var t=tas[i];var ph=(t.getAttribute('placeholder')||'').slice(0,40);var al=(t.getAttribute('aria-label')||'').slice(0,40);var v=(t.value||t.textContent||'');out.push(t.tagName+'|ph='+ph+'|al='+al+'|len='+v.length+'|hasProbe='+(v.indexOf('Very bright')>=0));}return out.join(' ;; ');})()"""
+        webView.evaluateJavascript(js) { raw ->
+            val dump = raw?.trim()?.removeSurrounding("\"") ?: ""
+            failTts("format suara tidak menempel di kotak Style setelah 2 percobaan (JS + ketik keyboard) - VO dibatalkan. Dump kolom: $dump")
         }
     }
 
@@ -1595,10 +1651,16 @@ abstract class BrowserActivity : AppCompatActivity() {
 
     /** JS isi satu kolom (voice = gaya suara, script = naskah):
      *  cari textarea yang cocok, isi lewat insertText (fallback ke
-     *  native setter + event input untuk framework Angular/React). */
+     *  native setter + event input untuk framework Angular/React).
+     *  v0.1.44: untuk voice, setter + event SELALU dijalankan walau
+     *  execCommand mengaku sukses (nilainya terbukti hilang), dan
+     *  event pertama adalah InputEvent ber-data (inputType
+     *  insertText, data = teks) — sebagian framework menghitung
+     *  nilai baru dari event.data, dan Event polos (data kosong)
+     *  bisa mengosongkan modelnya. */
     private fun ttsFillJs(role: String, text: String): String {
         val quoted = org.json.JSONObject.quote(text)
-        val js = """(function(role,text){var tas=[...document.querySelectorAll('textarea,[contenteditable],input,[role="textbox"]')].filter(function(t){return t.offsetParent!==null;});var pick=null;if(role==='voice'){pick=tas.find(function(t){return (t.getAttribute('placeholder')||'').toLowerCase().indexOf('describe the voice style')>=0;});if(!pick){pick=tas.find(function(t){var s=((t.getAttribute('aria-label')||'')+' '+(t.getAttribute('placeholder')||'')).toLowerCase();return s.indexOf('style')>=0||s.indexOf('voice')>=0||s.indexOf('describe')>=0||s.indexOf('tone')>=0;});}}else{pick=tas.find(function(t){var s=((t.getAttribute('aria-label')||'')+' '+(t.getAttribute('placeholder')||'')).toLowerCase();return s.indexOf('text')>=0||s.indexOf('script')>=0||s.indexOf('enter')>=0||s.indexOf('speech')>=0||s.indexOf('tags')>=0;});if(!pick&&tas.length>0){pick=tas.reduce(function(a,b){return (b.offsetWidth*b.offsetHeight)>(a.offsetWidth*a.offsetHeight)?b:a;});}}if(!pick)return '0';pick.focus();try{pick.setSelectionRange(0,pick.value.length);}catch(e){}var ok=false;try{ok=document.execCommand('insertText',false,text);}catch(e){}if(!ok||(pick.value||pick.textContent||'').length===0){if(pick.tagName==='TEXTAREA'){var setter=Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype,'value').set;setter.call(pick,text);}else if(pick.tagName==='INPUT'){var setter2=Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype,'value').set;setter2.call(pick,text);}else{pick.textContent=text;}pick.dispatchEvent(new Event('input',{bubbles:true}));try{pick.dispatchEvent(new Event('change',{bubbles:true}));}catch(e){}}return String((pick.value||pick.textContent||'').length);})('$role',$quoted)"""
+        val js = """(function(role,text){var tas=[...document.querySelectorAll('textarea,[contenteditable],input,[role="textbox"]')].filter(function(t){return t.offsetParent!==null;});var pick=null;if(role==='voice'){pick=tas.find(function(t){return (t.getAttribute('placeholder')||'').toLowerCase().indexOf('describe the voice style')>=0;});if(!pick){pick=tas.find(function(t){var s=((t.getAttribute('aria-label')||'')+' '+(t.getAttribute('placeholder')||'')).toLowerCase();return s.indexOf('style')>=0||s.indexOf('voice')>=0||s.indexOf('describe')>=0||s.indexOf('tone')>=0;});}}else{pick=tas.find(function(t){var s=((t.getAttribute('aria-label')||'')+' '+(t.getAttribute('placeholder')||'')).toLowerCase();return s.indexOf('text')>=0||s.indexOf('script')>=0||s.indexOf('enter')>=0||s.indexOf('speech')>=0||s.indexOf('tags')>=0;});if(!pick&&tas.length>0){pick=tas.reduce(function(a,b){return (b.offsetWidth*b.offsetHeight)>(a.offsetWidth*a.offsetHeight)?b:a;});}}if(!pick)return '0';pick.focus();try{pick.setSelectionRange(0,pick.value.length);}catch(e){}var ok=false;try{ok=document.execCommand('insertText',false,text);}catch(e){}if(role==='voice'||!ok||(pick.value||pick.textContent||'').length===0){if(pick.tagName==='TEXTAREA'){var setter=Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype,'value').set;setter.call(pick,text);}else if(pick.tagName==='INPUT'){var setter2=Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype,'value').set;setter2.call(pick,text);}else{pick.textContent=text;}try{pick.dispatchEvent(new InputEvent('input',{bubbles:true,cancelable:true,inputType:'insertText',data:text}));}catch(e){}pick.dispatchEvent(new Event('input',{bubbles:true}));try{pick.dispatchEvent(new Event('change',{bubbles:true}));}catch(e){}}return String((pick.value||pick.textContent||'').length);})('$role',$quoted)"""
         return js
     }
 
