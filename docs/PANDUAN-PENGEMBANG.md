@@ -455,6 +455,29 @@ muncul (Ubah nama / Matikan Live / Hapus Space).
    "Beku" juga. Hapus Space yang beku → Space baru di slot yang sama
    tidak ikut beku.
 
+## Tes Style v0.1.49 di HP (bahasa bayi)
+
+v0.1.49 memperbaiki VERIFIKASI-nya: sesudah style menempel,
+tombol Style berganti label jadi teks style-nya sendiri ("Very
+bright, high-p…") — jadi sekarang eksekutor memeriksa label
+tombol itu (bukti yang kamu lihat di layar), bukan buka menu
+lagi. Kalau style sudah nempel dari sebelumnya (misalnya dari
+input manual), eksekutor langsung lanjut ke Speaker tanpa isi
+ulang. Tap-nya juga sekarang dicek: kalau tap pertama menutup
+menu, menu dibuka lagi dan tap diulang sekali.
+
+1. Install APK v0.1.49 (nimpa — JANGAN uninstall).
+2. Tutup SenzSpace, kembali ke Muse. JANGAN buka Space 7.
+   Bilang ke Jhon: "generate VO Charger di Space 7". LULUS bila:
+   Jhon jawab "done" + nama file VO, DAN file wav ada di File
+   Manager → aistudio — tanpa kamu ketuk apa pun.
+3. Cek suara: buka Space 7, putar file VO — harus terdengar
+   ceria, cepat, dan bersemangat (gaya Riko). Kalau suaranya
+   datar/normal, format Style tidak menempel — kabari Jhon.
+4. Kalau "failed", baca alasannya dan kirim ke Jhon (ada
+   "Dump tombol" atau "Dump kolom" + "probe=..." + "tap rect=..."
+   di ujung alasan — itu bukti buat perbaikan berikutnya).
+
 ## Tes Style v0.1.48 di HP (bahasa bayi)
 
 v0.1.48 meniru persis cara Sendy input sendiri di video 16:07:

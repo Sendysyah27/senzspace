@@ -177,6 +177,7 @@ abstract class BrowserActivity : AppCompatActivity() {
     private var ttsRunning: Boolean = false
     private var ttsFilesBefore: Set<String> = emptySet()
     private var ttsDownloadInfo: String = ""
+    private var ttsLastTapInfo: String = ""
     private val ttsHandler = Handler(Looper.getMainLooper())
 
     /** Callback unduhan file-chooser yang sedang menunggu pilihan user.
@@ -1486,13 +1487,26 @@ abstract class BrowserActivity : AppCompatActivity() {
      *  -> elemen daun teks "Style"). */
     private fun runTtsStyle() {
         val voice = pendingTtsVoice ?: return runTtsSpeaker()
-        writeTtsStatus("running", "membuka pengaturan Style")
-        waitTtsStyleButton(10, voice)
+        val probe = voice.take(11) // "Very bright" — penanda isi menempel
+        // v0.1.49: style mungkin SUDAH menempel (diisi manual / run
+        // sebelumnya) — tombol Style menampilkan formatnya, bukan
+        // kata "Style". Bila label sudah berisi probe, lewati isi.
+        webView.evaluateJavascript(ttsStyleButtonLabelJs(probe)) { raw ->
+            val label = raw?.trim()?.removeSurrounding("\"") ?: ""
+            if (label.contains(probe)) {
+                writeTtsStatus("running", "format suara sudah menempel (tombol Style menampilkan format) - lanjut pilih speaker")
+                runTtsSpeaker()
+                return@evaluateJavascript
+            }
+            writeTtsStatus("running", "membuka pengaturan Style")
+            waitTtsStyleButton(10, voice)
+        }
     }
 
     /** Tunggu tombol Style muncul (poll 10x1 dtk), lalu klik. */
     private fun waitTtsStyleButton(triesLeft: Int, voice: String) {
-        webView.evaluateJavascript(ttsClickStyleJs()) { raw ->
+        val probe = voice.take(11) // "Very bright" — penanda isi menempel
+        webView.evaluateJavascript(ttsClickStyleJs(probe)) { raw ->
             val clean = raw?.trim()?.removeSurrounding("\"") ?: ""
             if (clean == "0") {
                 if (triesLeft <= 0) {
@@ -1503,16 +1517,27 @@ abstract class BrowserActivity : AppCompatActivity() {
                 return@evaluateJavascript
             }
             writeTtsStatus("running", "tombol Style ketemu (via $clean) - mengisi format suara")
-            val probe = voice.take(11) // "Very bright" — penanda isi menempel
             waitTtsStyleField(10, voice, probe, 1)
         }
     }
 
     /** JS klik tombol "Style" (buka/tutup menu) — v0.1.46: tiga
      *  lapis selektor (button, [role=button], elemen daun), hasil
-     *  'btn'|'role'|'leaf'|'0'. */
-    private fun ttsClickStyleJs(): String {
-        return """(function(){var vis=function(e){return e.offsetParent!==null;};var txt=function(e){return (e.textContent||'').trim();};var bs=[...document.querySelectorAll('button')].filter(vis);for(var i=0;i<bs.length;i++){var t=txt(bs[i]);if(t==='Style'||t.indexOf('Style')===0){bs[i].click();return 'btn';}}var rs=[...document.querySelectorAll('[role="button"]')].filter(vis);for(var j=0;j<rs.length;j++){var u=txt(rs[j]);if(u==='Style'||u.indexOf('Style')===0){rs[j].click();return 'role';}}var els=[...document.querySelectorAll('*')].filter(function(e){return vis(e)&&e.children.length===0;});for(var k=0;k<els.length;k++){if(txt(els[k])==='Style'){els[k].click();return 'leaf';}}return '0';})()"""
+     *  'btn'|'role'|'leaf'|'0'. v0.1.49: tombol BERGANTI label jadi
+     *  teks style sesudah menempel ("Very bright, high-p…", bukti
+     *  17:07) — pencocokan terima label "Style" ATAU label yang
+     *  berisi probe. */
+    private fun ttsClickStyleJs(probe: String): String {
+        val q = org.json.JSONObject.quote(probe)
+        return """(function(){var p=$q;var vis=function(e){return e.offsetParent!==null;};var txt=function(e){return (e.textContent||'').trim();};var ok=function(t){return t==='Style'||t.indexOf('Style')===0||t.indexOf(p)>=0;};var bs=[...document.querySelectorAll('button')].filter(vis);for(var i=0;i<bs.length;i++){var t=txt(bs[i]);if(ok(t)){bs[i].click();return 'btn';}}var rs=[...document.querySelectorAll('[role="button"]')].filter(vis);for(var j=0;j<rs.length;j++){var u=txt(rs[j]);if(ok(u)){rs[j].click();return 'role';}}var els=[...document.querySelectorAll('*')].filter(function(e){return vis(e)&&e.children.length===0;});for(var k=0;k<els.length;k++){if(txt(els[k])==='Style'){els[k].click();return 'leaf';}}return '0';})()"""
+    }
+
+    /** JS: label tombol Style saat ini — teks tombolnya, atau '0'
+     *  bila tidak ketemu. Sesudah style menempel, labelnya adalah
+     *  teks style itu sendiri (bukan lagi kata "Style"). */
+    private fun ttsStyleButtonLabelJs(probe: String): String {
+        val q = org.json.JSONObject.quote(probe)
+        return """(function(){var p=$q;var els=[...document.querySelectorAll('button,[role="button"]')].filter(function(e){return e.offsetParent!==null;});for(var i=0;i<els.length;i++){var t=(els[i].textContent||'').trim();if(t==='Style'||t.indexOf('Style')===0||t.indexOf(p)>=0){return t;}}var leaf=[...document.querySelectorAll('*')].filter(function(e){return e.children.length===0&&e.offsetParent!==null&&(e.textContent||'').trim()==='Style';});if(leaf.length>0){return 'Style';}return '0';})()"""
     }
 
     /** Gagal cari tombol Style: dump label tombol + path URL (bukti). */
@@ -1627,7 +1652,12 @@ abstract class BrowserActivity : AppCompatActivity() {
         }
     }
 
-    /** Verifikasi 1 (sebelum tutup) + verifikasi 2 (tutup-buka) isi Style. */
+    /** Verifikasi 1 (kotak, sebelum tutup) + verifikasi 2 (label
+     *  tombol yang tertutup) isi Style — v0.1.49. Pelajaran 20 Nov
+     *  17:07: sesudah style menempel, tombol Style BERGANTI label
+     *  jadi teks style, jadi buka-ulang + baca kotak gagal walau
+     *  nilainya menempel. Label tombol yang tertutup adalah bukti
+     *  yang terlihat di layar — tidak perlu buka menu lagi. */
     private fun verifyTtsStyleClosed(voice: String, probe: String, attempt: Int) {
         // Verifikasi 1: baca balik SEBELUM menu ditutup.
         webView.evaluateJavascript(ttsStyleValueJs()) { raw3 ->
@@ -1636,22 +1666,19 @@ abstract class BrowserActivity : AppCompatActivity() {
                 retryTtsStyle(voice, probe, attempt)
                 return@evaluateJavascript
             }
-            // Tutup menu, buka lagi, verifikasi 2 (framework bisa
-            // menghapus nilai saat menu ditutup — itu yang terjadi
-            // 20 Nov 14:15).
-            webView.evaluateJavascript(ttsClickStyleJs()) { _ ->
+            // Tutup menu (klik tombol Style — pencocokan sudah
+            // terima label ber-probe), lalu verifikasi 2 dari LABEL
+            // tombol yang tertutup.
+            webView.evaluateJavascript(ttsClickStyleJs(probe)) { _ ->
                 ttsHandler.postDelayed({
-                    webView.evaluateJavascript(ttsClickStyleJs()) { _ ->
-                        ttsHandler.postDelayed({
-                            webView.evaluateJavascript(ttsStyleValueJs()) { raw4 ->
-                                val v2 = raw4?.trim()?.removeSurrounding("\"") ?: ""
-                                if (!v2.contains(probe)) {
-                                    retryTtsStyle(voice, probe, attempt)
-                                } else {
-                                    webView.evaluateJavascript(ttsClickStyleJs()) { _ -> runTtsSpeaker() }
-                                }
-                            }
-                        }, 1000)
+                    webView.evaluateJavascript(ttsStyleButtonLabelJs(probe)) { raw4 ->
+                        val label = raw4?.trim()?.removeSurrounding("\"") ?: ""
+                        if (!label.contains(probe)) {
+                            retryTtsStyle(voice, probe, attempt)
+                        } else {
+                            writeTtsStatus("running", "format suara menempel (tombol Style menampilkan format) - lanjut pilih speaker")
+                            runTtsSpeaker()
+                        }
                     }
                 }, 1000)
             }
@@ -1691,6 +1718,12 @@ abstract class BrowserActivity : AppCompatActivity() {
         }, 120)
     }
 
+    /** JS: keadaan kotak Style sesudah tap — 'field|active=TAG|ph'
+     *  bila kotak masih ada, 'nofield|active=…' bila menu ketutup. */
+    private fun ttsStyleFieldStateJs(): String {
+        return """(function(){var tas=[...document.querySelectorAll('textarea,[contenteditable],input,[role="textbox"]')].filter(function(t){return t.offsetParent!==null;});var found='nofield';for(var i=0;i<tas.length;i++){var p=(tas[i].getAttribute('placeholder')||'').toLowerCase();if(p.indexOf('describe the voice style')>=0){found='field';break;}}var ae=document.activeElement;var a=ae?(ae.tagName+'|'+((ae.getAttribute('placeholder')||'').slice(0,20))):'none';return found+'|active='+a;})()"""
+    }
+
     /** Percobaan 4: tap beneran + IME hidup — v0.1.48.
      *  Pelajaran dari video manual Sendy (20 Nov 16:07): nilai
      *  cuma menempel lewat sesi IME beneran — tap beneran ke kotak
@@ -1698,8 +1731,17 @@ abstract class BrowserActivity : AppCompatActivity() {
      *  commitText lewat koneksi itu. Tap -> tunggu 1200 ms
      *  (keyboard naik) -> commitText lewat onCreateInputConnection
      *  (yang kini koneksi HIDUP, bukan manual) -> verifikasi.
-     *  onDone(true/false) = commitText diterima atau tidak. */
+     *  v0.1.49: jeda 500 ms sebelum baca rect (menu selesai
+     *  animasi); sesudah tap dicek kotak masih ada + fokusnya;
+     *  bila menu ketutup (tap meleset), buka lagi + tap ulang
+     *  sekali; rect+scale+titik+state dicatat ke ttsLastTapInfo
+     *  (muncul di dump gagal). onDone(true/false) = commitText
+     *  diterima atau tidak. */
     private fun ttsTypeLiveIme(voice: String, onDone: (Boolean) -> Unit) {
+        ttsHandler.postDelayed({ ttsTypeLiveImeOnce(voice, onDone, false) }, 500)
+    }
+
+    private fun ttsTypeLiveImeOnce(voice: String, onDone: (Boolean) -> Unit, retried: Boolean) {
         webView.evaluateJavascript(ttsStyleFieldRectJs()) { raw ->
             val clean = raw?.trim()?.removeSurrounding("\"") ?: ""
             val parts = clean.split("|")
@@ -1711,12 +1753,25 @@ abstract class BrowserActivity : AppCompatActivity() {
             val scale = webView.scale
             val cx = (parts[0].toFloatOrNull() ?: 0f) * scale
             val cy = (parts[1].toFloatOrNull() ?: 0f) * scale
-            writeTtsStatus("running", "mengetuk kotak Style (percobaan 4, ${cx.toInt()}x${cy.toInt()}) - menunggu keyboard")
+            ttsLastTapInfo = "tap rect=${parts[0]}x${parts[1]} scale=$scale titik=${cx.toInt()}x${cy.toInt()}"
+            writeTtsStatus("running", "mengetuk kotak Style (percobaan 4, $ttsLastTapInfo) - menunggu keyboard")
             ttsTapAt(cx, cy)
             ttsHandler.postDelayed({
-                val typed = ttsTypeReal(voice)
-                writeTtsStatus("running", "mengetik format suara lewat IME hidup (percobaan 4, commitText=$typed)")
-                ttsHandler.postDelayed({ onDone(typed) }, 800)
+                webView.evaluateJavascript(ttsStyleFieldStateJs()) { rawState ->
+                    val state = rawState?.trim()?.removeSurrounding("\"") ?: ""
+                    ttsLastTapInfo += " state=$state"
+                    if (!state.startsWith("field") && !retried) {
+                        // Tap meleset / menu ketutup — buka lagi + tap ulang sekali.
+                        writeTtsStatus("running", "tap pertama menutup menu (kotak hilang) - buka lagi + tap ulang (percobaan 4)")
+                        webView.evaluateJavascript(ttsClickStyleJs(voice.take(11))) { _ ->
+                            ttsHandler.postDelayed({ ttsTypeLiveImeOnce(voice, onDone, true) }, 1000)
+                        }
+                        return@evaluateJavascript
+                    }
+                    val typed = ttsTypeReal(voice)
+                    writeTtsStatus("running", "mengetik format suara lewat IME hidup (percobaan 4, $state, commitText=$typed)")
+                    ttsHandler.postDelayed({ onDone(typed) }, 800)
+                }
             }, 1200)
         }
     }
@@ -1766,7 +1821,8 @@ abstract class BrowserActivity : AppCompatActivity() {
         val js = """(function(){var tas=[...document.querySelectorAll('textarea,[contenteditable],input,[role="textbox"]')].filter(function(t){return t.offsetParent!==null;});var out=[];var ae=document.activeElement;out.push('active='+(ae?(ae.tagName+'|'+((ae.getAttribute('placeholder')||'').slice(0,30))):'none'));for(var i=0;i<tas.length&&i<8;i++){var t=tas[i];var ph=(t.getAttribute('placeholder')||'').slice(0,40);var al=(t.getAttribute('aria-label')||'').slice(0,40);var v=(t.value||t.textContent||'');out.push(t.tagName+'|ph='+ph+'|al='+al+'|len='+v.length+'|hasProbe='+(v.indexOf('Very bright')>=0)+'|dis='+t.disabled+'|ro='+t.readOnly);}var st=null;for(var j=0;j<tas.length;j++){var p=(tas[j].getAttribute('placeholder')||'').toLowerCase();if(p.indexOf('describe the voice style')>=0){st=tas[j];break;}}if(st){var setter=null;try{setter=Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype,'value').set;}catch(e){}try{if(setter){setter.call(st,'PROBE123');}else{st.value='PROBE123';}}catch(e2){}var back=(st.value||st.textContent||'');out.push('probe=set8-read'+back.length+'|eq='+(back==='PROBE123'));try{if(setter){setter.call(st,'');}else{st.value='';}}catch(e3){}}else{out.push('probe=no-field');}return out.join(' ;; ');})()"""
         webView.evaluateJavascript(js) { raw ->
             val dump = raw?.trim()?.removeSurrounding("\"") ?: ""
-            failTts("format suara tidak menempel di kotak Style setelah 4 percobaan (JS + ketik keyboard + tombol keyboard + tap beneran + IME hidup) - VO dibatalkan. Dump kolom: $dump")
+            val tap = if (ttsLastTapInfo.isNotEmpty()) " | $ttsLastTapInfo" else ""
+            failTts("format suara tidak menempel di kotak Style setelah 4 percobaan (JS + ketik keyboard + tombol keyboard + tap beneran + IME hidup) - VO dibatalkan. Dump kolom: $dump$tap")
         }
     }
 

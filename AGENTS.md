@@ -118,6 +118,22 @@ Jangan cuma diagnosa dari kodenya.
   (BufferedReader bisa menelan byte body). senz.py v2 ngomong ke
   API via `adb forward tcp:19335 tcp:19335`; procs/shot/type/tap/
   key/home tetap ADB (level perangkat).
+- API 49 (20 Nov, v0.1.49): VERIFIKASI LEWAT LABEL TOMBOL + TAP
+  DICEK (Gas Sendy 17:09). Bukti 17:07: sesudah style menempel,
+  tombol Style BERGANTI label jadi teks style ("Very bright,
+  high-p…") sehingga ttsClickStyleJs (cari teks "Style") tidak
+  menemukannya lagi -> klik tutup/buka-ulang gagal -> baca #2
+  gagal -> failed, walau nilainya sudah menempel. Fix: (a)
+  runTtsStyle cek dulu label tombol — sudah berisi probe ->
+  langsung ke Speaker (jangan isi ulang); (b) verifyTtsStyleClosed
+  verifikasi #2 = baca LABEL tombol Style yang tertutup (harus
+  berisi probe) — tidak perlu buka menu lagi; (c)
+  ttsClickStyleJs(probe) terima label "Style" ATAU label
+  ber-probe; (d) tap percobaan 4: jeda 500 ms sebelum baca rect
+  (menu selesai animasi), cek sesudah tap kotak masih ada +
+  fokusnya (ttsStyleFieldStateJs), catat rect+scale+titik+state
+  ke ttsLastTapInfo (muncul di dump gagal), bila menu ketutup
+  buka lagi + tap ulang sekali.
 - API 48 (20 Nov, v0.1.48): TAP BENERAN + IME HIDUP (Gas Sendy
   16:08). Video manual Sendy (16:07) menjawab mekanisme: nilai
   cuma menempel lewat sesi IME beneran — tap kotak -> keyboard
