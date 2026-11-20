@@ -1499,12 +1499,15 @@ abstract class BrowserActivity : AppCompatActivity() {
                 return@evaluateJavascript
             }
             writeTtsStatus("running", "membuka pengaturan Style")
-            waitTtsStyleButton(10, voice)
+            waitTtsStyleButton(10, voice, 1)
         }
     }
 
-    /** Tunggu tombol Style muncul (poll 10x1 dtk), lalu klik. */
-    private fun waitTtsStyleButton(triesLeft: Int, voice: String) {
+    /** Tunggu tombol Style muncul (poll 10x1 dtk), lalu klik.
+     *  v0.1.50: nomor percobaan dialirkan (dulu hardcode 1 di
+     *  pemanggilan waitTtsStyleField — percobaan ulang selalu
+     *  dilaporkan sebagai percobaan 1). */
+    private fun waitTtsStyleButton(triesLeft: Int, voice: String, attempt: Int) {
         val probe = voice.take(11) // "Very bright" — penanda isi menempel
         webView.evaluateJavascript(ttsClickStyleJs(probe)) { raw ->
             val clean = raw?.trim()?.removeSurrounding("\"") ?: ""
@@ -1512,12 +1515,12 @@ abstract class BrowserActivity : AppCompatActivity() {
                 if (triesLeft <= 0) {
                     runTtsDumpButtons()
                 } else {
-                    ttsHandler.postDelayed({ waitTtsStyleButton(triesLeft - 1, voice) }, 1000)
+                    ttsHandler.postDelayed({ waitTtsStyleButton(triesLeft - 1, voice, attempt) }, 1000)
                 }
                 return@evaluateJavascript
             }
             writeTtsStatus("running", "tombol Style ketemu (via $clean) - mengisi format suara")
-            waitTtsStyleField(10, voice, probe, 1)
+            waitTtsStyleField(10, voice, probe, attempt)
         }
     }
 
@@ -1794,10 +1797,44 @@ abstract class BrowserActivity : AppCompatActivity() {
         }
     }
 
+    /** v0.1.50: pastikan menu Style KEBUKA sebelum percobaan isi.
+     *  Bug Run 12 (v0.1.49): sesudah verifikasi #1 lolos, menu
+     *  ditutup oleh klik tutup; verifikasi #2 (label) gagal ->
+     *  retry langsung cari kolom di menu yang KETUTUP -> 10 dtk
+     *  tidak ketemu -> failed, padahal menunya tinggal dibuka
+     *  lagi. Kolom ada -> langsung onReady (tanpa klik, jangan
+     *  sampai klik malah menutup menu yang sudah kebuka); kolom
+     *  tidak ada -> klik tombol Style, tunggu 1000 ms, cek lagi;
+     *  masih tidak ada -> gagal jujur dengan nomor percobaan. */
+    private fun ensureStyleMenuOpen(voice: String, probe: String, attempt: Int, onReady: () -> Unit) {
+        webView.evaluateJavascript(ttsStyleFieldStateJs()) { raw ->
+            val state = raw?.trim()?.removeSurrounding("\"") ?: ""
+            if (state.startsWith("field")) {
+                onReady()
+                return@evaluateJavascript
+            }
+            writeTtsStatus("running", "menu Style ketutup (percobaan $attempt) - membuka lagi")
+            webView.evaluateJavascript(ttsClickStyleJs(probe)) { _ ->
+                ttsHandler.postDelayed({
+                    webView.evaluateJavascript(ttsStyleFieldStateJs()) { raw2 ->
+                        val state2 = raw2?.trim()?.removeSurrounding("\"") ?: ""
+                        if (state2.startsWith("field")) {
+                            onReady()
+                        } else {
+                            failTts("kolom 'Describe the voice style' tidak muncul setelah Style dibuka (percobaan $attempt)")
+                        }
+                    }
+                }, 1000)
+            }
+        }
+    }
+
     /** Isi Style gagal verifikasi: percobaan 1 -> ketik IME
      *  (percobaan 2); percobaan 2 -> ketik KeyEvent (percobaan 3);
      *  percobaan 3 -> tap beneran + IME hidup (percobaan 4);
-     *  percobaan 4 gagal -> dump bukti + gagal jujur. */
+     *  percobaan 4 gagal -> dump bukti + gagal jujur.
+     *  v0.1.50: percobaan ulang lewat ensureStyleMenuOpen dulu
+     *  (menu bisa ketutup sesudah verifikasi #2). */
     private fun retryTtsStyle(voice: String, probe: String, attempt: Int) {
         if (attempt < 4) {
             val next = when (attempt) {
@@ -1806,7 +1843,7 @@ abstract class BrowserActivity : AppCompatActivity() {
                 else -> "coba tap beneran + IME hidup"
             }
             writeTtsStatus("running", "format suara belum menempel (percobaan $attempt) - $next")
-            ttsHandler.postDelayed({ waitTtsStyleField(10, voice, probe, attempt + 1) }, 1000)
+            ttsHandler.postDelayed({ ensureStyleMenuOpen(voice, probe, attempt + 1) { waitTtsStyleField(10, voice, probe, attempt + 1) } }, 1000)
         } else {
             runTtsDumpStyle()
         }

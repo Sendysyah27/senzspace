@@ -118,6 +118,32 @@ Jangan cuma diagnosa dari kodenya.
   (BufferedReader bisa menelan byte body). senz.py v2 ngomong ke
   API via `adb forward tcp:19335 tcp:19335`; procs/shot/type/tap/
   key/home tetap ADB (level perangkat).
+- API 50 (20 Nov, v0.1.50): PASTIKAN MENU KEBUKA DULU + NOMOR
+  PERCOBAAN DIBAWA TERUS (Gas Sendy 18:03 — lanjutan dari STOP
+  17:32 kemarin, sesudah VO Charger TERBUKTI lewat screencast
+  ADB: tap beneran + Gboard + input text = Style nempel).
+  Bug Run 12 (v0.1.49): verifikasi #1 lolos -> klik tutup
+  menutup menu -> framework TIDAK commit nilai DOM ke label
+  tombol -> verifikasi #2 (label) gagal -> retry langsung ke
+  waitTtsStyleField yang cari kolom di menu KETUTUP -> 10 dtk
+  '0' -> failed "kolom tidak muncul (percobaan 2)", padahal
+  tinggal dibuka lagi. Percobaan 4 (tap + IME hidup) TIDAK
+  PERNAH JALAN di v0.1.49. Fix: (a) ensureStyleMenuOpen baru —
+  tiap retry cek dulu kolomnya ada (ttsStyleFieldStateJs):
+  ada -> langsung isi (TANPA klik, jangan sampai klik malah
+  menutup menu yang sudah kebuka); tidak ada -> klik tombol
+  Style (ttsClickStyleJs, terima label "Style" atau ber-probe),
+  tunggu 1000 ms, cek lagi; masih tidak ada -> gagal jujur
+  dengan nomor percobaan. Dipakai retryTtsStyle untuk semua
+  percobaan 2-4. (b) waitTtsStyleButton kini bawa nomor
+  percobaan (dulu hardcode 1 di pemanggilan
+  waitTtsStyleField — percobaan ulang selalu dilaporkan
+  sebagai percobaan 1). Verifikasi #2 (label) TETAP sebagai
+  bukti. RISIKO JUJUR: tap eksekutor = dispatchTouchEvent
+  (sentuhan sintetis dari dalam app), bukan jari beneran —
+  sistem bisa saja tidak membukakan keyboard untuknya; bila
+  attempt 4 gagal juga, jalur API buat VO mentok di Style
+  dan VO tetap lewat screencast, prompt via API.
 - API 49 (20 Nov, v0.1.49): VERIFIKASI LEWAT LABEL TOMBOL + TAP
   DICEK (Gas Sendy 17:09). Bukti 17:07: sesudah style menempel,
   tombol Style BERGANTI label jadi teks style ("Very bright,
