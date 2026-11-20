@@ -455,6 +455,22 @@ muncul (Ubah nama / Matikan Live / Hapus Space).
    "Beku" juga. Hapus Space yang beku → Space baru di slot yang sama
    tidak ikut beku.
 
+## Tes Link Chat v0.1.53 di HP (bahasa bayi)
+
+v0.1.53 bikin Jhon bisa MEMBUKA LAGI chat produksi (Charger,
+Gigi, Paper Cut) lewat API — tanpa kamu ketuk. Caranya: tiap
+Space sekarang ikut mencatat daftar chat di sidebar (judul +
+alamat chat-nya) di dalam "catatan halaman". Jadi begitu kamu
+buka Space sekali, Jhon bisa lihat alamat chat produksinya dan
+menyuruh Space itu balik ke chat tersebut.
+
+1. Install APK v0.1.53 (nimpa — JANGAN uninstall).
+2. Buka Space 1 (Charger) sekali dari Beranda, lalu kembali ke
+   Muse. Bilang ke Jhon: "cek chat Space 1".
+3. LULUS bila: Jhon bisa menyebut judul + alamat chat Charger
+   dari daftar chat, dan (pas limit habis 22:50) menyuruh Space 1
+   balik ke chat itu lewat API tanpa layarmu ketarik.
+
 ## Tes Page v0.1.52 di HP (bahasa bayi)
 
 v0.1.52 bikin Jhon bisa MEMBACA isi Space dari jauh, lewat

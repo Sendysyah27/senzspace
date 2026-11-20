@@ -375,7 +375,12 @@ abstract class BrowserActivity : AppCompatActivity() {
      *  di Kotlin. Limit: EN "5-hour message limit" / "out of free
      *  messages", ID "kehabisan pesan gratis" / "Penggunaan gratis".
      *  Reset: EN "resets at 10:50 PM", ID "pukul 00.20". Generating
-     *  (best effort): tombol Stop ada di halaman. */
+     *  (best effort): tombol Stop ada di halaman.
+     *  v0.1.53 - field ke-8: daftar link chat sidebar (maks 20,
+     *  "judul^url" dipisah "~"): semua <a href="/chat/<id>"> di DOM
+     *  — sidebar ketutup pun link-nya tetap ada di DOM, jadi chat
+     *  produksi bisa dibuka lagi lewat POST /navigate tanpa ketuk.
+     *  Judul dibersihkan dari "^" dan "~" supaya pemisah aman. */
     private fun pageSnapshotJs(): String = """
         (function(){try{
         var txt=document.body?document.body.innerText:'';
@@ -389,8 +394,18 @@ abstract class BrowserActivity : AppCompatActivity() {
         var m=txt.match(/resets at ([0-9:]+ [AP]M)/)||txt.match(/pukul ([0-9]{1,2}\.[0-9]{2})/);
         var reset=m?m[1]:'';
         var u='';try{u=location.origin+location.pathname;}catch(e){}
-        return [u,clean(document.title),stop?'1':'0',lim?'1':'0',reset,head,tail].join('§');
-        }catch(e){return '§§0§0§§§';}})()
+        var links=[];var seen={};
+        var as=document.querySelectorAll('a[href*="/chat/"]');
+        for(var i=0;i<as.length&&links.length<20;i++){
+        var h=as[i].getAttribute('href')||'';
+        if(!/^\/chat\/[A-Za-z0-9-]+$/.test(h)) continue;
+        if(seen[h]) continue;seen[h]=1;
+        var t=clean(as[i].innerText||'').replace(/[\^~]/g,' ');
+        if(!t) continue;
+        links.push(t+'^'+location.origin+h);
+        }
+        return [u,clean(document.title),stop?'1':'0',lim?'1':'0',reset,head,tail,links.join('~')].join('§');
+        }catch(e){return '§§0§0§§§§';}})()
     """.trimIndent()
 
     /** v0.1.52 - tulis snapshot halaman ke api-page-<suffix>.json
@@ -414,11 +429,25 @@ abstract class BrowserActivity : AppCompatActivity() {
                 try {
                     val s = raw?.removeSurrounding("\"") ?: return@evaluateJavascript
                     val p = s.split("§")
-                    if (p.size < 7) return@evaluateJavascript
+                    if (p.size < 8) return@evaluateJavascript
                     val limited = p[3] == "1"
                     val reset = p[4]
                     if (limited) {
                         SpaceStatus.writeLimit(this, dataDirectorySuffix, reset)
+                    }
+                    // v0.1.53: field ke-8 = link chat sidebar
+                    // ("judul^url" dipisah "~", maks 20).
+                    val chats = org.json.JSONArray()
+                    if (p[7].isNotEmpty()) {
+                        for (pair in p[7].split("~")) {
+                            val kv = pair.split("^", limit = 2)
+                            if (kv.size == 2 && kv[1].isNotEmpty()) {
+                                chats.put(org.json.JSONObject().apply {
+                                    put("title", kv[0])
+                                    put("url", kv[1])
+                                })
+                            }
+                        }
                     }
                     val obj = org.json.JSONObject().apply {
                         put("name", spaceName)
@@ -429,6 +458,7 @@ abstract class BrowserActivity : AppCompatActivity() {
                         put("limitReset", reset)
                         put("text", p[5])
                         put("tail", p[6])
+                        put("chats", chats)
                         put("updated", System.currentTimeMillis())
                     }
                     pageStatusFile().writeText(obj.toString())

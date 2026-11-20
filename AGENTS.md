@@ -118,6 +118,25 @@ Jangan cuma diagnosa dari kodenya.
   (BufferedReader bisa menelan byte body). senz.py v2 ngomong ke
   API via `adb forward tcp:19335 tcp:19335`; procs/shot/type/tap/
   key/home tetap ADB (level perangkat).
+- API 53 (20 Nov, v0.1.53): SNAPSHOT BAWA DAFTAR LINK CHAT SIDEBAR
+  (Gas Sendy 21:16 — "Gas, bangun v0.1.53", jawaban atas "lu buka
+  aja lewat API" 21:14). Masalah: chat produksi (Charger/Gigi/
+  Paper Cut) ke-reset ke /new sesudah install, dan snapshot v0.1.52
+  cuma bawa teks (~700 karakter, sidebar ketutup) — URL chat
+  (claude.ai/chat/<uuid>) tidak ketahuan, jadi POST /navigate belum
+  bisa dipakai buat balik ke chat itu. Isi: pageSnapshotJs kini
+  kumpulkan juga semua <a href="/chat/<id>"> di DOM (maks 20,
+  dedupe by href, judul dibersihkan dari "^"/"~") sebagai field
+  ke-8 snapshot ("judul^url" dipisah "~"); capturePageSnapshot
+  menulisnya sebagai array `chats: [{title, url}]` di
+  api-page-<suffix>.json — GET /page langsung membawanya tanpa
+  perubahan ApiServer/senz.py. ASUMSI YANG DIUJI TES LIVE:
+  link sidebar tetap ada di DOM walau sidebar ketutup (tampilan
+  HP). Bila kosong, fallback berikutnya: buka sidebar dulu lewat
+  JS sebelum kumpulkan link (belum dibangun). Tes live: sesudah
+  install + buka Space, /page harus bawa chats[] berisi chat
+  produksi — lalu /navigate bisa buka chat Charger by URL pas
+  limit habis 22:50.
 - API 52 (20 Nov, v0.1.52): FULL AKSES APP LEWAT API BRIDGE (Gas
   Sendy 20:38 — "Bangun Full akses app pake API bridge", jawaban
   atas temuan 20:35: monitoring Space 2-4 TIDAK BISA lewat
