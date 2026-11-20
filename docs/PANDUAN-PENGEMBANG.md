@@ -455,6 +455,26 @@ muncul (Ubah nama / Matikan Live / Hapus Space).
    "Beku" juga. Hapus Space yang beku → Space baru di slot yang sama
    tidak ikut beku.
 
+## Tes Dwi-Bahasa + Prompt v0.1.55 di HP (bahasa bayi)
+
+v0.1.55 memperbaiki semua tombol yang cuma bisa bahasa Inggris:
+sekarang tombolnya dikenali dalam bahasa Inggris DAN bahasa Indonesia.
+Jadi Space yang tampilannya bahasa Indonesia (Space 4) bisa dipakai
+penuh lewat API, sama seperti Space berbahasa Inggris.
+
+1. Install APK v0.1.55 (nimpa — JANGAN uninstall).
+2. Buka Space 4 sekali dari Beranda, tunggu 1 menit, bilang ke Jhon:
+   "cek chat Space 4". LULUS bila: daftar chat Space 4 muncul (dulu
+   kosong), plus Jhon bisa nyebut bahasa tampilannya ("id").
+3. Jhon akan kirim satu pesan tes pendek lewat API di Space 4
+   (chat baru, tanpa file). LULUS bila: pesannya terkirim, Jhon bisa
+   lihat status "terkirim".
+4. Jhon akan kirim satu pesan tes + 1 file kecil lewat API di Space 1.
+   LULUS bila: file-nya muncul sebagai lampiran, pesannya terkirim.
+5. Jam 22:50 (limit Charger habis): Jhon kirim "continue last
+   checkpoint" ke chat Charger lewat API. LULUS bila: Claude lanjut
+   kerja dari checkpoint terakhir.
+
 ## Tes Sidebar v0.1.54 di HP (bahasa bayi)
 
 v0.1.54 memperbaiki v0.1.53 yang daftar chat-nya kosong: ternyata

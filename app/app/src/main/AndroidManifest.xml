@@ -15,6 +15,9 @@
          dari optimasi baterai supaya Doze tidak menidurkan Space.
          Izinnya lewat dialog sistem di Pengaturan (tidak bisa diam-diam). -->
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+    <!-- v0.1.55 (audit API, AKAR 4): BootReceiver — hidupkan server API
+         sesudah HP reboot tanpa buka app. -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
     <application
         android:allowBackup="true"
@@ -239,6 +242,16 @@
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="Menjalankan server API lokal SenzSpace (localhost) untuk kontrol oleh Jhon." />
         </service>
+
+        <!-- v0.1.55 (audit API, AKAR 4): hidupkan ApiService sesudah
+             HP reboot — tanpa ini API mati sampai app dibuka manual. -->
+        <receiver
+            android:name=".BootReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+            </intent-filter>
+        </receiver>
 
     </application>
 </manifest>

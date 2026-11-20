@@ -378,22 +378,19 @@ abstract class BrowserActivity : AppCompatActivity() {
      *  (best effort): tombol Stop ada di halaman.
      *  v0.1.53 - field ke-8: daftar link chat sidebar (maks 20,
      *  "judul^url" dipisah "~"): semua <a href="/chat/<id>"> di DOM.
-     *  v0.1.54 - sidebar ketutup = link TIDAK ada di DOM (bukti tes
-     *  21:32, chats[] kosong), jadi snapshot membuka sidebar dulu:
-     *  bila link 0 dan belum pernah dicoba di halaman ini, klik
-     *  tombol sidebar (label "Toggle/Open sidebar", "Open navigation
-     *  menu", "Menu", atau mengandung "sidebar"/"menu" — selektor
-     *  yang sama dengan navigasi Project v0.1.40, hanya tombol yang
-     *  terlihat); link dibaca di snapshot berikut (~20 dtk), lalu
-     *  sidebar ditutup lagi ("Close sidebar") supaya tampilan
-     *  kembali seperti semula. Hasil bagus disimpan di
-     *  window.__senzSbChats dan dipakai lagi bila kumpul berikut
-     *  kosong (jangan sampai file ketimpa daftar kosong); sesudah
-     *  sekali berhasil (__senzSbDone) sidebar tidak dibuka lagi.
-     *  URL dinormalisasi dari /chat/<id> di href (terima absolut,
-     *  query, trailing slash; dedupe by id). Field ke-9 =
-     *  chatLinksSeen (jumlah mentah a[href*="/chat/"] sebelum
-     *  filter — diagnosa: 0 = memang tidak ada link di DOM). */
+     *  v0.1.55 - DWI-BAHASA (audit API 20 Nov): label tombol sidebar
+     *  kini EN + ID, dicocokkan tanpa peduli huruf besar-kecil
+     *  ("buka/tutup sidebar", "buka/tutup bilah sisi", "buka menu
+     *  navigasi"); label "Menu" DIHAPUS dari daftar — di UI Indonesia
+     *  ia malah kena tombol titik-tiga chat dan membuka menu konteks
+     *  (bukti Space 4, 21:58). Fallback substring cuma "sidebar" /
+     *  "bilah" (buang "menu"). Bila tidak ada tombol yang cocok,
+     *  __senzSbTried TIDAK diset (coba lagi tick berikut — dulu
+     *  diset walau tidak ada yang diklik). Field ke-10 = sbClicked
+     *  (label yang diklik, atau "fallback:<label>"), field ke-11 =
+     *  uiLang ("id" bila teks halaman berisi "Chat baru"/"Kirim
+     *  pesan"/"kehabisan pesan gratis", kalau tidak "en"). Flag
+     *  generating kini juga mengenali "Berhenti". */
     private fun pageSnapshotJs(): String = """
         (function(){try{
         var txt=document.body?document.body.innerText:'';
@@ -401,7 +398,7 @@ abstract class BrowserActivity : AppCompatActivity() {
         var full=clean(txt);
         var head=full.substring(0,4000);
         var tail=full.substring(Math.max(0,full.length-1500));
-        var stop=!!document.querySelector('button[aria-label*="Stop"]');
+        var stop=!!(document.querySelector('button[aria-label*="Stop"]')||document.querySelector('button[aria-label*="Berhenti"]'));
         var low=txt.toLowerCase();
         var lim=txt.indexOf('5-hour message limit')>=0||low.indexOf('out of free messages')>=0||low.indexOf('kehabisan pesan gratis')>=0||low.indexOf('penggunaan gratis')>=0;
         var m=txt.match(/resets at ([0-9:]+ [AP]M)/)||txt.match(/pukul ([0-9]{1,2}\.[0-9]{2})/);
@@ -420,17 +417,22 @@ abstract class BrowserActivity : AppCompatActivity() {
         links.push(t+'^'+location.origin+'/chat/'+mm[1]);
         }
         var sbBtns=[...document.querySelectorAll('button')].filter(function(b){return b.offsetParent!==null;});
-        var sbClick=function(want){for(var a=0;a<want.length;a++){for(var b=0;b<sbBtns.length;b++){if((sbBtns[b].getAttribute('aria-label')||'').trim()===want[a]){sbBtns[b].click();return true;}}}return false;};
+        var sbClicked='';
+        var sbMatch=function(want){for(var a=0;a<want.length;a++){for(var b=0;b<sbBtns.length;b++){var l=(sbBtns[b].getAttribute('aria-label')||'').trim().toLowerCase();if(l===want[a]){sbBtns[b].click();return want[a];}}}return '';};
+        var sbOpen=['toggle sidebar','open sidebar','buka sidebar','alih sidebar','buka bilah sisi','open navigation menu','buka menu navigasi'];
+        var sbClose=['close sidebar','tutup sidebar','tutup bilah sisi'];
         if(links.length===0&&!window.__senzSbDone&&!window.__senzSbTried){
-        if(sbClick(['Toggle sidebar','Open sidebar','Open navigation menu','Menu'])){window.__senzSbTried=true;}
-        else{for(var k=0;k<sbBtns.length;k++){var al=(sbBtns[k].getAttribute('aria-label')||'').toLowerCase();if(al.indexOf('sidebar')>=0||al.indexOf('menu')>=0){sbBtns[k].click();window.__senzSbTried=true;break;}}}
+        sbClicked=sbMatch(sbOpen);
+        if(!sbClicked){for(var k=0;k<sbBtns.length;k++){var al=(sbBtns[k].getAttribute('aria-label')||'').toLowerCase();if(al.indexOf('sidebar')>=0||al.indexOf('bilah')>=0){sbBtns[k].click();sbClicked='fallback:'+al;break;}}}
+        if(sbClicked)window.__senzSbTried=true;
         }else if(links.length>0&&window.__senzSbTried){
-        sbClick(['Close sidebar']);window.__senzSbTried=false;
+        sbMatch(sbClose);window.__senzSbTried=false;
         }
         if(links.length>0){window.__senzSbChats=links.join('~');window.__senzSbDone=true;}
         var linksField=links.length>0?links.join('~'):(window.__senzSbChats||'');
-        return [u,clean(document.title),stop?'1':'0',lim?'1':'0',reset,head,tail,linksField,String(seenCount)].join('§');
-        }catch(e){return '§§0§0§§§§§';}})()
+        var uiLang=(txt.indexOf('Chat baru')>=0||txt.indexOf('Kirim pesan')>=0||low.indexOf('kehabisan pesan gratis')>=0)?'id':'en';
+        return [u,clean(document.title),stop?'1':'0',lim?'1':'0',reset,head,tail,linksField,String(seenCount),sbClicked,uiLang].join('§');
+        }catch(e){return '§§0§0§§§§§§§';}})()
     """.trimIndent()
 
     /** v0.1.52 - tulis snapshot halaman ke api-page-<suffix>.json
@@ -454,7 +456,7 @@ abstract class BrowserActivity : AppCompatActivity() {
                 try {
                     val s = raw?.removeSurrounding("\"") ?: return@evaluateJavascript
                     val p = s.split("§")
-                    if (p.size < 9) return@evaluateJavascript
+                    if (p.size < 11) return@evaluateJavascript
                     val limited = p[3] == "1"
                     val reset = p[4]
                     if (limited) {
@@ -485,6 +487,8 @@ abstract class BrowserActivity : AppCompatActivity() {
                         put("tail", p[6])
                         put("chats", chats)
                         put("chatLinksSeen", p[8].toIntOrNull() ?: 0)
+                        put("sbClicked", p[9])
+                        put("uiLang", p[10])
                         put("updated", System.currentTimeMillis())
                     }
                     pageStatusFile().writeText(obj.toString())
@@ -1256,7 +1260,7 @@ abstract class BrowserActivity : AppCompatActivity() {
      *  activity tidak tampil - terbukti diagnose TTS 22:24). */
     private fun runPromptProject() {
         if (pendingPromptText == null) return
-        val js = """(function(){var labels=['Toggle sidebar','Open sidebar','Close sidebar','Open navigation menu','Menu'];var bs=[...document.querySelectorAll('button')].filter(function(b){return b.offsetParent!==null;});for(var i=0;i<labels.length;i++){for(var j=0;j<bs.length;j++){var l=(bs[j].getAttribute('aria-label')||'').trim();if(l===labels[i]){bs[j].click();return '1';}}}for(var k=0;k<bs.length;k++){var al=(bs[k].getAttribute('aria-label')||'').toLowerCase();if(al.indexOf('sidebar')>=0||al.indexOf('menu')>=0){bs[k].click();return '1';}}return '0';})()"""
+        val js = """(function(){var open=['toggle sidebar','open sidebar','buka sidebar','alih sidebar','buka bilah sisi','open navigation menu','buka menu navigasi'];var bs=[...document.querySelectorAll('button')].filter(function(b){return b.offsetParent!==null;});for(var i=0;i<open.length;i++){for(var j=0;j<bs.length;j++){var l=(bs[j].getAttribute('aria-label')||'').trim().toLowerCase();if(l===open[i]){bs[j].click();return '1';}}}for(var k=0;k<bs.length;k++){var al=(bs[k].getAttribute('aria-label')||'').toLowerCase();if(al.indexOf('sidebar')>=0||al.indexOf('bilah')>=0){bs[k].click();return '1';}}return '0';})()"""
         webView.evaluateJavascript(js) { raw ->
             val clean = raw?.trim()?.removeSurrounding("\"") ?: ""
             if (clean == "1") {
@@ -1294,7 +1298,7 @@ abstract class BrowserActivity : AppCompatActivity() {
     }
 
     private fun runPromptNewChat() {
-        val js = """(function(){var bs=[...document.querySelectorAll('button,a')].filter(function(b){return b.offsetParent!==null;});for(var i=0;i<bs.length;i++){var l=(bs[i].getAttribute('aria-label')||'').trim();var tx=(bs[i].textContent||'').trim();if(/new chat/i.test(l)||/new chat/i.test(tx)){bs[i].click();return '1';}}return '0';})()"""
+        val js = """(function(){var bs=[...document.querySelectorAll('button,a')].filter(function(b){return b.offsetParent!==null;});for(var i=0;i<bs.length;i++){var l=(bs[i].getAttribute('aria-label')||'').trim();var tx=(bs[i].textContent||'').trim();if(/(new chat|chat baru)/i.test(l)||/(new chat|chat baru)/i.test(tx)){bs[i].click();return '1';}}return '0';})()"""
         webView.evaluateJavascript(js) { raw ->
             val clean = raw?.trim()?.removeSurrounding("\"") ?: ""
             if (clean == "1") {
@@ -1311,7 +1315,7 @@ abstract class BrowserActivity : AppCompatActivity() {
      *  = composer ada | tombol kirim ada | aria-label tombol form. */
     private fun runPromptDiagnose(triesLeft: Int) {
         if (pendingPromptText == null) return
-        val js = """(function(){var c=document.querySelector('div.ProseMirror[contenteditable="true"]')||document.querySelector('div[contenteditable="true"]');var s=document.querySelector('button[aria-label="Send message"]');var btns=[];var root=c?c.closest('form'):null;if(root){var bs=root.querySelectorAll('button');for(var i=0;i<bs.length;i++){var l=bs[i].getAttribute('aria-label');if(l)btns.push(l);}}return (c?'1':'0')+'|'+(s?'1':'0')+'|'+btns.join(',');})()"""
+        val js = """(function(){var c=document.querySelector('div.ProseMirror[contenteditable="true"]')||document.querySelector('div[contenteditable="true"]');var s=document.querySelector('button[aria-label="Send message"]')||document.querySelector('button[aria-label="Kirim pesan"]');var btns=[];var root=c?c.closest('form'):null;if(root){var bs=root.querySelectorAll('button');for(var i=0;i<bs.length;i++){var l=bs[i].getAttribute('aria-label');if(l)btns.push(l);}}return (c?'1':'0')+'|'+(s?'1':'0')+'|'+btns.join(',');})()"""
         webView.evaluateJavascript(js) { raw ->
             val clean = raw?.trim()?.removeSurrounding("\"") ?: ""
             val parts = clean.split("|")
@@ -1336,7 +1340,7 @@ abstract class BrowserActivity : AppCompatActivity() {
      *  disodori file, tunggu 3 dtk, cek chip lampiran muncul. */
     private fun runPromptAttach() {
         val files = pendingPromptFiles ?: emptyList()
-        val js = """(function(){var labels=['Add files','Attach files','Upload files','Add content','Attach'];for(var k=0;k<labels.length;k++){var b=document.querySelector('button[aria-label="'+labels[k]+'"]');if(b){b.click();return labels[k];}}var bs=document.querySelectorAll('button');for(var i=0;i<bs.length;i++){var l=bs[i].getAttribute('aria-label')||'';if(/attach|add file|upload/i.test(l)){bs[i].click();return l;}}return '';})()"""
+        val js = """(function(){var labels=['Add files','Attach files','Upload files','Add content','Attach','Lampirkan','Tambah file','Lampirkan file','Unggah file'];for(var k=0;k<labels.length;k++){var b=document.querySelector('button[aria-label="'+labels[k]+'"]');if(b){b.click();return labels[k];}}var bs=document.querySelectorAll('button');for(var i=0;i<bs.length;i++){var l=bs[i].getAttribute('aria-label')||'';if(/attach|add file|upload|lampir|unggah/i.test(l)){bs[i].click();return l;}}return '';})()"""
         promptChooserServed = false
         writePromptStatus("running", "mengklik tombol attach (${files.size} file)")
         webView.evaluateJavascript(js) { raw ->
@@ -1398,7 +1402,7 @@ abstract class BrowserActivity : AppCompatActivity() {
 
     /** Langkah 4: klik tombol kirim. */
     private fun runPromptSend() {
-        val js = """(function(){var b=document.querySelector('button[aria-label="Send message"]');if(!b)return '0';if(b.disabled)return 'disabled';b.click();return '1';})()"""
+        val js = """(function(){var b=document.querySelector('button[aria-label="Send message"]')||document.querySelector('button[aria-label="Kirim pesan"]');if(!b)return '0';if(b.disabled)return 'disabled';b.click();return '1';})()"""
         webView.evaluateJavascript(js) { raw ->
             val clean = raw?.trim()?.removeSurrounding("\"") ?: ""
             if (clean == "1") {
@@ -1506,7 +1510,7 @@ abstract class BrowserActivity : AppCompatActivity() {
      *  selain itu -> alur pilih model (Run settings). */
     private fun runTtsDiagnose(triesLeft: Int) {
         if (pendingTtsScript == null) return
-        val js = """(function(){var tas=[...document.querySelectorAll('textarea,[contenteditable],input,[role="textbox"]')].filter(function(t){return t.offsetParent!==null;});var taLabels=tas.map(function(t){return (t.getAttribute('aria-label')||t.getAttribute('placeholder')||'textarea').replace(/[|,]/g,' ');});var run=0,dl=0,model='';var bs=[...document.querySelectorAll('button')].filter(function(b){return b.offsetParent!==null;});var btnLabels=[];for(var i=0;i<bs.length;i++){var l=(bs[i].getAttribute('aria-label')||'').trim();var tx=(bs[i].textContent||'').trim();if(l)btnLabels.push(l.replace(/[|,]/g,' '));else if(tx&&tx.length<40)btnLabels.push(tx.replace(/[|,]/g,' '));if(!run&&(l==='Run'||tx==='Run'))run=1;if(!dl&&(l==='Download'||tx==='Download'))dl=1;if(!model&&/gemini/i.test(tx))model=tx.replace(/[|,]/g,' ').slice(0,60);}var bodyTxt=document.body?document.body.innerText||'':'';var speaker=bodyTxt.indexOf('Speaker 1')>=0?'1':'0';var create=bodyTxt.indexOf('Create new dialog')>=0?'1':'0';return tas.length+'|'+run+'|'+dl+'|'+model+'|'+speaker+'|'+create+'|'+taLabels.join(',')+'|'+btnLabels.join(',');})()"""
+        val js = """(function(){var tas=[...document.querySelectorAll('textarea,[contenteditable],input,[role="textbox"]')].filter(function(t){return t.offsetParent!==null;});var taLabels=tas.map(function(t){return (t.getAttribute('aria-label')||t.getAttribute('placeholder')||'textarea').replace(/[|,]/g,' ');});var run=0,dl=0,model='';var bs=[...document.querySelectorAll('button')].filter(function(b){return b.offsetParent!==null;});var btnLabels=[];for(var i=0;i<bs.length;i++){var l=(bs[i].getAttribute('aria-label')||'').trim();var tx=(bs[i].textContent||'').trim();if(l)btnLabels.push(l.replace(/[|,]/g,' '));else if(tx&&tx.length<40)btnLabels.push(tx.replace(/[|,]/g,' '));if(!run&&(l==='Run'||l==='Jalankan'||tx==='Run'||tx==='Jalankan'))run=1;if(!dl&&(l==='Download'||l==='Unduh'||tx==='Download'||tx==='Unduh'))dl=1;if(!model&&/gemini/i.test(tx))model=tx.replace(/[|,]/g,' ').slice(0,60);}var bodyTxt=document.body?document.body.innerText||'':'';var speaker=bodyTxt.indexOf('Speaker 1')>=0?'1':'0';var create=(bodyTxt.indexOf('Create new dialog')>=0||bodyTxt.indexOf('Buat dialog baru')>=0)?'1':'0';return tas.length+'|'+run+'|'+dl+'|'+model+'|'+speaker+'|'+create+'|'+taLabels.join(',')+'|'+btnLabels.join(',');})()"""
         webView.evaluateJavascript(js) { raw ->
             val clean = raw?.trim()?.removeSurrounding("\"") ?: ""
             val parts = clean.split("|")
@@ -1545,7 +1549,7 @@ abstract class BrowserActivity : AppCompatActivity() {
      *  menunya tidak berisi entri TTS (penyebab failed 23:21). */
     private fun runTtsModelFlow() {
         if (pendingTtsScript == null) return
-        val js = """(function(){var b=document.querySelector('button[aria-label="Toggle run settings panel"]');if(!b){var bs=[...document.querySelectorAll('button')];for(var i=0;i<bs.length;i++){var l=(bs[i].getAttribute('aria-label')||'').toLowerCase();if(l.indexOf('run settings')>=0){b=bs[i];break;}}}if(!b)return '0';b.click();return '1';})()"""
+        val js = """(function(){var b=document.querySelector('button[aria-label="Toggle run settings panel"]');if(!b){var bs=[...document.querySelectorAll('button')];for(var i=0;i<bs.length;i++){var l=(bs[i].getAttribute('aria-label')||'').toLowerCase();if(l.indexOf('run settings')>=0||l.indexOf('pengaturan run')>=0){b=bs[i];break;}}}if(!b)return '0';b.click();return '1';})()"""
         webView.evaluateJavascript(js) { raw ->
             val clean = raw?.trim()?.removeSurrounding("\"") ?: ""
             if (clean == "1") {
@@ -1581,7 +1585,7 @@ abstract class BrowserActivity : AppCompatActivity() {
         if (pendingTtsScript == null) return
         val want = pendingTtsModel ?: "Gemini 3.8 Flash Lite TTS"
         val quoted = org.json.JSONObject.quote(want)
-        val js = """(function(){var want=$quoted.toLowerCase();var tabs=[...document.querySelectorAll('button')].filter(function(b){return b.offsetParent!==null;});for(var i=0;i<tabs.length;i++){if((tabs[i].textContent||'').trim()==='Starred'){tabs[i].click();break;}}var els=[...document.querySelectorAll('*')].filter(function(e){return e.offsetParent!==null&&e.children.length===0;});var best=null,bestLen=1e9;for(var j=0;j<els.length;j++){var t=(els[j].textContent||'').trim();if(t.toLowerCase().indexOf(want)>=0&&t.length<bestLen){best=els[j];bestLen=t.length;}}if(!best)return '0';best.click();return best.textContent.trim().slice(0,60);})()"""
+        val js = """(function(){var want=$quoted.toLowerCase();var tabs=[...document.querySelectorAll('button')].filter(function(b){return b.offsetParent!==null;});for(var i=0;i<tabs.length;i++){var tt=(tabs[i].textContent||'').trim();if(tt==='Starred'||tt==='Berbintang'){tabs[i].click();break;}}var els=[...document.querySelectorAll('*')].filter(function(e){return e.offsetParent!==null&&e.children.length===0;});var best=null,bestLen=1e9;for(var j=0;j<els.length;j++){var t=(els[j].textContent||'').trim();if(t.toLowerCase().indexOf(want)>=0&&t.length<bestLen){best=els[j];bestLen=t.length;}}if(!best)return '0';best.click();return best.textContent.trim().slice(0,60);})()"""
         // Beri waktu tab Starred tampil sebelum klik entri.
         ttsHandler.postDelayed({
             webView.evaluateJavascript(js) { raw ->
@@ -1600,7 +1604,7 @@ abstract class BrowserActivity : AppCompatActivity() {
      *  (editor dialog harus muncul: ada "Speaker 1" + kolom). */
     private fun runTtsCreateDialog() {
         if (pendingTtsScript == null) return
-        val js = """(function(){var els=[...document.querySelectorAll('button,[role="button"],a,div')].filter(function(e){return e.offsetParent!==null;});for(var i=0;i<els.length;i++){if((els[i].textContent||'').trim()==='Create new dialog'){els[i].click();return '1';}}return '0';})()"""
+        val js = """(function(){var els=[...document.querySelectorAll('button,[role="button"],a,div')].filter(function(e){return e.offsetParent!==null;});for(var i=0;i<els.length;i++){var ct=(els[i].textContent||'').trim();if(ct==='Create new dialog'||ct==='Buat dialog baru'){els[i].click();return '1';}}return '0';})()"""
         webView.evaluateJavascript(js) { raw ->
             val clean = raw?.trim()?.removeSurrounding("\"") ?: ""
             if (clean == "1") {
@@ -1691,7 +1695,7 @@ abstract class BrowserActivity : AppCompatActivity() {
      *  berisi probe. */
     private fun ttsClickStyleJs(probe: String): String {
         val q = org.json.JSONObject.quote(probe)
-        return """(function(){var p=$q;var vis=function(e){return e.offsetParent!==null;};var txt=function(e){return (e.textContent||'').trim();};var ok=function(t){return t==='Style'||t.indexOf('Style')===0||t.indexOf(p)>=0;};var bs=[...document.querySelectorAll('button')].filter(vis);for(var i=0;i<bs.length;i++){var t=txt(bs[i]);if(ok(t)){bs[i].click();return 'btn';}}var rs=[...document.querySelectorAll('[role="button"]')].filter(vis);for(var j=0;j<rs.length;j++){var u=txt(rs[j]);if(ok(u)){rs[j].click();return 'role';}}var els=[...document.querySelectorAll('*')].filter(function(e){return vis(e)&&e.children.length===0;});for(var k=0;k<els.length;k++){if(txt(els[k])==='Style'){els[k].click();return 'leaf';}}return '0';})()"""
+        return """(function(){var p=$q;var vis=function(e){return e.offsetParent!==null;};var txt=function(e){return (e.textContent||'').trim();};var ok=function(t){return t==='Style'||t==='Gaya'||t.indexOf('Style')===0||t.indexOf('Gaya')===0||t.indexOf(p)>=0;};var bs=[...document.querySelectorAll('button')].filter(vis);for(var i=0;i<bs.length;i++){var t=txt(bs[i]);if(ok(t)){bs[i].click();return 'btn';}}var rs=[...document.querySelectorAll('[role="button"]')].filter(vis);for(var j=0;j<rs.length;j++){var u=txt(rs[j]);if(ok(u)){rs[j].click();return 'role';}}var els=[...document.querySelectorAll('*')].filter(function(e){return vis(e)&&e.children.length===0;});for(var k=0;k<els.length;k++){if(txt(els[k])==='Style'||txt(els[k])==='Gaya'){els[k].click();return 'leaf';}}return '0';})()"""
     }
 
     /** JS: label tombol Style saat ini — teks tombolnya, atau '0'
@@ -1725,7 +1729,7 @@ abstract class BrowserActivity : AppCompatActivity() {
      *  (dispatchKeyEvent per karakter, tanpa IME) — commitText
      *  terbukti tidak sampai (dump v0.1.44: len=0 sesudah dua cara). */
     private fun waitTtsStyleField(triesLeft: Int, voice: String, probe: String, attempt: Int) {
-        val findJs = """(function(){var tas=[...document.querySelectorAll('textarea,[contenteditable],input,[role="textbox"]')].filter(function(t){return t.offsetParent!==null;});for(var i=0;i<tas.length;i++){var p=(tas[i].getAttribute('placeholder')||'').toLowerCase();if(p.indexOf('describe the voice style')>=0)return '1';}return '0';})()"""
+        val findJs = """(function(){var tas=[...document.querySelectorAll('textarea,[contenteditable],input,[role="textbox"]')].filter(function(t){return t.offsetParent!==null;});for(var i=0;i<tas.length;i++){var p=(tas[i].getAttribute('placeholder')||'').toLowerCase();if(p.indexOf('describe the voice style')>=0||p.indexOf('gaya suara')>=0)return '1';}return '0';})()"""
         webView.evaluateJavascript(findJs) { raw ->
             val clean = raw?.trim()?.removeSurrounding("\"") ?: ""
             if (clean != "1") {
@@ -1856,7 +1860,7 @@ abstract class BrowserActivity : AppCompatActivity() {
      *  'nofocus' (kotak ketemu tapi fokus tidak pindah), '0' (kotak
      *  tidak ketemu). */
     private fun ttsClickStyleFieldJs(): String {
-        return """(function(){var tas=[...document.querySelectorAll('textarea,[contenteditable],input,[role="textbox"]')].filter(function(t){return t.offsetParent!==null;});for(var i=0;i<tas.length;i++){var p=(tas[i].getAttribute('placeholder')||'').toLowerCase();if(p.indexOf('describe the voice style')>=0){tas[i].click();tas[i].focus();try{tas[i].setSelectionRange(0,tas[i].value.length);}catch(e){}try{tas[i].select();}catch(e){}return document.activeElement===tas[i]?'focus':'nofocus';}}return '0';})()"""
+        return """(function(){var tas=[...document.querySelectorAll('textarea,[contenteditable],input,[role="textbox"]')].filter(function(t){return t.offsetParent!==null;});for(var i=0;i<tas.length;i++){var p=(tas[i].getAttribute('placeholder')||'').toLowerCase();if(p.indexOf('describe the voice style')>=0||p.indexOf('gaya suara')>=0){tas[i].click();tas[i].focus();try{tas[i].setSelectionRange(0,tas[i].value.length);}catch(e){}try{tas[i].select();}catch(e){}return document.activeElement===tas[i]?'focus':'nofocus';}}return '0';})()"""
     }
 
     /** JS: posisi tengah kotak Style di layar (CSS px) — 'x|y'
@@ -2037,7 +2041,7 @@ abstract class BrowserActivity : AppCompatActivity() {
     /** JS: posisi tengah tombol Download TERAKHIR (CSS px) — v0.1.51.
      *  Hasil 'x|y|count' atau '0|count' bila tidak ketemu. */
     private fun ttsDownloadButtonRectJs(): String {
-        return """(function(){var bs=[...document.querySelectorAll('button')].filter(function(b){return b.offsetParent!==null;});var found=[];for(var i=0;i<bs.length;i++){var l=(bs[i].getAttribute('aria-label')||'').trim();var tx=(bs[i].textContent||'').trim();if(l==='Download'||tx==='Download'){found.push(bs[i]);}}if(found.length===0)return '0|0';var r=found[found.length-1].getBoundingClientRect();return (r.left+r.width/2)+'|'+(r.top+r.height/2)+'|'+found.length;})()"""
+        return """(function(){var bs=[...document.querySelectorAll('button')].filter(function(b){return b.offsetParent!==null;});var found=[];for(var i=0;i<bs.length;i++){var l=(bs[i].getAttribute('aria-label')||'').trim();var tx=(bs[i].textContent||'').trim();if(l==='Download'||l==='Unduh'||tx==='Download'||tx==='Unduh'){found.push(bs[i]);}}if(found.length===0)return '0|0';var r=found[found.length-1].getBoundingClientRect();return (r.left+r.width/2)+'|'+(r.top+r.height/2)+'|'+found.length;})()"""
     }
 
     /** Tutup sheet Speaker (best effort) lalu onDone(clicked) —
@@ -2054,7 +2058,7 @@ abstract class BrowserActivity : AppCompatActivity() {
     /** Langkah 6: pilih VOICE (nama) - klik dropdown "Speaker 1". */
     private fun runTtsSpeaker() {
         writeTtsStatus("running", "membuka pilihan Speaker")
-        val js = """(function(){var bs=[...document.querySelectorAll('button')].filter(function(b){return b.offsetParent!==null;});for(var i=0;i<bs.length;i++){if((bs[i].textContent||'').indexOf('Speaker 1')>=0){bs[i].click();return '1';}}return '0';})()"""
+        val js = """(function(){var bs=[...document.querySelectorAll('button')].filter(function(b){return b.offsetParent!==null;});for(var i=0;i<bs.length;i++){var sp=(bs[i].textContent||'');if(sp.indexOf('Speaker 1')>=0||sp.indexOf('Pembicara 1')>=0){bs[i].click();return '1';}}return '0';})()"""
         webView.evaluateJavascript(js) { raw ->
             val clean = raw?.trim()?.removeSurrounding("\"") ?: ""
             if (clean == "1") {
@@ -2101,7 +2105,7 @@ abstract class BrowserActivity : AppCompatActivity() {
      *  itu (atau pada elemen pengganti) bisa menempel. */
     private fun ttsFillJs(role: String, text: String): String {
         val quoted = org.json.JSONObject.quote(text)
-        val js = """(function(role,text){var tas=[...document.querySelectorAll('textarea,[contenteditable],input,[role="textbox"]')].filter(function(t){return t.offsetParent!==null;});var pick=null;if(role==='voice'){pick=tas.find(function(t){return (t.getAttribute('placeholder')||'').toLowerCase().indexOf('describe the voice style')>=0;});if(!pick){pick=tas.find(function(t){var s=((t.getAttribute('aria-label')||'')+' '+(t.getAttribute('placeholder')||'')).toLowerCase();return s.indexOf('style')>=0||s.indexOf('voice')>=0||s.indexOf('describe')>=0||s.indexOf('tone')>=0;});}}else{pick=tas.find(function(t){var s=((t.getAttribute('aria-label')||'')+' '+(t.getAttribute('placeholder')||'')).toLowerCase();return s.indexOf('text')>=0||s.indexOf('script')>=0||s.indexOf('enter')>=0||s.indexOf('speech')>=0||s.indexOf('tags')>=0;});if(!pick&&tas.length>0){pick=tas.reduce(function(a,b){return (b.offsetWidth*b.offsetHeight)>(a.offsetWidth*a.offsetHeight)?b:a;});}}if(!pick)return '0';pick.focus();try{pick.setSelectionRange(0,pick.value.length);}catch(e){}var ok=false;try{ok=document.execCommand('insertText',false,text);}catch(e){}if(role==='voice'||!ok||(pick.value||pick.textContent||'').length===0){if(pick.tagName==='TEXTAREA'){var setter=Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype,'value').set;setter.call(pick,text);}else if(pick.tagName==='INPUT'){var setter2=Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype,'value').set;setter2.call(pick,text);}else{pick.textContent=text;}try{pick.dispatchEvent(new InputEvent('input',{bubbles:true,cancelable:true,inputType:'insertText',data:text}));}catch(e){}pick.dispatchEvent(new Event('input',{bubbles:true}));try{pick.dispatchEvent(new Event('change',{bubbles:true}));}catch(e){}if(role==='voice'){try{setTimeout(function(){var tas2=[...document.querySelectorAll('textarea,[contenteditable],input,[role="textbox"]')].filter(function(t){return t.offsetParent!==null;});for(var i=0;i<tas2.length;i++){var p=(tas2[i].getAttribute('placeholder')||'').toLowerCase();if(p.indexOf('describe the voice style')>=0){var s2=tas2[i];try{var setter2=Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype,'value').set;setter2.call(s2,text);}catch(e){try{s2.value=text;}catch(e2){}}try{s2.dispatchEvent(new Event('input',{bubbles:true}));}catch(e3){}break;}}},300);}catch(e){}}}return String((pick.value||pick.textContent||'').length);})('$role',$quoted)"""
+        val js = """(function(role,text){var tas=[...document.querySelectorAll('textarea,[contenteditable],input,[role="textbox"]')].filter(function(t){return t.offsetParent!==null;});var pick=null;if(role==='voice'){pick=tas.find(function(t){return (t.getAttribute('placeholder')||'').toLowerCase().indexOf('describe the voice style')>=0||(t.getAttribute('placeholder')||'').toLowerCase().indexOf('gaya suara')>=0;});if(!pick){pick=tas.find(function(t){var s=((t.getAttribute('aria-label')||'')+' '+(t.getAttribute('placeholder')||'')).toLowerCase();return s.indexOf('style')>=0||s.indexOf('voice')>=0||s.indexOf('describe')>=0||s.indexOf('tone')>=0||s.indexOf('gaya')>=0||s.indexOf('suara')>=0||s.indexOf('nada')>=0;});}}else{pick=tas.find(function(t){var s=((t.getAttribute('aria-label')||'')+' '+(t.getAttribute('placeholder')||'')).toLowerCase();return s.indexOf('text')>=0||s.indexOf('script')>=0||s.indexOf('enter')>=0||s.indexOf('speech')>=0||s.indexOf('tags')>=0;});if(!pick&&tas.length>0){pick=tas.reduce(function(a,b){return (b.offsetWidth*b.offsetHeight)>(a.offsetWidth*a.offsetHeight)?b:a;});}}if(!pick)return '0';pick.focus();try{pick.setSelectionRange(0,pick.value.length);}catch(e){}var ok=false;try{ok=document.execCommand('insertText',false,text);}catch(e){}if(role==='voice'||!ok||(pick.value||pick.textContent||'').length===0){if(pick.tagName==='TEXTAREA'){var setter=Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype,'value').set;setter.call(pick,text);}else if(pick.tagName==='INPUT'){var setter2=Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype,'value').set;setter2.call(pick,text);}else{pick.textContent=text;}try{pick.dispatchEvent(new InputEvent('input',{bubbles:true,cancelable:true,inputType:'insertText',data:text}));}catch(e){}pick.dispatchEvent(new Event('input',{bubbles:true}));try{pick.dispatchEvent(new Event('change',{bubbles:true}));}catch(e){}if(role==='voice'){try{setTimeout(function(){var tas2=[...document.querySelectorAll('textarea,[contenteditable],input,[role="textbox"]')].filter(function(t){return t.offsetParent!==null;});for(var i=0;i<tas2.length;i++){var p=(tas2[i].getAttribute('placeholder')||'').toLowerCase();if(p.indexOf('describe the voice style')>=0||p.indexOf('gaya suara')>=0){var s2=tas2[i];try{var setter2=Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype,'value').set;setter2.call(s2,text);}catch(e){try{s2.value=text;}catch(e2){}}try{s2.dispatchEvent(new Event('input',{bubbles:true}));}catch(e3){}break;}}},300);}catch(e){}}}return String((pick.value||pick.textContent||'').length);})('$role',$quoted)"""
         return js
     }
 
@@ -2121,7 +2125,7 @@ abstract class BrowserActivity : AppCompatActivity() {
 
     /** Langkah 5: klik Run, catat isi folder aistudio sebelum generate. */
     private fun runTtsRun() {
-        val js = """(function(){var bs=[...document.querySelectorAll('button')].filter(function(b){return b.offsetParent!==null;});for(var i=0;i<bs.length;i++){var l=(bs[i].getAttribute('aria-label')||'').trim();var tx=(bs[i].textContent||'').trim();if(l==='Run'||tx==='Run'){if(bs[i].disabled)return 'disabled';bs[i].click();return '1';}}return '0';})()"""
+        val js = """(function(){var bs=[...document.querySelectorAll('button')].filter(function(b){return b.offsetParent!==null;});for(var i=0;i<bs.length;i++){var l=(bs[i].getAttribute('aria-label')||'').trim();var tx=(bs[i].textContent||'').trim();if(l==='Run'||l==='Jalankan'||tx==='Run'||tx==='Jalankan'){if(bs[i].disabled)return 'disabled';bs[i].click();return '1';}}return '0';})()"""
         writeTtsStatus("running", "menekan Run")
         webView.evaluateJavascript(js) { raw ->
             val clean = raw?.trim()?.removeSurrounding("\"") ?: ""
@@ -2153,7 +2157,7 @@ abstract class BrowserActivity : AppCompatActivity() {
      *  siap diputar). */
     private fun waitTtsDone(triesLeft: Int) {
         if (pendingTtsScript == null) return
-        val js = """(function(){var dl=0,ready=0;var bs=[...document.querySelectorAll('button')].filter(function(b){return b.offsetParent!==null;});for(var i=0;i<bs.length;i++){var l=(bs[i].getAttribute('aria-label')||'').trim();var tx=(bs[i].textContent||'').trim();if(l==='Download'||tx==='Download'){dl=1;break;}}var aus=document.querySelectorAll('audio');for(var j=0;j<aus.length;j++){var a=aus[j];if((a.src||a.querySelector('source'))&&a.readyState===4&&a.duration>0){ready=1;break;}}return dl+'|'+ready;})()"""
+        val js = """(function(){var dl=0,ready=0;var bs=[...document.querySelectorAll('button')].filter(function(b){return b.offsetParent!==null;});for(var i=0;i<bs.length;i++){var l=(bs[i].getAttribute('aria-label')||'').trim();var tx=(bs[i].textContent||'').trim();if(l==='Download'||l==='Unduh'||tx==='Download'||tx==='Unduh'){dl=1;break;}}var aus=document.querySelectorAll('audio');for(var j=0;j<aus.length;j++){var a=aus[j];if((a.src||a.querySelector('source'))&&a.readyState===4&&a.duration>0){ready=1;break;}}return dl+'|'+ready;})()"""
         webView.evaluateJavascript(js) { raw ->
             val clean = raw?.trim()?.removeSurrounding("\"") ?: ""
             val parts = clean.split("|")

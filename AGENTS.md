@@ -118,6 +118,26 @@ Jangan cuma diagnosa dari kodenya.
   (BufferedReader bisa menelan byte body). senz.py v2 ngomong ke
   API via `adb forward tcp:19335 tcp:19335`; procs/shot/type/tap/
   key/home tetap ADB (level perangkat).
+- API 55 (20 Nov, v0.1.55): DWI-BAHASA + BOOTRECEIVER (Gas Sendy
+  22:26 — "Gas, bangun v0.1.55", lanjutan audit API 22:01). AKAR 1:
+  semua selektor UI kini EN + ID, dicocokkan tanpa peduli huruf
+  besar-kecil — sidebar (buka/tutup sidebar, bilah sisi, buka menu
+  navigasi), New chat / Chat baru, Send / Kirim pesan, attach
+  (Lampirkan/Tambah file/Unggah file + regex lampir/unggah), Run /
+  Jalankan, Download / Unduh, Starred / Berbintang, Create new dialog
+  / Buat dialog baru, Style / Gaya, Speaker 1 / Pembicara 1, placeholder
+  Style "gaya suara", Run settings fallback "pengaturan run",
+  generating "Berhenti". Label "Menu" DIHAPUS dari semua daftar toggle
+  (snapshot + runPromptProject) — di UI Indonesia ia kena tombol ⋮
+  chat; fallback substring cuma "sidebar"/"bilah". Snapshot: field
+  ke-10 sbClicked (label yang diklik / "fallback:<label>"), field
+  ke-11 uiLang ("id"/"en" dari teks halaman); bila tidak ada tombol
+  yang cocok, __senzSbTried TIDAK diset (coba lagi tick berikut).
+  AKAR 4: BootReceiver baru (BOOT_COMPLETED + izin
+  RECEIVE_BOOT_COMPLETED) — ApiService start sesudah HP reboot tanpa
+  buka app. Tes: harness node buat snapshot JS (3 skenario: link ada +
+  teks ID → 11 field + uiLang id; tombol "Buka sidebar" diklik;
+  tombol "Menu" saja TIDAK diklik — regresi Space 4).
 - API 54 (20 Nov, v0.1.54): BUKA SIDEBAR DULU SEBELUM KUMPULKAN
   LINK CHAT (Gas Sendy 21:33 — "Gas, bangun v0.1.54"). Tes live
   v0.1.53 (21:32) GAGAL: chats[] kosong walau snapshot segar —
