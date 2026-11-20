@@ -621,14 +621,14 @@ class ApiServer(private val ctx: Context) {
             try {
                 Thread.sleep(60_000)
             } catch (_: InterruptedException) {
-                return
+                return@Thread
             }
             val fileName = if (kind == "prompt") "api-prompt-$suffix.json" else "api-tts-$suffix.json"
             val file = java.io.File(ctx.filesDir, fileName)
             val cur = try {
                 JSONObject(file.readText())
             } catch (_: Exception) {
-                return
+                return@Thread
             }
             if (cur.optString("status") == "queued" && cur.optLong("updated") == queuedAt) {
                 val reason = if (!overlay) {

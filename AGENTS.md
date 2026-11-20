@@ -153,7 +153,9 @@ Jangan cuma diagnosa dari kodenya.
   dari commit GitHub terakhir dulu, baru push ulang. (Kedua:
   MainActivity.kt tidak mengimpor android.widget.Button —
   dialog baru v0.1.42 pakai Button() tanpa import; CI yang
-  menangkapnya.)
+  menangkapnya.) (Ketiga, CI #62: di dalam lambda `Thread({...})`
+  (Runnable SAM), `return` polos TIDAK BOLEH — Kotlin menolak
+  "'return' is not allowed here"; pakai `return@Thread`.)
 - API 41 (19 Nov, v0.1.41): TTS ALUR ASLI (screenshot Sendy 23:28-23:32).
   (a) Urutan eksekusi: Run settings (ikon slider kanan atas) ->
   kartu model aktif -> tab Starred -> entri "Gemini 3.8 Flash Lite
