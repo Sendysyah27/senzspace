@@ -118,6 +118,20 @@ Jangan cuma diagnosa dari kodenya.
   (BufferedReader bisa menelan byte body). senz.py v2 ngomong ke
   API via `adb forward tcp:19335 tcp:19335`; procs/shot/type/tap/
   key/home tetap ADB (level perangkat).
+- API 47 (20 Nov, v0.1.47): KLIK KOTAK + ISI ULANG TERTUNDA
+  (Gas Sendy 15:50). Tes v0.1.46 (15:43): klik Style LULUS, tapi
+  3 cara isi gagal; dump menjawab dua hal: (a) probe eq=true =
+  setter JALAN, framework yang menghapus nilai sesudah JS call
+  selesai; (b) active=BUTTON = focus() tidak memindahkan fokus
+  dari tombol Style, jadi commitText + KeyEvent tidak sampai.
+  Fix: (a) ttsClickStyleFieldJs — KLIK kotaknya beneran (bukan
+  cuma focus()), lalu cek document.activeElement===kotak
+  ('focus'/'nofocus'/'0', dicatat di status percobaan 2 dan 3);
+  (b) ttsFillJs voice: ISI ULANG TERTUNDA — setTimeout 300 ms
+  cari ULANG kotaknya (query segar) lalu set nilai lagi via
+  setter + event input, kalahkan tick reset / ganti elemen;
+  verifikasi baca-balik percobaan 1 ditunda 600 ms supaya isi
+  ulang sempat jalan.
 - API 46 (20 Nov, v0.1.46): KLIK STYLE DIULANG + SELEKTOR LUAS
   (Gas Sendy 15:23). Tes v0.1.45 (15:21): GAGAL +30 dtk —
   "tombol Style tidak ketemu" — padahal screenshot HP

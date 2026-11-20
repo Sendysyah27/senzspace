@@ -1555,22 +1555,28 @@ abstract class BrowserActivity : AppCompatActivity() {
                         failTts("kolom 'Describe the voice style' tidak terisi (percobaan $attempt)")
                         return@evaluateJavascript
                     }
-                    verifyTtsStyleClosed(voice, probe, attempt)
+                    // v0.1.47: isi ulang tertunda jalan di 300 ms — beri
+                    // waktu sebelum baca-balik pertama.
+                    ttsHandler.postDelayed({ verifyTtsStyleClosed(voice, probe, attempt) }, 600)
                 }
             } else if (attempt == 2) {
-                // Percobaan 2: fokus kolom, lalu ketik lewat IME.
-                webView.evaluateJavascript(ttsFocusStyleJs()) { _ ->
+                // Percobaan 2: KLIK kolom (bukan cuma focus), lalu
+                // ketik lewat IME. v0.1.46: focus() saja tidak
+                // memindahkan fokus (active=BUTTON).
+                webView.evaluateJavascript(ttsClickStyleFieldJs()) { rawFocus ->
+                    val focus = rawFocus?.trim()?.removeSurrounding("\"") ?: ""
                     ttsHandler.postDelayed({
                         val typed = ttsTypeReal(voice)
-                        writeTtsStatus("running", "mengetik format suara lewat keyboard (percobaan 2, commitText=$typed)")
+                        writeTtsStatus("running", "mengetik format suara lewat keyboard (percobaan 2, fokus=$focus, commitText=$typed)")
                         ttsHandler.postDelayed({ verifyTtsStyleClosed(voice, probe, attempt) }, 800)
                     }, 400)
                 }
             } else {
-                // Percobaan 3: fokus kolom, lalu ketik lewat KeyEvent.
-                webView.evaluateJavascript(ttsFocusStyleJs()) { _ ->
+                // Percobaan 3: KLIK kolom, lalu ketik lewat KeyEvent.
+                webView.evaluateJavascript(ttsClickStyleFieldJs()) { rawFocus ->
+                    val focus = rawFocus?.trim()?.removeSurrounding("\"") ?: ""
                     ttsHandler.postDelayed({
-                        ttsTypeKeys(voice) { verifyTtsStyleClosed(voice, probe, attempt) }
+                        ttsTypeKeys(voice, ", fokus=$focus") { verifyTtsStyleClosed(voice, probe, attempt) }
                     }, 400)
                 }
             }
@@ -1581,7 +1587,7 @@ abstract class BrowserActivity : AppCompatActivity() {
      *  koneksi input: tiap karakter dikirim sebagai DOWN+UP langsung
      *  ke WebView, seperti keyboard fisik. onDone dipanggil 800 ms
      *  sesudah karakter terakhir. */
-    private fun ttsTypeKeys(text: String, onDone: () -> Unit) {
+    private fun ttsTypeKeys(text: String, note: String = "", onDone: () -> Unit) {
         val events = ArrayList<KeyEvent>()
         var skipped = 0
         for (ch in text) {
@@ -1592,7 +1598,7 @@ abstract class BrowserActivity : AppCompatActivity() {
             events.add(KeyEvent(now, now, KeyEvent.ACTION_DOWN, code, 0, meta))
             events.add(KeyEvent(now, now, KeyEvent.ACTION_UP, code, 0, meta))
         }
-        writeTtsStatus("running", "mengetik format suara lewat tombol keyboard (percobaan 3, ${events.size / 2} karakter, $skipped dilewati)")
+        writeTtsStatus("running", "mengetik format suara lewat tombol keyboard (percobaan 3, ${events.size / 2} karakter, $skipped dilewati$note)")
         Thread {
             for (ev in events) {
                 ttsHandler.post { webView.dispatchKeyEvent(ev) }
@@ -1648,9 +1654,15 @@ abstract class BrowserActivity : AppCompatActivity() {
         }
     }
 
-    /** JS fokus + blok semua isi kolom Style (siap diketik ulang). */
-    private fun ttsFocusStyleJs(): String {
-        return """(function(){var tas=[...document.querySelectorAll('textarea,[contenteditable],input,[role="textbox"]')].filter(function(t){return t.offsetParent!==null;});for(var i=0;i<tas.length;i++){var p=(tas[i].getAttribute('placeholder')||'').toLowerCase();if(p.indexOf('describe the voice style')>=0){tas[i].focus();try{tas[i].setSelectionRange(0,tas[i].value.length);}catch(e){}try{tas[i].select();}catch(e){}return '1';}}return '0';})()"""
+    /** JS KLIK kolom Style (bukan cuma focus) + blok semua isinya —
+     *  v0.1.47. Pelajaran 20 Nov 15:43 (dump v0.1.46): focus()
+     *  programmatic TIDAK memindahkan fokus (active=BUTTON), jadi
+     *  commitText + KeyEvent tidak sampai. Klik beneran menaruh
+     *  karet di dalam kotak. Hasil: 'focus' (fokus nempel di kotak),
+     *  'nofocus' (kotak ketemu tapi fokus tidak pindah), '0' (kotak
+     *  tidak ketemu). */
+    private fun ttsClickStyleFieldJs(): String {
+        return """(function(){var tas=[...document.querySelectorAll('textarea,[contenteditable],input,[role="textbox"]')].filter(function(t){return t.offsetParent!==null;});for(var i=0;i<tas.length;i++){var p=(tas[i].getAttribute('placeholder')||'').toLowerCase();if(p.indexOf('describe the voice style')>=0){tas[i].click();tas[i].focus();try{tas[i].setSelectionRange(0,tas[i].value.length);}catch(e){}try{tas[i].select();}catch(e){}return document.activeElement===tas[i]?'focus':'nofocus';}}return '0';})()"""
     }
 
     /** Ketik beneran lewat jalur IME (InputConnection.commitText) —
@@ -1735,10 +1747,16 @@ abstract class BrowserActivity : AppCompatActivity() {
      *  event pertama adalah InputEvent ber-data (inputType
      *  insertText, data = teks) — sebagian framework menghitung
      *  nilai baru dari event.data, dan Event polos (data kosong)
-     *  bisa mengosongkan modelnya. */
+     *  bisa mengosongkan modelnya.
+     *  v0.1.47: untuk voice, ISI ULANG TERTUNDA — 300 ms sesudah isi
+     *  pertama, setTimeout mencari ULANG kotaknya (query segar) lalu
+     *  set nilai lagi via setter + event input. Pelajaran 20 Nov
+     *  15:43 (probe eq=true): setter jalan, framework menghapus
+     *  nilai sesudah JS call selesai — isi ulang sesudah tick reset
+     *  itu (atau pada elemen pengganti) bisa menempel. */
     private fun ttsFillJs(role: String, text: String): String {
         val quoted = org.json.JSONObject.quote(text)
-        val js = """(function(role,text){var tas=[...document.querySelectorAll('textarea,[contenteditable],input,[role="textbox"]')].filter(function(t){return t.offsetParent!==null;});var pick=null;if(role==='voice'){pick=tas.find(function(t){return (t.getAttribute('placeholder')||'').toLowerCase().indexOf('describe the voice style')>=0;});if(!pick){pick=tas.find(function(t){var s=((t.getAttribute('aria-label')||'')+' '+(t.getAttribute('placeholder')||'')).toLowerCase();return s.indexOf('style')>=0||s.indexOf('voice')>=0||s.indexOf('describe')>=0||s.indexOf('tone')>=0;});}}else{pick=tas.find(function(t){var s=((t.getAttribute('aria-label')||'')+' '+(t.getAttribute('placeholder')||'')).toLowerCase();return s.indexOf('text')>=0||s.indexOf('script')>=0||s.indexOf('enter')>=0||s.indexOf('speech')>=0||s.indexOf('tags')>=0;});if(!pick&&tas.length>0){pick=tas.reduce(function(a,b){return (b.offsetWidth*b.offsetHeight)>(a.offsetWidth*a.offsetHeight)?b:a;});}}if(!pick)return '0';pick.focus();try{pick.setSelectionRange(0,pick.value.length);}catch(e){}var ok=false;try{ok=document.execCommand('insertText',false,text);}catch(e){}if(role==='voice'||!ok||(pick.value||pick.textContent||'').length===0){if(pick.tagName==='TEXTAREA'){var setter=Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype,'value').set;setter.call(pick,text);}else if(pick.tagName==='INPUT'){var setter2=Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype,'value').set;setter2.call(pick,text);}else{pick.textContent=text;}try{pick.dispatchEvent(new InputEvent('input',{bubbles:true,cancelable:true,inputType:'insertText',data:text}));}catch(e){}pick.dispatchEvent(new Event('input',{bubbles:true}));try{pick.dispatchEvent(new Event('change',{bubbles:true}));}catch(e){}}return String((pick.value||pick.textContent||'').length);})('$role',$quoted)"""
+        val js = """(function(role,text){var tas=[...document.querySelectorAll('textarea,[contenteditable],input,[role="textbox"]')].filter(function(t){return t.offsetParent!==null;});var pick=null;if(role==='voice'){pick=tas.find(function(t){return (t.getAttribute('placeholder')||'').toLowerCase().indexOf('describe the voice style')>=0;});if(!pick){pick=tas.find(function(t){var s=((t.getAttribute('aria-label')||'')+' '+(t.getAttribute('placeholder')||'')).toLowerCase();return s.indexOf('style')>=0||s.indexOf('voice')>=0||s.indexOf('describe')>=0||s.indexOf('tone')>=0;});}}else{pick=tas.find(function(t){var s=((t.getAttribute('aria-label')||'')+' '+(t.getAttribute('placeholder')||'')).toLowerCase();return s.indexOf('text')>=0||s.indexOf('script')>=0||s.indexOf('enter')>=0||s.indexOf('speech')>=0||s.indexOf('tags')>=0;});if(!pick&&tas.length>0){pick=tas.reduce(function(a,b){return (b.offsetWidth*b.offsetHeight)>(a.offsetWidth*a.offsetHeight)?b:a;});}}if(!pick)return '0';pick.focus();try{pick.setSelectionRange(0,pick.value.length);}catch(e){}var ok=false;try{ok=document.execCommand('insertText',false,text);}catch(e){}if(role==='voice'||!ok||(pick.value||pick.textContent||'').length===0){if(pick.tagName==='TEXTAREA'){var setter=Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype,'value').set;setter.call(pick,text);}else if(pick.tagName==='INPUT'){var setter2=Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype,'value').set;setter2.call(pick,text);}else{pick.textContent=text;}try{pick.dispatchEvent(new InputEvent('input',{bubbles:true,cancelable:true,inputType:'insertText',data:text}));}catch(e){}pick.dispatchEvent(new Event('input',{bubbles:true}));try{pick.dispatchEvent(new Event('change',{bubbles:true}));}catch(e){}if(role==='voice'){try{setTimeout(function(){var tas2=[...document.querySelectorAll('textarea,[contenteditable],input,[role="textbox"]')].filter(function(t){return t.offsetParent!==null;});for(var i=0;i<tas2.length;i++){var p=(tas2[i].getAttribute('placeholder')||'').toLowerCase();if(p.indexOf('describe the voice style')>=0){var s2=tas2[i];try{var setter2=Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype,'value').set;setter2.call(s2,text);}catch(e){try{s2.value=text;}catch(e2){}}try{s2.dispatchEvent(new Event('input',{bubbles:true}));}catch(e3){}break;}}},300);}catch(e){}}}return String((pick.value||pick.textContent||'').length);})('$role',$quoted)"""
         return js
     }
 
