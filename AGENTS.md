@@ -118,6 +118,38 @@ Jangan cuma diagnosa dari kodenya.
   (BufferedReader bisa menelan byte body). senz.py v2 ngomong ke
   API via `adb forward tcp:19335 tcp:19335`; procs/shot/type/tap/
   key/home tetap ADB (level perangkat).
+- API 52 (20 Nov, v0.1.52): FULL AKSES APP LEWAT API BRIDGE (Gas
+  Sendy 20:38 — "Bangun Full akses app pake API bridge", jawaban
+  atas temuan 20:35: monitoring Space 2-4 TIDAK BISA lewat
+  screenshot tanpa narik layar HP yang sedang dipakai Sendy, dan
+  field `limit` di /spaces bacaannya null walau modal limit tampil
+  di 3 Space). Isi: (a) GET /page?slot= — BrowserActivity menulis
+  snapshot halaman ke api-page-<suffix>.json tiap halaman selesai
+  + tiap ~20 dtk (tick live ke-10): url (tanpa query), title,
+  text (awal halaman, 4000 karakter), tail (akhir halaman, 1500
+  karakter), generating (tombol Stop ada = Claude sedang ngetik,
+  best effort), limit + limitReset (EN "5-hour message limit" /
+  "out of free messages", ID "kehabisan pesan gratis" /
+  "Penggunaan gratis"; reset EN "resets at 10:50 PM", ID "pukul
+  00.20"). ApiServer menambah ageSec + stale (umur >120 dtk =
+  basi — snapshot TIDAK PERNAH segar bila proses Space mati,
+  mis. sesudah install APK baru). (b) POST /navigate {slot, url}
+  — muat URL di Space; host HARUS sama dengan situs Space itu
+  (claude.ai / aistudio.google.com), situs lain DITOLAK 400;
+  payload lewat intent extra EXTRA_API_NAVIGATE_URL (MainActivity
+  + SpaceLauncher, pola sama seperti promptUrl v0.1.38) +
+  consumeApiNavigate di onCreate/onNewIntent. (c) Snapshot yang
+  menemukan limit JUGA menulis file limit SpaceStatus — field
+  `limit` di /spaces jadi jujur; snapshot TIDAK PERNAH menghapus
+  file limit (halaman home tidak menampilkan modal, jadi "tidak
+  ketemu" belum tentu "sudah bebas" — penghapusan tetap urusan
+  LiveBridge). (d) senz.py: `page --slot N` + `navigate --slot N
+  --url ...`. RISIKO JUJUR: isi chat Claude dibaca sebagai TEKS
+  TERLIHAT (innerText), bukan struktur pesan — tahap checkpoint
+  (M1/M2/M3) tetap dibaca dari kata-kata di teks, bukan field
+  khusus; dan snapshot cuma hidup selama proses Space hidup.
+  Kandidat v0.1.53 (BELUM di-Gas): tap ikon unduh di bar player
+  (215,2360) bila tap tombol Download dialog tetap gagal.
 - API 51 (20 Nov, v0.1.51): TUTUP SHEET SPEAKER + UNDUH PAKAI TAP
   BENERAN + CATAT PERCOBAAN STYLE (Gas Sendy 19:42 — "penyempurnaan
   sisa 10%"). Sisa 10% dari run batch 19 Nov (Charger/Gigi/Paper

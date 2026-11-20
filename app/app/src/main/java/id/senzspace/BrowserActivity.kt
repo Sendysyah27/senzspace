@@ -184,6 +184,11 @@ abstract class BrowserActivity : AppCompatActivity() {
     private var ttsDownloadRetried: Boolean = false
     private val ttsHandler = Handler(Looper.getMainLooper())
 
+    // v0.1.52 - snapshot halaman (API bridge, GET /page): penghitung
+    // tick live (tiap ~10 tick = ~20 dtk) + pengaman jalan ganda.
+    private var pageSnapTicks: Int = 0
+    private var pageSnapRunning: Boolean = false
+
     /** Callback unduhan file-chooser yang sedang menunggu pilihan user.
      *  WAJIB dipanggil tepat sekali (dengan array URI atau null). */
     private var fileChooserCallback: android.webkit.ValueCallback<Array<android.net.Uri>>? = null
@@ -263,6 +268,10 @@ abstract class BrowserActivity : AppCompatActivity() {
             lastAliveMs = System.currentTimeMillis()
             writeLiveStatus()
             if (!isForeground) captureLiveThumbnail()
+            // v0.1.52: tiap ~10 tick (~20 dtk) baca keadaan halaman
+            // untuk GET /page — tanpa narik layar HP.
+            pageSnapTicks++
+            if (pageSnapTicks % 10 == 0) capturePageSnapshot()
             liveHandler.postDelayed(this, liveIntervalMs())
         }
     }
@@ -356,6 +365,90 @@ abstract class BrowserActivity : AppCompatActivity() {
         } catch (e: Exception) {
             // Thumbnail boleh gagal; jangan ganggu browsing.
         }
+    }
+
+    /** v0.1.52 - baca keadaan halaman (API bridge, GET /page):
+     *  URL (tanpa query) § judul § lagi ngetik jawaban § kena limit
+     *  § jam reset limit § teks awal § teks akhir. Dipisah "§", teks
+     *  dibersihkan dulu (tanpa " \ § |, baris baru jadi spasi) supaya
+     *  balasan evaluateJavascript (string JSON-quoted) gampang dipecah
+     *  di Kotlin. Limit: EN "5-hour message limit" / "out of free
+     *  messages", ID "kehabisan pesan gratis" / "Penggunaan gratis".
+     *  Reset: EN "resets at 10:50 PM", ID "pukul 00.20". Generating
+     *  (best effort): tombol Stop ada di halaman. */
+    private fun pageSnapshotJs(): String = """
+        (function(){try{
+        var txt=document.body?document.body.innerText:'';
+        var clean=function(s){return (s||'').replace(/["\\§|]/g,' ').replace(/\s+/g,' ').trim();};
+        var full=clean(txt);
+        var head=full.substring(0,4000);
+        var tail=full.substring(Math.max(0,full.length-1500));
+        var stop=!!document.querySelector('button[aria-label*="Stop"]');
+        var low=txt.toLowerCase();
+        var lim=txt.indexOf('5-hour message limit')>=0||low.indexOf('out of free messages')>=0||low.indexOf('kehabisan pesan gratis')>=0||low.indexOf('penggunaan gratis')>=0;
+        var m=txt.match(/resets at ([0-9:]+ [AP]M)/)||txt.match(/pukul ([0-9]{1,2}\.[0-9]{2})/);
+        var reset=m?m[1]:'';
+        var u='';try{u=location.origin+location.pathname;}catch(e){}
+        return [u,clean(document.title),stop?'1':'0',lim?'1':'0',reset,head,tail].join('§');
+        }catch(e){return '§§0§0§§§';}})()
+    """.trimIndent()
+
+    /** v0.1.52 - tulis snapshot halaman ke api-page-<suffix>.json
+     *  (filesDir internal, dibaca ApiServer untuk GET /page).
+     *  Dijalankan tiap halaman selesai + tiap ~20 dtk dari tick live.
+     *  Bila limit ketemu, tulis juga file limit SpaceStatus supaya
+     *  field `limit` di /spaces jujur (sebelumnya null walau modal
+     *  limit tampil — bukti 20 Nov 20:30). TIDAK PERNAH menghapus
+     *  file limit dari sini: halaman home tidak menampilkan modal
+     *  limit, jadi "tidak ketemu" belum tentu "sudah bebas". */
+    private fun pageStatusFile(): java.io.File =
+        java.io.File(filesDir, "api-page-$dataDirectorySuffix.json")
+
+    private fun capturePageSnapshot() {
+        if (!::webView.isInitialized) return
+        if (pageSnapRunning) return
+        pageSnapRunning = true
+        try {
+            webView.evaluateJavascript(pageSnapshotJs()) { raw ->
+                pageSnapRunning = false
+                try {
+                    val s = raw?.removeSurrounding("\"") ?: return@evaluateJavascript
+                    val p = s.split("§")
+                    if (p.size < 7) return@evaluateJavascript
+                    val limited = p[3] == "1"
+                    val reset = p[4]
+                    if (limited) {
+                        SpaceStatus.writeLimit(this, dataDirectorySuffix, reset)
+                    }
+                    val obj = org.json.JSONObject().apply {
+                        put("name", spaceName)
+                        put("url", p[0])
+                        put("title", p[1])
+                        put("generating", p[2] == "1")
+                        put("limit", limited)
+                        put("limitReset", reset)
+                        put("text", p[5])
+                        put("tail", p[6])
+                        put("updated", System.currentTimeMillis())
+                    }
+                    pageStatusFile().writeText(obj.toString())
+                } catch (_: Exception) {
+                }
+            }
+        } catch (_: Exception) {
+            pageSnapRunning = false
+        }
+    }
+
+    /** v0.1.52 - muat URL di Space ini (POST /navigate). Host URL
+     *  HARUS sama dengan situs Space (claude.ai / aistudio) —
+     *  dicek ApiServer sebelum intent dikirim; di sini cuma muat. */
+    private fun consumeApiNavigate(intent: android.content.Intent) {
+        val url = intent.getStringExtra(MainActivity.EXTRA_API_NAVIGATE_URL)
+            ?: return
+        intent.removeExtra(MainActivity.EXTRA_API_NAVIGATE_URL)
+        if (!::webView.isInitialized) return
+        if (currentUrl != url) webView.loadUrl(url)
     }
 
     /** Jembatan JS untuk Multi Live v2: halaman memanggil onChanged()
@@ -748,6 +841,9 @@ abstract class BrowserActivity : AppCompatActivity() {
                     maybeRunApiPrompt()
                     // v0.1.39: sama untuk TTS API.
                     maybeRunApiTts()
+                    // v0.1.52: halaman selesai - baca keadaan halaman
+                    // untuk GET /page.
+                    capturePageSnapshot()
                 }
 
                 override fun onRenderProcessGone(
@@ -987,6 +1083,8 @@ abstract class BrowserActivity : AppCompatActivity() {
         consumeApiPrompt(intent)
         // v0.1.39: payload TTS API dari intent (bila ada).
         consumeApiTts(intent)
+        // v0.1.52: URL navigasi API dari intent (bila ada).
+        consumeApiNavigate(intent)
         // Guard anti-kill: service foreground di proses Space ini supaya
         // sistem tidak mematikan Space yang lama tidak dibuka. Hormati
         // pengaturan (Pengaturan → Guard anti-kill): bila dimatikan user,
@@ -2286,6 +2384,8 @@ abstract class BrowserActivity : AppCompatActivity() {
         consumeApiPrompt(intent)
         // v0.1.39: payload TTS API susulan.
         consumeApiTts(intent)
+        // v0.1.52: URL navigasi API susulan.
+        consumeApiNavigate(intent)
     }
 
     override fun onStop() {

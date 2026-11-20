@@ -60,6 +60,9 @@ class MainActivity : AppCompatActivity() {
         const val EXTRA_API_TTS_URL = "extra_api_tts_url"
         // v0.1.41: nama voice TTS (mis. "Sadaltager", Favorites).
         const val EXTRA_API_TTS_SPEAKER = "extra_api_tts_speaker"
+        // v0.1.52: URL yang dimuat di Space (POST /navigate) — host
+        // HARUS sama dengan situs Space itu (dicek ApiServer).
+        const val EXTRA_API_NAVIGATE_URL = "extra_api_navigate_url"
         // v0.1.40: nama Project Claude tujuan prompt (mis. "SSR CONTENT STUDIO").
         const val EXTRA_API_PROMPT_PROJECT = "extra_api_prompt_project"
         const val EXTRA_SPACE_NAME = "extra_space_name"

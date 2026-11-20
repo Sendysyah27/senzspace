@@ -455,6 +455,30 @@ muncul (Ubah nama / Matikan Live / Hapus Space).
    "Beku" juga. Hapus Space yang beku → Space baru di slot yang sama
    tidak ikut beku.
 
+## Tes Page v0.1.52 di HP (bahasa bayi)
+
+v0.1.52 bikin Jhon bisa MEMBACA isi Space dari jauh, lewat
+API — tanpa membuka layar HP kamu. Sebelumnya Jhon cuma bisa
+melihat gambar kecil (thumbnail) atau harus membuka Space-nya
+sampai layarmu ketarik. Sekarang tiap Space menulis "catatan
+halaman" sendiri setiap 20 detik: alamat halaman, judul, isi
+teks (awal + akhir), Claude lagi ngetik atau diam, dan kena
+limit atau tidak (+ jam kapan limitnya habis). Jhon juga bisa
+menyuruh Space pindah halaman (misalnya balik ke chat produksi
+yang tadi ke-reset ke halaman utama) — tapi cuma ke situs Space
+itu sendiri (Claude ke claude.ai, AI Studio ke aistudio),
+tidak bisa ke situs lain.
+
+1. Install APK v0.1.52 (nimpa — JANGAN uninstall).
+2. Tutup SenzSpace, kembali ke Muse. JANGAN buka Space
+   mana pun. Bilang ke Jhon: "cek page Space 1" (atau 2, 3,
+   4). LULUS bila: Jhon bisa menyebut isi halaman terakhir
+   (misalnya "limit, reset 22:50" untuk Charger) TANPA
+   layarmu ketarik ke SenzSpace sama sekali.
+3. Kalau Jhon bilang snapshot-nya "basi" (umur >2 menit),
+   itu artinya proses Space itu lagi mati — buka dulu
+   Space-nya sekali dari Beranda, lalu bilang lagi ke Jhon.
+
 ## Tes Unduh Tap v0.1.51 di HP (bahasa bayi)
 
 v0.1.51 menyempurnakan sisa 10% dari v0.1.50. Dua hal yang

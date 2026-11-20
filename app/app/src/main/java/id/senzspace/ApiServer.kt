@@ -526,6 +526,93 @@ class ApiServer(private val ctx: Context) {
                     sendJson(client, 200, JSONObject().put("status", "unreadable"))
                 }
             }
+            method == "GET" && path == "/page" -> {
+                // v0.1.52: baca keadaan halaman Space (ditulis
+                // BrowserActivity ke api-page-<suffix>.json tiap
+                // halaman selesai + tiap ~20 dtk). Balasan membawa
+                // umur snapshot + basi/tidak — snapshot TIDAK PERNAH
+                // segar bila proses Space mati (mis. sesudah install
+                // APK baru). Isi: url (tanpa query), title, text
+                // (awal halaman), tail (akhir halaman), generating,
+                // limit + limitReset.
+                val slot = query["slot"]?.toIntOrNull() ?: -1
+                val entry = SpaceRegistry.load(ctx).firstOrNull { it.slot == slot }
+                if (entry == null) {
+                    sendJson(client, 404, JSONObject().put("error", "no Space on slot $slot"))
+                    return
+                }
+                val suffix = SpaceRegistry.suffixForSlot(slot)
+                val f = java.io.File(ctx.filesDir, "api-page-$suffix.json")
+                if (!f.exists()) {
+                    sendJson(client, 200, JSONObject().put("status", "none"))
+                    return
+                }
+                try {
+                    val obj = JSONObject(f.readText())
+                    val ageSec = ((System.currentTimeMillis() - obj.optLong("updated", 0L)) / 1000L).coerceAtLeast(0L)
+                    obj.put("ageSec", ageSec)
+                    obj.put("stale", ageSec > 120)
+                    sendJson(client, 200, obj)
+                } catch (_: Exception) {
+                    sendJson(client, 200, JSONObject().put("status", "unreadable"))
+                }
+            }
+            method == "POST" && path == "/navigate" -> {
+                // v0.1.52: muat URL di Space (mis. balik ke chat
+                // produksi yang tadi ke-reset ke home). Host URL HARUS
+                // sama dengan situs Space itu (claude.ai untuk Space
+                // Claude, aistudio.google.com untuk AI Studio) — URL
+                // ke situs lain DITOLAK.
+                val req = try {
+                    JSONObject(body)
+                } catch (_: Exception) {
+                    sendJson(client, 400, JSONObject().put("error", "body bukan JSON"))
+                    return
+                }
+                val slot = req.optInt("slot", -1)
+                val entry = SpaceRegistry.load(ctx).firstOrNull { it.slot == slot }
+                if (entry == null) {
+                    sendJson(client, 404, JSONObject().put("error", "no Space on slot $slot"))
+                    return
+                }
+                val url = req.optString("url", "")
+                val wantHost = try {
+                    android.net.Uri.parse(url).host ?: ""
+                } catch (_: Exception) {
+                    ""
+                }
+                val ownHost = try {
+                    android.net.Uri.parse(entry.url).host ?: ""
+                } catch (_: Exception) {
+                    ""
+                }
+                if (!url.startsWith("https://") || wantHost.isEmpty() || wantHost != ownHost) {
+                    sendJson(client, 400, JSONObject().put("error", "url harus https://<situs Space ini>/..."))
+                    return
+                }
+                val visible = appHasVisibleWindow()
+                val overlay = Settings.canDrawOverlays(ctx)
+                SpaceLauncher.open(ctx, entry, navigateUrl = url)
+                if (visible || overlay) {
+                    sendJson(client, 200, JSONObject().apply {
+                        put("navigated", entry.name)
+                        put("slot", entry.slot)
+                        put("url", url)
+                        put("visible", true)
+                        if (overlay && !visible) put("via", "overlay")
+                    })
+                } else {
+                    postOpenNotification(entry)
+                    sendJson(client, 202, JSONObject().apply {
+                        put("navigated", entry.name)
+                        put("slot", entry.slot)
+                        put("url", url)
+                        put("visible", false)
+                        put("needs_tap", true)
+                        put("note", "app di background — ketuk notifikasi 'Buka ${entry.name}' untuk menampilkan Space")
+                    })
+                }
+            }
             method == "POST" && path == "/freeze" -> {
                 val req = JSONObject(body)
                 val slot = req.optInt("slot", -1)

@@ -22,7 +22,8 @@ object SpaceLauncher {
         ttsVoice: String? = null,
         ttsModel: String? = null,
         ttsUrl: String? = null,
-        ttsSpeaker: String? = null
+        ttsSpeaker: String? = null,
+        navigateUrl: String? = null
     ): Intent {
         return Intent(ctx, SpaceRegistry.activityForSlot(entry.slot)).apply {
             flags = Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or
@@ -67,6 +68,10 @@ object SpaceLauncher {
                     putExtra(MainActivity.EXTRA_API_TTS_SPEAKER, ttsSpeaker)
                 }
             }
+            // v0.1.52: URL navigasi API (POST /navigate).
+            if (navigateUrl != null) {
+                putExtra(MainActivity.EXTRA_API_NAVIGATE_URL, navigateUrl)
+            }
             putExtra(MainActivity.EXTRA_SPACE_NAME, entry.name)
             putExtra(MainActivity.EXTRA_SPACE_COLOR, entry.color)
             putExtra(MainActivity.EXTRA_URL, entry.url)
@@ -88,7 +93,8 @@ object SpaceLauncher {
         ttsVoice: String? = null,
         ttsModel: String? = null,
         ttsUrl: String? = null,
-        ttsSpeaker: String? = null
+        ttsSpeaker: String? = null,
+        navigateUrl: String? = null
     ) {
         ctx.startActivity(
             intentFor(
@@ -97,7 +103,7 @@ object SpaceLauncher {
                 promptUrl = promptUrl, promptProject = promptProject,
                 ttsScript = ttsScript, ttsVoice = ttsVoice,
                 ttsModel = ttsModel, ttsUrl = ttsUrl,
-                ttsSpeaker = ttsSpeaker
+                ttsSpeaker = ttsSpeaker, navigateUrl = navigateUrl
             )
         )
     }
