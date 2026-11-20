@@ -11,6 +11,7 @@ import android.os.Looper
 import android.os.Message
 import android.os.SystemClock
 import android.view.KeyEvent
+import android.view.MotionEvent
 import android.view.ViewGroup
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputConnection
@@ -1571,7 +1572,7 @@ abstract class BrowserActivity : AppCompatActivity() {
                         ttsHandler.postDelayed({ verifyTtsStyleClosed(voice, probe, attempt) }, 800)
                     }, 400)
                 }
-            } else {
+            } else if (attempt == 3) {
                 // Percobaan 3: KLIK kolom, lalu ketik lewat KeyEvent.
                 webView.evaluateJavascript(ttsClickStyleFieldJs()) { rawFocus ->
                     val focus = rawFocus?.trim()?.removeSurrounding("\"") ?: ""
@@ -1579,6 +1580,9 @@ abstract class BrowserActivity : AppCompatActivity() {
                         ttsTypeKeys(voice, ", fokus=$focus") { verifyTtsStyleClosed(voice, probe, attempt) }
                     }, 400)
                 }
+            } else {
+                // Percobaan 4: tap beneran + IME hidup.
+                ttsTypeLiveIme(voice) { verifyTtsStyleClosed(voice, probe, attempt) }
             }
         }
     }
@@ -1665,6 +1669,58 @@ abstract class BrowserActivity : AppCompatActivity() {
         return """(function(){var tas=[...document.querySelectorAll('textarea,[contenteditable],input,[role="textbox"]')].filter(function(t){return t.offsetParent!==null;});for(var i=0;i<tas.length;i++){var p=(tas[i].getAttribute('placeholder')||'').toLowerCase();if(p.indexOf('describe the voice style')>=0){tas[i].click();tas[i].focus();try{tas[i].setSelectionRange(0,tas[i].value.length);}catch(e){}try{tas[i].select();}catch(e){}return document.activeElement===tas[i]?'focus':'nofocus';}}return '0';})()"""
     }
 
+    /** JS: posisi tengah kotak Style di layar (CSS px) — 'x|y'
+     *  atau '0' bila kotaknya tidak ketemu. */
+    private fun ttsStyleFieldRectJs(): String {
+        return """(function(){var tas=[...document.querySelectorAll('textarea,[contenteditable],input,[role="textbox"]')].filter(function(t){return t.offsetParent!==null;});for(var i=0;i<tas.length;i++){var p=(tas[i].getAttribute('placeholder')||'').toLowerCase();if(p.indexOf('describe the voice style')>=0){var r=tas[i].getBoundingClientRect();return (r.left+r.width/2)+'|'+(r.top+r.height/2);}}return '0';})()"""
+    }
+
+    /** Tap beneran ke satu titik di WebView (sentuhan DOWN+UP) —
+     *  v0.1.48. Tap ini dikirim aplikasi ke WebView-nya sendiri
+     *  (bukan ketuk layar HP oleh Jhon), koordinat dihitung dari
+     *  posisi elemen di halaman. */
+    private fun ttsTapAt(x: Float, y: Float) {
+        val now = SystemClock.uptimeMillis()
+        val down = MotionEvent.obtain(now, now, MotionEvent.ACTION_DOWN, x, y, 0)
+        webView.dispatchTouchEvent(down)
+        down.recycle()
+        ttsHandler.postDelayed({
+            val up = MotionEvent.obtain(now, SystemClock.uptimeMillis(), MotionEvent.ACTION_UP, x, y, 0)
+            webView.dispatchTouchEvent(up)
+            up.recycle()
+        }, 120)
+    }
+
+    /** Percobaan 4: tap beneran + IME hidup — v0.1.48.
+     *  Pelajaran dari video manual Sendy (20 Nov 16:07): nilai
+     *  cuma menempel lewat sesi IME beneran — tap beneran ke kotak
+     *  bikin keyboard kebuka + koneksi IME hidup, lalu paste/
+     *  commitText lewat koneksi itu. Tap -> tunggu 1200 ms
+     *  (keyboard naik) -> commitText lewat onCreateInputConnection
+     *  (yang kini koneksi HIDUP, bukan manual) -> verifikasi.
+     *  onDone(true/false) = commitText diterima atau tidak. */
+    private fun ttsTypeLiveIme(voice: String, onDone: (Boolean) -> Unit) {
+        webView.evaluateJavascript(ttsStyleFieldRectJs()) { raw ->
+            val clean = raw?.trim()?.removeSurrounding("\"") ?: ""
+            val parts = clean.split("|")
+            if (parts.size < 2) {
+                writeTtsStatus("running", "kotak Style tidak ketemu buat ditap (percobaan 4)")
+                onDone(false)
+                return@evaluateJavascript
+            }
+            val scale = webView.scale
+            val cx = (parts[0].toFloatOrNull() ?: 0f) * scale
+            val cy = (parts[1].toFloatOrNull() ?: 0f) * scale
+            writeTtsStatus("running", "mengetuk kotak Style (percobaan 4, ${cx.toInt()}x${cy.toInt()}) - menunggu keyboard")
+            ttsTapAt(cx, cy)
+            ttsHandler.postDelayed({
+                val typed = ttsTypeReal(voice)
+                writeTtsStatus("running", "mengetik format suara lewat IME hidup (percobaan 4, commitText=$typed)")
+                ttsHandler.postDelayed({ onDone(typed) }, 800)
+            }, 1200)
+        }
+    }
+
     /** Ketik beneran lewat jalur IME (InputConnection.commitText) —
      *  event input-nya trusted seperti ketikan pengguna, bukan set
      *  nilai lewat kode. Mengembalikan true bila commitText diterima. */
@@ -1685,10 +1741,15 @@ abstract class BrowserActivity : AppCompatActivity() {
 
     /** Isi Style gagal verifikasi: percobaan 1 -> ketik IME
      *  (percobaan 2); percobaan 2 -> ketik KeyEvent (percobaan 3);
-     *  percobaan 3 gagal -> dump bukti + gagal jujur. */
+     *  percobaan 3 -> tap beneran + IME hidup (percobaan 4);
+     *  percobaan 4 gagal -> dump bukti + gagal jujur. */
     private fun retryTtsStyle(voice: String, probe: String, attempt: Int) {
-        if (attempt < 3) {
-            val next = if (attempt == 1) "coba ketik lewat keyboard" else "coba ketik lewat tombol keyboard"
+        if (attempt < 4) {
+            val next = when (attempt) {
+                1 -> "coba ketik lewat keyboard"
+                2 -> "coba ketik lewat tombol keyboard"
+                else -> "coba tap beneran + IME hidup"
+            }
             writeTtsStatus("running", "format suara belum menempel (percobaan $attempt) - $next")
             ttsHandler.postDelayed({ waitTtsStyleField(10, voice, probe, attempt + 1) }, 1000)
         } else {
@@ -1705,7 +1766,7 @@ abstract class BrowserActivity : AppCompatActivity() {
         val js = """(function(){var tas=[...document.querySelectorAll('textarea,[contenteditable],input,[role="textbox"]')].filter(function(t){return t.offsetParent!==null;});var out=[];var ae=document.activeElement;out.push('active='+(ae?(ae.tagName+'|'+((ae.getAttribute('placeholder')||'').slice(0,30))):'none'));for(var i=0;i<tas.length&&i<8;i++){var t=tas[i];var ph=(t.getAttribute('placeholder')||'').slice(0,40);var al=(t.getAttribute('aria-label')||'').slice(0,40);var v=(t.value||t.textContent||'');out.push(t.tagName+'|ph='+ph+'|al='+al+'|len='+v.length+'|hasProbe='+(v.indexOf('Very bright')>=0)+'|dis='+t.disabled+'|ro='+t.readOnly);}var st=null;for(var j=0;j<tas.length;j++){var p=(tas[j].getAttribute('placeholder')||'').toLowerCase();if(p.indexOf('describe the voice style')>=0){st=tas[j];break;}}if(st){var setter=null;try{setter=Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype,'value').set;}catch(e){}try{if(setter){setter.call(st,'PROBE123');}else{st.value='PROBE123';}}catch(e2){}var back=(st.value||st.textContent||'');out.push('probe=set8-read'+back.length+'|eq='+(back==='PROBE123'));try{if(setter){setter.call(st,'');}else{st.value='';}}catch(e3){}}else{out.push('probe=no-field');}return out.join(' ;; ');})()"""
         webView.evaluateJavascript(js) { raw ->
             val dump = raw?.trim()?.removeSurrounding("\"") ?: ""
-            failTts("format suara tidak menempel di kotak Style setelah 3 percobaan (JS + ketik keyboard + tombol keyboard) - VO dibatalkan. Dump kolom: $dump")
+            failTts("format suara tidak menempel di kotak Style setelah 4 percobaan (JS + ketik keyboard + tombol keyboard + tap beneran + IME hidup) - VO dibatalkan. Dump kolom: $dump")
         }
     }
 

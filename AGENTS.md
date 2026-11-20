@@ -118,6 +118,21 @@ Jangan cuma diagnosa dari kodenya.
   (BufferedReader bisa menelan byte body). senz.py v2 ngomong ke
   API via `adb forward tcp:19335 tcp:19335`; procs/shot/type/tap/
   key/home tetap ADB (level perangkat).
+- API 48 (20 Nov, v0.1.48): TAP BENERAN + IME HIDUP (Gas Sendy
+  16:08). Video manual Sendy (16:07) menjawab mekanisme: nilai
+  cuma menempel lewat sesi IME beneran — tap kotak -> keyboard
+  Gboard kebuka -> paste dari papan klip -> teks nempel, tombol
+  Style tampil "Very bright, high-p…". Semua percobaan
+  programmatic TIDAK PERNAH punya sesi IME hidup. Fix:
+  percobaan 4 = ttsTypeLiveIme: JS cari posisi tengah kotak
+  (getBoundingClientRect, 'x|y') -> ttsTapAt kirim sentuhan
+  DOWN+UP via webView.dispatchTouchEvent (tap aplikasi ke
+  WebView-nya sendiri, koordinat dari posisi elemen) -> tunggu
+  1200 ms (keyboard naik) -> ttsTypeReal commitText lewat
+  onCreateInputConnection yang kini koneksi HIDUP -> verifikasi.
+  retryTtsStyle kini 1 -> 2 -> 3 -> 4 -> dump; pesan gagal
+  "setelah 4 percobaan". Rencana diagnostik v0.1.48 DIBATALKAN —
+  video Sendy sudah menjawab KENAPA-nya.
 - API 47 (20 Nov, v0.1.47): KLIK KOTAK + ISI ULANG TERTUNDA
   (Gas Sendy 15:50). Tes v0.1.46 (15:43): klik Style LULUS, tapi
   3 cara isi gagal; dump menjawab dua hal: (a) probe eq=true =
