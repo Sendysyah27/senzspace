@@ -142,6 +142,18 @@ Jangan cuma diagnosa dari kodenya.
   menimpa failed itu — tidak ada konflik. (c) Izin overlay
   SATU KALI — sesudah diberikan, tugas API jalan sendiri;
   penolakan tidak mengganggu app.
+  JEBAKAN PATCH (20 Nov, CI #61 GAGAL karena ini): baris
+  `open(f,"w").write(open(f).read())` MENGOSONGKAN file — open
+  mode "w" memotong file DULU, baru read baca file kosong.
+  ApiServer.kt jadi 0 byte, CI gagal "Unresolved reference:
+  ApiServer/ApiToken" di semua file lain. JANGAN PERNAH pakai
+  pola itu; patch script tidak boleh menulis ulang file yang
+  baru dibacanya dengan cara itu. SEBELUM push: cek `wc -c`
+  semua file yang disentuh patch — file 0 byte = STOP, pulihkan
+  dari commit GitHub terakhir dulu, baru push ulang. (Kedua:
+  MainActivity.kt tidak mengimpor android.widget.Button —
+  dialog baru v0.1.42 pakai Button() tanpa import; CI yang
+  menangkapnya.)
 - API 41 (19 Nov, v0.1.41): TTS ALUR ASLI (screenshot Sendy 23:28-23:32).
   (a) Urutan eksekusi: Run settings (ikon slider kanan atas) ->
   kartu model aktif -> tab Starred -> entri "Gemini 3.8 Flash Lite
