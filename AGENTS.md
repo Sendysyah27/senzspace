@@ -118,6 +118,27 @@ Jangan cuma diagnosa dari kodenya.
   (BufferedReader bisa menelan byte body). senz.py v2 ngomong ke
   API via `adb forward tcp:19335 tcp:19335`; procs/shot/type/tap/
   key/home tetap ADB (level perangkat).
+- API 43 (20 Nov, v0.1.43): STYLE MENEMPEL + UNDUH TEPAT WAKTU
+  (perintah Sendy, screenshot 14:15: "lu ngga masukin prompt
+  [format Riko] ini bro, sebelum run harusnya lu masukin ini").
+  Tes v0.1.42 (14:12-14:13): OVERLAY LULUS (cold-start, visible
+  via overlay, eksekutor jalan penuh <1 mnt) tapi DUA cacat:
+  (a) Style: fill lama mengembalikan len>0 tapi kotak "Describe
+  the voice style" TETAP KOSONG di screenshot (kena kolom lain
+  ATAU framework menghapus nilai saat menu ditutup) — audio 1:25
+  ter-generate TANPA format Riko; (b) Unduh: waitTtsDone terpicu
+  prematur oleh <audio> di +30 dtk (audio baru siap ~2 mnt),
+  runTtsDownload klik tombol Download PERTAMA di DOM (dialog
+  LAMA 19 Nov) — NOL aktivitas blob di blob-debug.txt. Fix:
+  Style = tunggu kolom muncul (poll 10x1 dtk, placeholder persis
+  "describe the voice style") -> isi (matcher voice utamakan
+  placeholder persis + event input DAN change) -> BACA BALIK
+  berisi "Very bright" -> tutup menu -> buka lagi -> BACA BALIK
+  lagi; gagal verifikasi = ulang 1x, lalu failed jujur (jangan
+  generate dengan gaya salah). Unduh = waitTtsDone syarat KETAT
+  (tombol Download ADA DAN audio readyState==4 + duration>0);
+  runTtsDownload klik tombol TERAKHIR (dialog terbaru); detail
+  gagal mencatat tombol yang diklik.
 - API 42 (20 Nov, v0.1.42): TANPA KETUK — BENERAN (perintah Sendy,
   voice call 13:42: "Space-nya Jhon yang buka, browser-nya Jhon
   yang jalanin, semuanya lewat API"). Akar insiden 00:28-00:41:

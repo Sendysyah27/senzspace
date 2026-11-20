@@ -171,6 +171,7 @@ abstract class BrowserActivity : AppCompatActivity() {
     private var ttsActiveModel: String = ""
     private var ttsRunning: Boolean = false
     private var ttsFilesBefore: Set<String> = emptySet()
+    private var ttsDownloadInfo: String = ""
     private val ttsHandler = Handler(Looper.getMainLooper())
 
     /** Callback unduhan file-chooser yang sedang menunggu pilihan user.
@@ -1471,27 +1472,94 @@ abstract class BrowserActivity : AppCompatActivity() {
      *  Klik tombol "Style" di editor -> isi kotak "Describe the
      *  voice style" -> tutup lagi menunya -> lanjut ke Speaker.
      *  Format Riko BUKAN nama voice - jangan dicari di daftar voice. */
+    /** Langkah 5b: isi STYLE (format suara Riko) — v0.1.43.
+     *  Pelajaran 20 Nov 14:15 (screenshot Sendy): fill lama
+     *  mengembalikan len>0 tapi kotak Style TETAP KOSONG — entah kena
+     *  kolom lain, entah framework menghapus nilai saat menu ditutup.
+     *  Karena itu v0.1.43 MEMBACA BALIK kotaknya: isi -> cek -> tutup
+     *  -> buka lagi -> cek lagi. Kalau setelah 2 percobaan tetap
+     *  kosong, GAGAL dengan jelas (jangan generate VO dengan gaya
+     *  suara yang salah). */
     private fun runTtsStyle() {
         val voice = pendingTtsVoice ?: return runTtsSpeaker()
+        val probe = voice.take(11) // "Very bright" — penanda isi menempel
         writeTtsStatus("running", "membuka pengaturan Style")
-        val clickJs = """(function(){var bs=[...document.querySelectorAll('button')].filter(function(b){return b.offsetParent!==null;});for(var i=0;i<bs.length;i++){if((bs[i].textContent||'').trim()==='Style'||(bs[i].textContent||'').trim().indexOf('Style')===0){bs[i].click();return '1';}}return '0';})()"""
-        webView.evaluateJavascript(clickJs) { raw ->
+        webView.evaluateJavascript(ttsClickStyleJs()) { raw ->
             val clean = raw?.trim()?.removeSurrounding("\"") ?: ""
             if (clean != "1") {
                 failTts("tombol Style tidak ketemu di editor dialog")
                 return@evaluateJavascript
             }
-            ttsHandler.postDelayed({
-                webView.evaluateJavascript(ttsFillJs("voice", voice)) { raw2 ->
-                    val len = raw2?.trim()?.removeSurrounding("\"")?.toIntOrNull() ?: 0
-                    if (len > 0) {
-                        // Tutup menu Style (klik lagi tombolnya), lanjut.
-                        webView.evaluateJavascript(clickJs) { _ -> runTtsSpeaker() }
-                    } else {
-                        failTts("kolom 'Describe the voice style' tidak ketemu - format suara tidak terisi (VO bisa keluar dengan gaya yang salah, jadi dibatalkan)")
+            waitTtsStyleField(10, voice, probe, 1)
+        }
+    }
+
+    /** JS klik tombol "Style" (buka/tutup menu). */
+    private fun ttsClickStyleJs(): String {
+        return """(function(){var bs=[...document.querySelectorAll('button')].filter(function(b){return b.offsetParent!==null;});for(var i=0;i<bs.length;i++){if((bs[i].textContent||'').trim()==='Style'||(bs[i].textContent||'').trim().indexOf('Style')===0){bs[i].click();return '1';}}return '0';})()"""
+    }
+
+    /** JS baca isi kotak "Describe the voice style" ('' bila tak ada). */
+    private fun ttsStyleValueJs(): String {
+        return """(function(){var tas=[...document.querySelectorAll('textarea,[contenteditable],input,[role="textbox"]')].filter(function(t){return t.offsetParent!==null;});for(var i=0;i<tas.length;i++){var p=(tas[i].getAttribute('placeholder')||'').toLowerCase();if(p.indexOf('describe the voice style')>=0)return (tas[i].value||tas[i].textContent||'');}return '';})()"""
+    }
+
+    /** Tunggu kolom Style muncul, isi, lalu VERIFIKASI baca-balik. */
+    private fun waitTtsStyleField(triesLeft: Int, voice: String, probe: String, attempt: Int) {
+        val findJs = """(function(){var tas=[...document.querySelectorAll('textarea,[contenteditable],input,[role="textbox"]')].filter(function(t){return t.offsetParent!==null;});for(var i=0;i<tas.length;i++){var p=(tas[i].getAttribute('placeholder')||'').toLowerCase();if(p.indexOf('describe the voice style')>=0)return '1';}return '0';})()"""
+        webView.evaluateJavascript(findJs) { raw ->
+            val clean = raw?.trim()?.removeSurrounding("\"") ?: ""
+            if (clean != "1") {
+                if (triesLeft <= 0) {
+                    failTts("kolom 'Describe the voice style' tidak muncul setelah Style dibuka (percobaan $attempt)")
+                } else {
+                    ttsHandler.postDelayed({ waitTtsStyleField(triesLeft - 1, voice, probe, attempt) }, 1000)
+                }
+                return@evaluateJavascript
+            }
+            webView.evaluateJavascript(ttsFillJs("voice", voice)) { raw2 ->
+                val len = raw2?.trim()?.removeSurrounding("\"")?.toIntOrNull() ?: 0
+                if (len <= 0) {
+                    failTts("kolom 'Describe the voice style' tidak terisi (percobaan $attempt)")
+                    return@evaluateJavascript
+                }
+                // Verifikasi 1: baca balik SEBELUM menu ditutup.
+                webView.evaluateJavascript(ttsStyleValueJs()) { raw3 ->
+                    val v1 = raw3?.trim()?.removeSurrounding("\"") ?: ""
+                    if (!v1.contains(probe)) {
+                        retryTtsStyle(voice, probe, attempt)
+                        return@evaluateJavascript
+                    }
+                    // Tutup menu, buka lagi, verifikasi 2 (framework
+                    // bisa menghapus nilai saat menu ditutup — itu yang
+                    // terjadi 20 Nov 14:15).
+                    webView.evaluateJavascript(ttsClickStyleJs()) { _ ->
+                        ttsHandler.postDelayed({
+                            webView.evaluateJavascript(ttsClickStyleJs()) { _ ->
+                                ttsHandler.postDelayed({
+                                    webView.evaluateJavascript(ttsStyleValueJs()) { raw4 ->
+                                        val v2 = raw4?.trim()?.removeSurrounding("\"") ?: ""
+                                        if (!v2.contains(probe)) {
+                                            retryTtsStyle(voice, probe, attempt)
+                                        } else {
+                                            webView.evaluateJavascript(ttsClickStyleJs()) { _ -> runTtsSpeaker() }
+                                        }
+                                    }
+                                }, 1000)
+                            }
+                        }, 1000)
                     }
                 }
-            }, 1000)
+            }
+        }
+    }
+
+    /** Isi Style gagal verifikasi: coba ulang sekali, lalu gagal jujur. */
+    private fun retryTtsStyle(voice: String, probe: String, attempt: Int) {
+        if (attempt < 2) {
+            ttsHandler.postDelayed({ waitTtsStyleField(10, voice, probe, attempt + 1) }, 1000)
+        } else {
+            failTts("format suara tidak menempel di kotak Style setelah 2 percobaan (isi terbaca kosong) - VO dibatalkan supaya tidak keluar dengan gaya yang salah")
         }
     }
 
@@ -1530,7 +1598,7 @@ abstract class BrowserActivity : AppCompatActivity() {
      *  native setter + event input untuk framework Angular/React). */
     private fun ttsFillJs(role: String, text: String): String {
         val quoted = org.json.JSONObject.quote(text)
-        val js = """(function(role,text){var tas=[...document.querySelectorAll('textarea,[contenteditable],input,[role="textbox"]')].filter(function(t){return t.offsetParent!==null;});var pick=null;if(role==='voice'){pick=tas.find(function(t){var s=((t.getAttribute('aria-label')||'')+' '+(t.getAttribute('placeholder')||'')).toLowerCase();return s.indexOf('style')>=0||s.indexOf('voice')>=0||s.indexOf('describe')>=0||s.indexOf('tone')>=0;});}else{pick=tas.find(function(t){var s=((t.getAttribute('aria-label')||'')+' '+(t.getAttribute('placeholder')||'')).toLowerCase();return s.indexOf('text')>=0||s.indexOf('script')>=0||s.indexOf('enter')>=0||s.indexOf('speech')>=0||s.indexOf('tags')>=0;});if(!pick&&tas.length>0){pick=tas.reduce(function(a,b){return (b.offsetWidth*b.offsetHeight)>(a.offsetWidth*a.offsetHeight)?b:a;});}}if(!pick)return '0';pick.focus();try{pick.setSelectionRange(0,pick.value.length);}catch(e){}var ok=false;try{ok=document.execCommand('insertText',false,text);}catch(e){}if(!ok||(pick.value||pick.textContent||'').length===0){if(pick.tagName==='TEXTAREA'){var setter=Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype,'value').set;setter.call(pick,text);}else if(pick.tagName==='INPUT'){var setter2=Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype,'value').set;setter2.call(pick,text);}else{pick.textContent=text;}pick.dispatchEvent(new Event('input',{bubbles:true}));}return String((pick.value||pick.textContent||'').length);})('$role',$quoted)"""
+        val js = """(function(role,text){var tas=[...document.querySelectorAll('textarea,[contenteditable],input,[role="textbox"]')].filter(function(t){return t.offsetParent!==null;});var pick=null;if(role==='voice'){pick=tas.find(function(t){return (t.getAttribute('placeholder')||'').toLowerCase().indexOf('describe the voice style')>=0;});if(!pick){pick=tas.find(function(t){var s=((t.getAttribute('aria-label')||'')+' '+(t.getAttribute('placeholder')||'')).toLowerCase();return s.indexOf('style')>=0||s.indexOf('voice')>=0||s.indexOf('describe')>=0||s.indexOf('tone')>=0;});}}else{pick=tas.find(function(t){var s=((t.getAttribute('aria-label')||'')+' '+(t.getAttribute('placeholder')||'')).toLowerCase();return s.indexOf('text')>=0||s.indexOf('script')>=0||s.indexOf('enter')>=0||s.indexOf('speech')>=0||s.indexOf('tags')>=0;});if(!pick&&tas.length>0){pick=tas.reduce(function(a,b){return (b.offsetWidth*b.offsetHeight)>(a.offsetWidth*a.offsetHeight)?b:a;});}}if(!pick)return '0';pick.focus();try{pick.setSelectionRange(0,pick.value.length);}catch(e){}var ok=false;try{ok=document.execCommand('insertText',false,text);}catch(e){}if(!ok||(pick.value||pick.textContent||'').length===0){if(pick.tagName==='TEXTAREA'){var setter=Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype,'value').set;setter.call(pick,text);}else if(pick.tagName==='INPUT'){var setter2=Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype,'value').set;setter2.call(pick,text);}else{pick.textContent=text;}pick.dispatchEvent(new Event('input',{bubbles:true}));try{pick.dispatchEvent(new Event('change',{bubbles:true}));}catch(e){}}return String((pick.value||pick.textContent||'').length);})('$role',$quoted)"""
         return js
     }
 
@@ -1570,30 +1638,42 @@ abstract class BrowserActivity : AppCompatActivity() {
         }
     }
 
-    /** Langkah 6: tunggu tombol unduh / elemen audio muncul (10 mnt). */
+    /** Langkah 6: tunggu VO SELESAI digenerate (10 mnt) — v0.1.43.
+     *  Pelajaran 20 Nov 14:13: picu lama (tombol Download ADA atau
+     *  <audio> ADA) menembak terlalu cepat — audio 1:25 baru selesai
+     *  ~2 mnt, tapi eksekutor sudah klik unduh di +30 dtk (tombol
+     *  dialog LAMA / belum siap) dan klik itu tidak memicu blob sama
+     *  sekali. Sekarang syaratnya KETAT: ada tombol Download DAN ada
+     *  <audio> dengan readyState 4 + duration > 0 (audio benar-benar
+     *  siap diputar). */
     private fun waitTtsDone(triesLeft: Int) {
         if (pendingTtsScript == null) return
-        val js = """(function(){var dl=0,audio=0;var bs=[...document.querySelectorAll('button')].filter(function(b){return b.offsetParent!==null;});for(var i=0;i<bs.length;i++){var l=(bs[i].getAttribute('aria-label')||'').trim();var tx=(bs[i].textContent||'').trim();if(l==='Download'||tx==='Download'){dl=1;break;}}var aus=document.querySelectorAll('audio');for(var j=0;j<aus.length;j++){if(aus[j].src||aus[j].querySelector('source')){audio=1;break;}}return dl+'|'+audio;})()"""
+        val js = """(function(){var dl=0,ready=0;var bs=[...document.querySelectorAll('button')].filter(function(b){return b.offsetParent!==null;});for(var i=0;i<bs.length;i++){var l=(bs[i].getAttribute('aria-label')||'').trim();var tx=(bs[i].textContent||'').trim();if(l==='Download'||tx==='Download'){dl=1;break;}}var aus=document.querySelectorAll('audio');for(var j=0;j<aus.length;j++){var a=aus[j];if((a.src||a.querySelector('source'))&&a.readyState===4&&a.duration>0){ready=1;break;}}return dl+'|'+ready;})()"""
         webView.evaluateJavascript(js) { raw ->
             val clean = raw?.trim()?.removeSurrounding("\"") ?: ""
             val parts = clean.split("|")
-            if (parts.getOrNull(0) == "1" || parts.getOrNull(1) == "1") {
+            if (parts.getOrNull(0) == "1" && parts.getOrNull(1) == "1") {
                 runTtsDownload()
             } else if (triesLeft <= 0) {
-                failTts("VO tidak selesai dalam 10 menit (tombol unduh tidak muncul)")
+                failTts("VO tidak selesai dalam 10 menit (tombol unduh / audio siap tidak muncul)")
             } else {
                 ttsHandler.postDelayed({ waitTtsDone(triesLeft - 1) }, 10000)
             }
         }
     }
 
-    /** Langkah 7: klik unduh (pojok kiri bawah), lalu tunggu file VO. */
+    /** Langkah 7: klik unduh dialog TERBARU, lalu tunggu file VO — v0.1.43.
+     *  Pelajaran 20 Nov 14:13: klik tombol Download PERTAMA di DOM
+     *  bisa kena dialog LAMA (19 Nov) — kliknya tidak memicu blob.
+     *  Sekarang klik tombol TERAKHIR (dialog terbaru = paling bawah). */
     private fun runTtsDownload() {
-        val js = """(function(){var bs=[...document.querySelectorAll('button')].filter(function(b){return b.offsetParent!==null;});for(var i=0;i<bs.length;i++){var l=(bs[i].getAttribute('aria-label')||'').trim();var tx=(bs[i].textContent||'').trim();if(l==='Download'||tx==='Download'){bs[i].click();return '1';}}return '0';})()"""
+        val js = """(function(){var bs=[...document.querySelectorAll('button')].filter(function(b){return b.offsetParent!==null;});var found=[];for(var i=0;i<bs.length;i++){var l=(bs[i].getAttribute('aria-label')||'').trim();var tx=(bs[i].textContent||'').trim();if(l==='Download'||tx==='Download'){found.push(bs[i]);}}if(found.length===0)return '0|0';found[found.length-1].click();return '1|'+found.length;})()"""
         writeTtsStatus("running", "mengunduh VO")
         webView.evaluateJavascript(js) { raw ->
             val clean = raw?.trim()?.removeSurrounding("\"") ?: ""
-            if (clean == "1") {
+            val parts = clean.split("|")
+            if (parts.getOrNull(0) == "1") {
+                ttsDownloadInfo = "tombol unduh terbaru diklik (1 dari ${parts.getOrNull(1) ?: "?"})"
                 waitTtsFile(6)
             } else {
                 failTts("tombol unduh tidak ketemu")
@@ -1619,7 +1699,7 @@ abstract class BrowserActivity : AppCompatActivity() {
             pendingTtsScript = null
             writeTtsStatus("done", "VO tersimpan: ${fresh.name} (${fresh.length()} byte)")
         } else if (triesLeft <= 0) {
-            failTts("tombol unduh diklik tapi file VO tidak muncul di folder aistudio (cek _log-blob/blob-debug.txt)")
+            failTts("${ttsDownloadInfo.ifBlank { "tombol unduh diklik" }} tapi file VO tidak muncul di folder aistudio (cek _log-blob/blob-debug.txt)")
         } else {
             ttsHandler.postDelayed({ waitTtsFile(triesLeft - 1) }, 5000)
         }
