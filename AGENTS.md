@@ -196,6 +196,40 @@ Jangan cuma diagnosa dari kodenya.
   + extra studio), senz.py (studio + studio-status). Tanpa ubah
   perilaku: eksekutor prompt/TTS, FM picker, BootReceiver,
   SpaceRegistry, dan rute lain tidak disentuh.
+- API 61 (21 Nov, v0.1.61): EKSEKUTOR STUDIO + PROMPT LEBIH JUJUR.
+  (a) Upload Studio: tunggu dialog 30 dtk (dulu 15 dtk); dialog
+  diterima bila ada kolom judul ATAU heading "Upload videos" /
+  "Unggah video" di dalam dialog; nama file yang dipilih dicek
+  kemunculannya di teks halaman bila memungkinkan. Bila dialog
+  tidak kebuka, detail gagal membawa bukti: 300 karakter pertama
+  teks halaman + label tombol + ada/tidaknya dialog, file-input,
+  dan flag chooser tersaji. Verifikasi akhir tidak berubah: video
+  harus muncul di daftar Content (cocok judul persis) baru status
+  done + videoUrl.
+  (b) Prompt fill: kolom chat dibaca dulu sebelum diisi. Kosong ->
+  langsung isi. Sama persis dengan teks pending (sisa percobaan
+  sebelumnya) -> hapus dulu (select-all + delete, fallback
+  textContent='' + event input) lalu isi. Berisi teks LAIN -> gagal
+  jujur "kolom chat berisi teks lain" + 80 karakter pertama — teks
+  itu tidak disentuh dan tidak dikirim.
+  (c) Prompt send: klik Send saja bukan bukti terkirim. Sesudah
+  klik, verifikasi ~10 dtk (poll 5x2 dtk): kolom harus kosong DAN
+  (teks tampil sebagai pesan user ATAU tombol Stop ada). Kolom
+  masih berisi teks -> gagal "pesan tidak terkirim (masih di kolom
+  chat)". Tombol kirim tidak ada karena Claude sedang menjawab ->
+  gagal "Claude sedang menjawab (pesan masih di kolom chat)".
+  Status "sent" tidak pernah ditulis sebelum verifikasi lolos.
+  (d) Limit reset: pola "returns at H:MM AM/PM" dan "until H:MM
+  AM/PM" ditambahkan di pageSnapshotJs dan pengamat limit live —
+  halaman upsell memakai frasa itu, bukan "resets at".
+  (e) Dasbor Studio: periksa teks khas dasbor ("Current
+  subscribers" / "Channel dashboard" + angka) sebelum mengurai;
+  hasil urai pertama yang kosong semua diulang sekali sesudah
+  ~10 dtk; bila tetap kosong, status tetap "done" (field kosong
+  bukan gagal) tapi detail menyatakan eksplisit bacaannya kosong
+  dan halaman mungkin belum lengkap. Tanpa ubah perilaku:
+  eksekutor TTS, FM picker, BootReceiver, SpaceRegistry, dan rute
+  lain tidak disentuh.
 - API 57 (21 Nov, v0.1.57): AUTOSTART SESUDAH INSTALL/UPDATE.
   BootReceiver kini menangani MY_PACKAGE_REPLACED di samping
   BOOT_COMPLETED — cabang yang sama persis (ApiToken.isEnabled →

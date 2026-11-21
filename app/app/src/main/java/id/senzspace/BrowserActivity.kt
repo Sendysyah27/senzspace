@@ -189,7 +189,10 @@ abstract class BrowserActivity : AppCompatActivity() {
      *  hanya studio.youtube.com (dicek ApiServer + maybeRunApiStudio).
      *  pendingStudioFile = file _inbox yang disodorkan ke chooser
      *  saat JS mengklik "Upload videos"; studioChooserServed =
-     *  chooser sudah dipanggil (dipakai tunggu upload). */
+     *  chooser sudah dipanggil (dipakai tunggu upload);
+     *  studioUploadFileName = nama file (tetap ada sesudah
+     *  pendingStudioFile dikosongkan chooser — dipakai verifikasi
+     *  nama file di dialog upload). */
     private var pendingStudioAction: String? = null
     private var pendingStudioFile: java.io.File? = null
     private var pendingStudioTitle: String? = null
@@ -197,6 +200,8 @@ abstract class BrowserActivity : AppCompatActivity() {
     private var pendingStudioSchedule: String? = null
     private var studioRunning: Boolean = false
     private var studioChooserServed: Boolean = false
+    private var studioDashboardEmptyRetried: Boolean = false
+    private var studioUploadFileName: String? = null
     private var studioVideoId: String? = null
     private var studioChannelId: String? = null
     private var studioUiLang: String = "en"
@@ -414,7 +419,9 @@ abstract class BrowserActivity : AppCompatActivity() {
      *  balasan evaluateJavascript (string JSON-quoted) gampang dipecah
      *  di Kotlin. Limit: EN "5-hour message limit" / "out of free
      *  messages", ID "kehabisan pesan gratis" / "Penggunaan gratis".
-     *  Reset: EN "resets at 10:50 PM", ID "pukul 00.20". Generating
+     *  Reset: EN "resets at 10:50 PM" / halaman upsell "returns at
+     *  5:00 PM" / "out of free messages until 5:00 PM", ID
+     *  "pukul 00.20". Generating
      *  (best effort): tombol Stop ada di halaman.
      *  v0.1.53 - field ke-8: daftar link chat sidebar (maks 20,
      *  "judul^url" dipisah "~"): semua <a href="/chat/<id>"> di DOM.
@@ -441,7 +448,7 @@ abstract class BrowserActivity : AppCompatActivity() {
         var stop=!!(document.querySelector('button[aria-label*="Stop"]')||document.querySelector('button[aria-label*="Berhenti"]'));
         var low=txt.toLowerCase();
         var lim=txt.indexOf('5-hour message limit')>=0||low.indexOf('out of free messages')>=0||low.indexOf('kehabisan pesan gratis')>=0||low.indexOf('penggunaan gratis')>=0;
-        var m=txt.match(/resets at ([0-9:]+ [AP]M)/)||txt.match(/pukul ([0-9]{1,2}\.[0-9]{2})/);
+        var m=txt.match(/resets at ([0-9:]+ [AP]M)/)||txt.match(/returns? at ([0-9:]+ [AP]M)/)||txt.match(/until ([0-9:]+ [AP]M)/)||txt.match(/pukul ([0-9]{1,2}\.[0-9]{2})/);
         var reset=m?m[1]:'';
         var u='';try{u=location.origin+location.pathname;}catch(e){}
         var raw=document.querySelectorAll('a[href*="/chat/"]');
@@ -600,7 +607,7 @@ abstract class BrowserActivity : AppCompatActivity() {
                     "window.__senzLimitState='';" +
                     "function checkLimit(){try{var txt=document.body?document.body.innerText:'';" +
                     "var hit=txt.indexOf('5-hour message limit')>=0;" +
-                    "var m=txt.match(/resets at ([0-9:]+ [AP]M)/);" +
+                    "var m=txt.match(/resets at ([0-9:]+ [AP]M)/)||txt.match(/returns? at ([0-9:]+ [AP]M)/)||txt.match(/until ([0-9:]+ [AP]M)/);" +
                     "var reset=m?m[1]:'';var st=hit?('LIMIT:'+reset):'OK';" +
                     "if(window.__senzLimitState!==st){window.__senzLimitState=st;" +
                     "if(hit){window.SenzLive.onLimit(reset);}else{window.SenzLive.onLimitCleared();}}" +
@@ -1424,38 +1431,87 @@ abstract class BrowserActivity : AppCompatActivity() {
         }
     }
 
-    /** Langkah 3: isi teks prompt ke kolom chat (insertText). */
+    /** Langkah 3: isi teks prompt ke kolom chat (insertText).
+     *  v0.1.61 - KOLOM DIBERSIHKAN DULU: isi lama dibaca sebelum isi
+     *  baru. Kosong -> langsung isi. Sama persis dengan teks pending
+     *  (sisa percobaan sebelumnya) -> hapus dulu (select-all +
+     *  delete, fallback textContent='' + event input) lalu isi.
+     *  Berisi teks LAIN -> gagal jujur "kolom chat berisi teks lain"
+     *  + 80 karakter pertama — teks itu TIDAK disentuh dan TIDAK
+     *  dikirim (insertText tanpa clear sebelumnya menempelkan teks
+     *  baru ke sisa lama). */
     private fun runPromptFill() {
         val text = pendingPromptText ?: return
         val quoted = org.json.JSONObject.quote(text)
-        val js = """(function(){var c=document.querySelector('div.ProseMirror[contenteditable="true"]')||document.querySelector('div[contenteditable="true"]');if(!c)return '0|0';c.focus();var ok=document.execCommand('insertText',false,$quoted);return String((c.innerText||'').length)+'|'+(ok?'1':'0');})()"""
+        val js = """(function(){var c=document.querySelector('div.ProseMirror[contenteditable="true"]')||document.querySelector('div[contenteditable="true"]');if(!c)return '0|nocomposer';var want=$quoted;var norm=function(s){return (s||'').replace(/\s+/g,' ').trim();};var cur=(c.innerText||'');if(norm(cur).length>0&&norm(cur)!==norm(want))return '0|other|'+norm(cur).replace(/\|/g,' ').slice(0,80);c.focus();if(norm(cur).length>0){try{document.execCommand('selectAll',false,null);document.execCommand('delete',false,null);}catch(e){}if(norm(c.innerText||'').length>0){c.textContent='';try{c.dispatchEvent(new InputEvent('input',{bubbles:true,cancelable:true,inputType:'deleteContent'}));}catch(e2){}c.dispatchEvent(new Event('input',{bubbles:true}));}}var ok=document.execCommand('insertText',false,want);return String((c.innerText||'').length)+'|'+(ok?'1':'0');})()"""
         writePromptStatus("running", "mengisi teks prompt")
         webView.evaluateJavascript(js) { raw ->
             val clean = raw?.trim()?.removeSurrounding("\"") ?: ""
             val parts = clean.split("|")
             val len = parts.getOrNull(0)?.toIntOrNull() ?: 0
-            if (len > 0) {
-                runPromptSend()
-            } else {
-                failPrompt("teks prompt tidak masuk ke kolom chat")
+            when (parts.getOrNull(1)) {
+                "other" -> failPrompt("kolom chat berisi teks lain: ${parts.drop(2).joinToString("|")}")
+                "nocomposer" -> failPrompt("kolom chat tidak ketemu")
+                else -> if (len > 0) {
+                    runPromptSend()
+                } else {
+                    failPrompt("teks prompt tidak masuk ke kolom chat")
+                }
             }
         }
     }
 
-    /** Langkah 4: klik tombol kirim. */
+    /** Langkah 4: klik tombol kirim. v0.1.61 - klik SAJA bukan bukti
+     *  terkirim: sesudah klik, verifikasi lewat runPromptVerifySend
+     *  (~10 dtk) sebelum menulis status "sent". Tombol kirim tidak
+     *  ada karena Claude sedang menjawab (tombol berubah jadi Stop)
+     *  -> gagal jujur "Claude sedang menjawab" (teks tetap di kolom
+     *  chat — percobaan berikut akan menolaknya lewat aturan
+     *  runPromptFill, bukan menimpanya diam-diam). */
     private fun runPromptSend() {
-        val js = """(function(){var b=document.querySelector('button[aria-label="Send message"]')||document.querySelector('button[aria-label="Kirim pesan"]');if(!b)return '0';if(b.disabled)return 'disabled';b.click();return '1';})()"""
+        val js = """(function(){var b=document.querySelector('button[aria-label="Send message"]')||document.querySelector('button[aria-label="Kirim pesan"]');if(!b){var s=document.querySelector('button[aria-label*="Stop"]')||document.querySelector('button[aria-label*="Berhenti"]');return s?'responding':'0';}if(b.disabled)return 'disabled';b.click();return '1';})()"""
         webView.evaluateJavascript(js) { raw ->
             val clean = raw?.trim()?.removeSurrounding("\"") ?: ""
             if (clean == "1") {
+                writePromptStatus("running", "tombol kirim diklik - memverifikasi pesan terkirim")
+                runPromptVerifySend(5)
+            } else if (clean == "disabled") {
+                failPrompt("tombol kirim nonaktif (teks/lampiran belum diterima Claude)")
+            } else if (clean == "responding") {
+                failPrompt("Claude sedang menjawab (pesan masih di kolom chat)")
+            } else {
+                failPrompt("tombol kirim tidak ketemu")
+            }
+        }
+    }
+
+    /** Langkah 4b: verifikasi kirim beneran (v0.1.61) — pesan
+     *  dianggap terkirim hanya bila kolom chat sudah kosong DAN
+     *  (teks tampil sebagai pesan user ATAU Claude mulai menjawab
+     *  — tombol Stop ada). Poll 5x2 dtk (~10 dtk). Kolom masih berisi
+     *  teks sesudah 10 dtk -> gagal "pesan tidak terkirim (masih di
+     *  kolom chat)"; kolom kosong tapi tidak terverifikasi -> gagal
+     *  "pesan tidak terverifikasi terkirim". Status "sent" TIDAK
+     *  PERNAH ditulis sebelum verifikasi ini lolos. */
+    private fun runPromptVerifySend(triesLeft: Int) {
+        val text = pendingPromptText ?: return
+        val quoted = org.json.JSONObject.quote(text)
+        val js = """(function(){var c=document.querySelector('div.ProseMirror[contenteditable="true"]')||document.querySelector('div[contenteditable="true"]');var empty=!c||(c.innerText||'').trim()==='';if(!empty)return '0|incomposer';var stop=!!(document.querySelector('button[aria-label*="Stop"]')||document.querySelector('button[aria-label*="Berhenti"]'));var body=document.body?document.body.innerText:'';var seen=body.indexOf($quoted)>=0;return (stop||seen)?'1|ok':'0|unverified';})()"""
+        webView.evaluateJavascript(js) { raw ->
+            val parts = (raw?.trim()?.removeSurrounding("\"") ?: "").split("|")
+            if (parts.getOrNull(0) == "1") {
                 promptRunning = false
                 pendingPromptText = null
                 pendingPromptFiles = null
                 writePromptStatus("sent", "terkirim - Claude sedang menjawab")
-            } else if (clean == "disabled") {
-                failPrompt("tombol kirim nonaktif (teks/lampiran belum diterima Claude)")
+            } else if (triesLeft > 1) {
+                promptHandler.postDelayed({ runPromptVerifySend(triesLeft - 1) }, 2000)
             } else {
-                failPrompt("tombol kirim tidak ketemu")
+                if (parts.getOrNull(1) == "incomposer") {
+                    failPrompt("pesan tidak terkirim (masih di kolom chat)")
+                } else {
+                    failPrompt("pesan tidak terverifikasi terkirim sesudah klik Send")
+                }
             }
         }
     }
@@ -2332,6 +2388,7 @@ abstract class BrowserActivity : AppCompatActivity() {
         pendingStudioTitle = null
         pendingStudioDescription = null
         pendingStudioSchedule = null
+        studioUploadFileName = null
         writeStudioStatus("failed", detail)
     }
 
@@ -2375,8 +2432,13 @@ abstract class BrowserActivity : AppCompatActivity() {
         pendingStudioTitle = title
         pendingStudioDescription = description
         pendingStudioSchedule = schedule ?: "now"
+        // Nama file disimpan terpisah: pendingStudioFile dikosongkan
+        // cabang chooser sesudah disodorkan, sementara tunggu dialog
+        // masih butuh nama file untuk verifikasi kemunculannya.
+        studioUploadFileName = fileName
         studioRunning = false
         studioChooserServed = false
+        studioDashboardEmptyRetried = false
         studioVideoId = null
         studioChannelId = null
         writeStudioStatus("queued", "payload Studio diterima Space $dataDirectorySuffix")
@@ -2410,7 +2472,7 @@ abstract class BrowserActivity : AppCompatActivity() {
         when (action) {
             "dashboard" -> {
                 writeStudioStatus("running", "membaca dasbor channel")
-                runStudioDashboard(5)
+                runStudioDashboard(2)
             }
             "videos" -> {
                 writeStudioStatus("running", "membuka halaman Content")
@@ -2556,47 +2618,96 @@ abstract class BrowserActivity : AppCompatActivity() {
         return """(function(){try{var txt=document.body?document.body.innerText:'';function clean(s){return (s||'').replace(/["\\§|^~]/g,' ').replace(/\s+/g,' ').trim();}var channel='',subs='',views='',watch='',top='';var m=txt.match(/Your channel\s*\n([^\n]+)/)||txt.match(/Channel Anda\s*\n([^\n]+)/);if(!m){var m2=txt.match(/Your channel\s+([^\\n]+?)(?:\s+Dashboard|\s+Dasbor|\s+Content|\s+Konten|$)/)||txt.match(/Channel Anda\s+([^\\n]+?)(?:\s+Dashboard|\s+Dasbor|\s+Content|\s+Konten|$)/);if(m2)channel=clean(m2[1]);}else channel=clean(m[1]);m=txt.match(/Current subscribers\s*\n?\s*([\d.,]+)/)||txt.match(/Subscriber saat ini\s*\n?\s*([\d.,]+)/);if(m)subs=m[1];m=txt.match(/Views\s+([\d.,]+[KM]?)\s*[—–-]\s*Watch time \(hours\)\s+([\d.,]+)/)||txt.match(/Penayangan\s+([\d.,]+[KM]?)\s*[—–-]\s*Waktu tonton \(jam\)\s+([\d.,]+)/);if(m){views=m[1];watch=m[2];}var i1=txt.indexOf('Top content');if(i1<0)i1=txt.indexOf('Konten teratas');var ends=['View realtime data','Lihat data realtime','Recent subscribers','Subscriber terbaru','Create your first post','Buat postingan pertama'];var i2=-1;for(var e=0;e<ends.length;e++){var j=txt.indexOf(ends[e],i1);if(j>=0&&(i2<0||j<i2))i2=j;}var sec=i1>=0?txt.substring(i1,i2>=0?i2:txt.length):'';var lines=sec.split('\n').map(function(s){return clean(s);}).filter(function(s){return s.length>0;});var items=[];var cur='';for(var i=0;i<lines.length;i++){var L=lines[i];if(/^(Top content|Konten teratas|Last 48 hours|48 jam terakhir|Views|Penayangan)$/.test(L))continue;var mm=L.match(/^(.*?)\s+([\d.,]+\s*[KM]?)$/);if(mm&&mm[1].length>0&&!/^(Views|Penayangan|Ranking|First|Go to|Lihat)/.test(mm[1])){items.push(clean(mm[1])+'^'+mm[2].trim());cur='';if(items.length>=5)break;}else if(/^[\d.,]+\s*[KM]?$/.test(L)){if(cur){items.push(cur+'^'+L);cur='';if(items.length>=5)break;}}else{cur=cur?cur+' '+L:L;}}top=items.join('~');return [channel,subs,views,watch,top].join('§');}catch(e){return '§§§§';}})()"""
     }
 
+    /** JS siap-dasbor (v0.1.61): dasbor baru dianggap siap diurai
+     *  bila teks khasnya sudah ada ("Current subscribers" / "Channel
+     *  dashboard" + angka) — angka analitik dimuat belakangan, jadi
+     *  urai tanpa tunggu = semua field kosong. */
+    private fun studioDashboardReadyJs(): String {
+        return """(function(){var t=document.body?document.body.innerText:'';var hasSubs=t.indexOf('Current subscribers')>=0||t.indexOf('Subscriber saat ini')>=0;var hasDash=t.indexOf('Channel dashboard')>=0||t.indexOf('Dasbor channel')>=0;var hasNum=/\d/.test(t);return ((hasSubs||hasDash)&&hasNum)?'1':'0';})()"""
+    }
+
     /** Aksi dashboard: baca ringkasan channel dari dasbor Studio.
-     *  Field kosong = tidak terurai (bukan gagal); jumlah video
-     *  teratas dilaporkan jujur di detail. */
+     *  v0.1.61 - TUNGGU SIAP DULU: periksa teks khas dasbor sebelum
+     *  mengurai; bila hasil urai pertama KOSONG semua, ulangi sekali
+     *  sesudah ~10 dtk. Bila tetap kosong, status tetap "done"
+     *  (field kosong bukan gagal) TAPI detail menyatakan eksplisit
+     *  bacaannya kosong dan halaman mungkin belum lengkap — bukan
+     *  field kosong diam-diam. */
     private fun runStudioDashboard(triesLeft: Int) {
         if (pendingStudioAction == null) return
-        webView.evaluateJavascript(studioDashboardJs()) { raw ->
-            val clean = raw?.trim()?.removeSurrounding("\"") ?: ""
-            val parts = clean.split("§")
-            if (parts.size < 5) {
+        webView.evaluateJavascript(studioDashboardReadyJs()) { rawReady ->
+            val ready = (rawReady?.trim()?.removeSurrounding("\"") ?: "") == "1"
+            if (!ready) {
                 if (triesLeft > 1) {
-                    studioHandler.postDelayed({ runStudioDashboard(triesLeft - 1) }, 2000)
+                    studioHandler.postDelayed({ runStudioDashboard(triesLeft - 1) }, 10000)
                 } else {
-                    failStudio("dasbor Studio tidak terbaca")
+                    finishStudioDashboardEmpty("dasbor belum siap sesudah menunggu")
                 }
                 return@evaluateJavascript
             }
-            val topArr = org.json.JSONArray()
-            val topRaw = parts[4]
-            if (topRaw.isNotBlank()) {
-                for (row in topRaw.split("~")) {
-                    val p = row.split("^")
-                    if (p.size == 2) {
-                        topArr.put(org.json.JSONObject().apply {
-                            put("title", p[0])
-                            put("views", p[1])
-                        })
+            webView.evaluateJavascript(studioDashboardJs()) { raw ->
+                val clean = raw?.trim()?.removeSurrounding("\"") ?: ""
+                val parts = clean.split("§")
+                if (parts.size < 5) {
+                    if (triesLeft > 1) {
+                        studioHandler.postDelayed({ runStudioDashboard(triesLeft - 1) }, 2000)
+                    } else {
+                        finishStudioDashboardEmpty("dasbor tidak terbaca")
+                    }
+                    return@evaluateJavascript
+                }
+                val topArr = org.json.JSONArray()
+                val topRaw = parts[4]
+                if (topRaw.isNotBlank()) {
+                    for (row in topRaw.split("~")) {
+                        val p = row.split("^")
+                        if (p.size == 2) {
+                            topArr.put(org.json.JSONObject().apply {
+                                put("title", p[0])
+                                put("views", p[1])
+                            })
+                        }
                     }
                 }
+                val allEmpty = parts[0].isBlank() && parts[1].isBlank() &&
+                    parts[2].isBlank() && parts[3].isBlank() && topArr.length() == 0
+                if (allEmpty && !studioDashboardEmptyRetried) {
+                    studioDashboardEmptyRetried = true
+                    studioHandler.postDelayed({ runStudioDashboard(1) }, 10000)
+                    return@evaluateJavascript
+                }
+                val data = org.json.JSONObject().apply {
+                    put("channel", parts[0])
+                    put("subscribers", parts[1])
+                    put("views28d", parts[2])
+                    put("watchHours28d", parts[3])
+                    put("topVideos", topArr)
+                }
+                val n = topArr.length()
+                studioRunning = false
+                pendingStudioAction = null
+                if (allEmpty) {
+                    writeStudioStatus("done", "dasbor dibaca KOSONG — halaman mungkin belum lengkap (channel: ?, subscriber: ?, 0 video teratas)", data)
+                } else {
+                    writeStudioStatus("done", "dasbor dibaca (channel: ${parts[0].ifBlank { "?" }}, subscriber: ${parts[1].ifBlank { "?" }}, $n video teratas)", data)
+                }
             }
-            val data = org.json.JSONObject().apply {
-                put("channel", parts[0])
-                put("subscribers", parts[1])
-                put("views28d", parts[2])
-                put("watchHours28d", parts[3])
-                put("topVideos", topArr)
-            }
-            val n = topArr.length()
-            studioRunning = false
-            pendingStudioAction = null
-            writeStudioStatus("done", "dasbor dibaca (channel: ${parts[0].ifBlank { "?" }}, subscriber: ${parts[1].ifBlank { "?" }}, $n video teratas)", data)
         }
+    }
+
+    /** Dasbor selesai dibaca tapi kosong: tetap "done" (field kosong
+     *  bukan gagal), detail menyatakan kosong secara eksplisit. */
+    private fun finishStudioDashboardEmpty(reason: String) {
+        studioRunning = false
+        pendingStudioAction = null
+        val data = org.json.JSONObject().apply {
+            put("channel", "")
+            put("subscribers", "")
+            put("views28d", "")
+            put("watchHours28d", "")
+            put("topVideos", org.json.JSONArray())
+        }
+        writeStudioStatus("done", "dasbor dibaca KOSONG — $reason; halaman mungkin belum lengkap (channel: ?, subscriber: ?, 0 video teratas)", data)
     }
 
     /** Buka halaman Content (SPA — klik nav, bukan loadUrl penuh).
@@ -2723,30 +2834,47 @@ abstract class BrowserActivity : AppCompatActivity() {
         if (pendingStudioAction == null) return
         val labels = org.json.JSONArray(listOf("upload videos", "upload video", "unggah video")).toString()
         val verifyJs = """(function(){var els=[...document.querySelectorAll('button,a,[role="menuitem"]')].filter(function(e){return e.offsetParent!==null;});for(var i=0;i<els.length;i++){var t=(els[i].textContent||'').trim().toLowerCase();if(t==='upload videos'||t==='upload video'||t==='unggah video')return '0';}return '1';})()"""
-        studioClickThenVerify(labels, verifyJs, false, false, { runStudioWaitDialog(15) }, {
+        studioClickThenVerify(labels, verifyJs, false, false, { runStudioWaitDialog(30) }, {
             failStudio("menu 'Upload videos' tidak ketemu sesudah menu Create kebuka")
         })
     }
 
-    /** Langkah 3 upload: tunggu dialog upload kebuka (kolom judul
-     *  muncul) + file benar tersaji ke chooser (flag
-     *  studioChooserServed dari cabang onShowFileChooser). Dialog
-     *  kebuka TANPA flag = dialog sisa sesi sebelumnya — gagal
-     *  jujur, jangan isi kolom orang lain. */
+    /** Langkah 3 upload (v0.1.61): tunggu dialog upload kebuka +
+     *  file benar tersaji ke chooser (flag studioChooserServed dari
+     *  cabang onShowFileChooser). Dialog diterima bila ada kolom
+     *  judul ATAU heading "Upload videos"/"Unggah video" di dalam
+     *  dialog; nama file yang dipilih dicek kemunculannya di teks
+     *  halaman bila memungkinkan. Poll 30x1 dtk. Bila dialog tidak
+     *  kebuka, detail gagal membawa bukti: 300 karakter pertama teks
+     *  halaman + label tombol + ada/tidaknya dialog, file-input, dan
+     *  flag chooser — supaya penyebabnya bisa dibaca tanpa menebak.
+     *  Dialog kebuka TANPA flag = dialog sisa sesi sebelumnya —
+     *  gagal jujur, jangan isi kolom orang lain. */
     private fun runStudioWaitDialog(triesLeft: Int) {
         if (pendingStudioAction == null) return
-        val js = """(function(){var tas=[...document.querySelectorAll('textarea,[contenteditable],input,[role="textbox"]')].filter(function(t){return t.offsetParent!==null;});for(var i=0;i<tas.length;i++){var s=((tas[i].getAttribute('aria-label')||'')+' '+(tas[i].getAttribute('placeholder')||'')).toLowerCase();if(s.indexOf('title')>=0||s.indexOf('judul')>=0)return '1';}return '0';})()"""
+        val fileName = studioUploadFileName
+        val fileQuoted = org.json.JSONObject.quote(fileName ?: "")
+        val js = """(function(){var dlg=document.querySelector('ytcp-uploads-dialog');var scope=dlg||document;var hasTitle=0;var tas=[...scope.querySelectorAll('textarea,[contenteditable],input,[role="textbox"]')].filter(function(t){return t.offsetParent!==null;});for(var i=0;i<tas.length;i++){var s=((tas[i].getAttribute('aria-label')||'')+' '+(tas[i].getAttribute('placeholder')||'')).toLowerCase();if(s.indexOf('title')>=0||s.indexOf('judul')>=0){hasTitle=1;break;}}var heading=0;if(dlg){var ht=(dlg.innerText||'').toLowerCase();if(ht.indexOf('upload videos')>=0||ht.indexOf('upload video')>=0||ht.indexOf('unggah video')>=0)heading=1;}var fname=$fileQuoted;var fileSeen=0;if(fname){var t=document.body?document.body.innerText:'';var base=fname.replace(/\.[^.]+$/,'');if(t.indexOf(fname)>=0||t.indexOf(base)>=0)fileSeen=1;}var hasInput=!!document.querySelector('input[type="file"]');return (hasTitle||heading?'1':'0')+'|'+fileSeen+'|'+(hasInput?'1':'0')+'|'+(dlg?'1':'0');})()"""
         webView.evaluateJavascript(js) { raw ->
-            val ok = (raw?.trim()?.removeSurrounding("\"") ?: "") == "1"
-            if (ok) {
+            val parts = (raw?.trim()?.removeSurrounding("\"") ?: "").split("|")
+            val dialogOpen = parts.getOrNull(0) == "1"
+            val fileSeen = parts.getOrNull(1) == "1"
+            if (dialogOpen) {
                 if (!studioChooserServed) {
                     failStudio("dialog upload sudah kebuka dari sesi sebelumnya — file tidak tersaji ke chooser")
                     return@evaluateJavascript
                 }
-                writeStudioStatus("running", "dialog upload kebuka — mengisi judul")
+                writeStudioStatus("running", "dialog upload kebuka — mengisi judul (nama file terlihat: ${if (fileSeen) "ya" else "tidak"})")
                 runStudioFillTitle()
             } else if (triesLeft <= 0) {
-                failStudio("dialog upload tidak kebuka sesudah file dipilih")
+                val diagJs = """(function(){var t=(document.body?document.body.innerText:'')||'';var head=t.replace(/\s+/g,' ').trim().slice(0,300);var hasDlg=!!document.querySelector('ytcp-uploads-dialog');var hasInput=!!document.querySelector('input[type="file"]');return head+' | dialog:'+(hasDlg?'ya':'tidak')+' | file-input:'+(hasInput?'ya':'tidak');})()"""
+                webView.evaluateJavascript(diagJs) { rawDiag ->
+                    val diag = (rawDiag?.trim()?.removeSurrounding("\"") ?: "").take(400)
+                    webView.evaluateJavascript(studioDumpJs()) { rawDump ->
+                        val dump = (rawDump?.trim()?.removeSurrounding("\"") ?: "").take(300)
+                        failStudio("dialog upload tidak kebuka sesudah file dipilih (chooser tersaji: ${if (studioChooserServed) "ya" else "tidak"}; $diag; $dump)")
+                    }
+                }
             } else {
                 studioHandler.postDelayed({ runStudioWaitDialog(triesLeft - 1) }, 1000)
             }
@@ -3075,6 +3203,7 @@ abstract class BrowserActivity : AppCompatActivity() {
                 pendingStudioTitle = null
                 pendingStudioDescription = null
                 pendingStudioSchedule = null
+                studioUploadFileName = null
                 writeStudioStatus("done", "video ${if (scheduled) "dijadwalkan" else "diterbitkan"}: $title", data)
             } else if (triesLeft <= 0) {
                 failStudio("video tidak muncul di daftar Content sesudah ${if ((pendingStudioSchedule ?: "now") != "now") "dijadwalkan" else "diterbitkan"} — kemungkinan masih diproses; cek manual di Studio")
