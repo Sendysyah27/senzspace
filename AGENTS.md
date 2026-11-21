@@ -900,3 +900,40 @@ Jangan cuma diagnosa dari kodenya.
   Tanpa ubah perilaku: eksekutor prompt/TTS/Studio,
   snapshot/thumbnail, limit detection, FileManager, KeepAlive
   per-Space, BootReceiver yang sudah ada (hanya tambah enqueue).
+- API 72 (22 Nov, v0.1.72): GUARDIAN WATCHDOG (PROSES :watchdog).
+  (a) Latar: watchdog WorkManager v0.1.71 tidak pernah menyalakan
+  ApiService di HP ini — start foreground service dari background
+  ditolak sistem (receiver/worker bukan konteks yang dikecualikan),
+  WorkManager tidak pernah terjadwal, dan semua lapis menelan
+  kegagalan diam-diam. WatchdogGuardService jalan di proses sendiri
+  (:watchdog): foreground service (notifikasi LOW, channel
+  "senzspace_watchdog" yang sama dengan worker) → uid-nya
+  foreground → boleh memanggil ApiService.start() bila /ping tidak
+  menjawab. Di-start HANYA dari konteks foreground
+  (MainActivity.onCreate, BootReceiver, BrowserActivity.onCreate —
+  di samping ApiService.start yang sudah ada, idempotent);
+  ApiService tetap tanpa android:process → selalu jalan di proses
+  utama, guardian hanya pemicunya. Loop Handler 60 dtk (bukan
+  AlarmManager — service foreground tidak kena defer Doze untuk
+  Handler); ping Socket mentah memakai ulang
+  WatchdogWorker.isApiAlive (kini di companion object, bukan
+  duplikasi). START_STICKY + re-start dari ketiga titik di atas.
+  Guardian bukan jalur revive dari VM: start dari background
+  (mis. ReviveReceiver) bisa ditolak sistem, jadi receiver tidak
+  memanggilnya.
+  (b) Logging: tag "SenzWatchdog" (guardian + worker +
+  ApiService.start + BootReceiver) dan "SenzRevive" (receiver).
+  ApiService.start kini kembalikan Boolean (true bila salah satu
+  jalur start terpanggil, false bila keduanya ditolak — pemanggil
+  lama yang mengabaikan nilai balik tidak rusak); tiap throw
+  dicatat Log.e, tidak ditelan diam-diam. ReviveReceiver/
+  BootReceiver/worker mencatat hasil start + hasil enqueue;
+  isApiAlive mencatat kegagalan ping. Jalur v0.1.71 dipertahankan
+  sebagai lapis kedua.
+  (c) Manifest: service exported=false, proses :watchdog,
+  foregroundServiceType specialUse (+ property subtype, pola
+  KeepAliveService); izin FOREGROUND_SERVICE_SPECIAL_USE sudah
+  dideklarasikan di manifest (dipakai KeepAliveService) — tanpa
+  izin baru. Tanpa ubah perilaku: eksekutor prompt/TTS/Studio,
+  snapshot/thumbnail, limit detection, FileManager, KeepAlive
+  per-Space.

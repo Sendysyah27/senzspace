@@ -247,6 +247,21 @@
                 android:value="Menjalankan server API lokal SenzSpace (localhost) untuk kontrol API." />
         </service>
 
+        <!-- v0.1.72: guardian watchdog — foreground service di proses
+             sendiri (:watchdog). Di-start dari konteks foreground saja
+             (MainActivity/BootReceiver/BrowserActivity); sekali jalan,
+             uid-nya foreground sehingga boleh memanggil ApiService.start()
+             bila /ping mati. ApiService tetap di proses utama. -->
+        <service
+            android:name=".WatchdogGuardService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse"
+            android:process=":watchdog">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Menjaga server API lokal tetap hidup dengan memeriksa /ping tiap 60 detik dan menyalakan ApiService bila tidak menjawab." />
+        </service>
+
         <!-- v0.1.55 (audit API, AKAR 4): hidupkan ApiService sesudah
              HP reboot — tanpa ini API mati sampai app dibuka manual.
              v0.1.57: + MY_PACKAGE_REPLACED — hidupkan ApiService

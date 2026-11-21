@@ -274,6 +274,9 @@ class MainActivity : AppCompatActivity() {
         // v0.1.71: daftarkan watchdog API (WorkManager 15 mnt,
         // idempotent — KEEP bila sudah terdaftar).
         if (ApiToken.isEnabled(this)) WatchdogWorker.enqueue(this)
+        // v0.1.72: nyalakan guardian watchdog (:watchdog) — proses
+        // sendiri yang menjaga ApiService tetap hidup; idempotent.
+        if (ApiToken.isEnabled(this)) WatchdogGuardService.start(this)
         spaceList = findViewById(R.id.spaceList)
         liveGrid = findViewById(R.id.liveGrid)
         toggleLive = findViewById(R.id.toggleLive)

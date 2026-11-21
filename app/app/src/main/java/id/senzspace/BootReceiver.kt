@@ -3,6 +3,7 @@ package id.senzspace
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.util.Log
 
 /** v0.1.55 — hidupkan server API sesudah HP reboot tanpa buka app.
  *  Sebelum ini ApiService hanya start dari MainActivity.onCreate,
@@ -16,15 +17,34 @@ import android.content.Intent
  *  menangani cabang izin notifikasi sendiri).
  *  v0.1.71: daftarkan juga watchdog API (WorkManager 15 mnt) di
  *  kedua aksi — watchdog yang menghidupkan lagi ApiService bila
- *  proses utama mati di luar reboot/update. */
+ *  proses utama mati di luar reboot/update.
+ *  v0.1.72: nyalakan juga guardian watchdog (:watchdog) di kedua
+ *  aksi — proses sendiri yang memeriksa /ping tiap 60 dtk dan
+ *  menyalakan ApiService bila tidak menjawab. */
 class BootReceiver : BroadcastReceiver() {
+    companion object {
+        private const val TAG = "SenzWatchdog"
+    }
+
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action == Intent.ACTION_BOOT_COMPLETED ||
             intent.action == Intent.ACTION_MY_PACKAGE_REPLACED
         ) {
             if (ApiToken.isEnabled(context)) {
-                ApiService.start(context)
+                val apiStarted = ApiService.start(context)
+                val guardStarted = WatchdogGuardService.start(context)
+                Log.i(
+                    TAG,
+                    "onReceive ${intent.action}: " +
+                        "ApiService.start=$apiStarted guard=$guardStarted"
+                )
                 WatchdogWorker.enqueue(context)
+            } else {
+                Log.i(
+                    TAG,
+                    "onReceive ${intent.action}: saklar API mati — " +
+                        "tidak menyalakan apa pun"
+                )
             }
         }
     }

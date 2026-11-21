@@ -5,6 +5,7 @@ import android.app.NotificationManager
 import android.content.Context
 import android.content.pm.ServiceInfo
 import android.os.Build
+import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.ForegroundInfo
@@ -35,6 +36,7 @@ class WatchdogWorker(appContext: Context, params: WorkerParameters) :
     Worker(appContext, params) {
 
     companion object {
+        private const val TAG = "SenzWatchdog"
         const val UNIQUE_NAME = "senzspace-watchdog"
         const val CHANNEL_ID = "senzspace_watchdog"
         const val NOTIF_ID = 1201
@@ -52,7 +54,9 @@ class WatchdogWorker(appContext: Context, params: WorkerParameters) :
                     ExistingPeriodicWorkPolicy.KEEP,
                     req
                 )
-            } catch (_: Exception) {
+                Log.d(TAG, "enqueue: watchdog periodik didaftarkan (KEEP)")
+            } catch (e: Exception) {
+                Log.w(TAG, "enqueue: gagal mendaftarkan watchdog: ${e.message}")
             }
         }
 
@@ -67,7 +71,42 @@ class WatchdogWorker(appContext: Context, params: WorkerParameters) :
                     .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
                     .build()
                 WorkManager.getInstance(context).enqueue(req)
-            } catch (_: Exception) {
+                Log.d(TAG, "enqueueNow: one-time work didaftarkan")
+            } catch (e: Exception) {
+                Log.w(TAG, "enqueueNow: gagal mendaftarkan one-time work: ${e.message}")
+            }
+        }
+
+        // GET /ping harus balas HTTP 200. Timeout pendek: pemanggil
+        // hanya butuh tahu server menjawab atau tidak, bukan isi
+        // balasannya. v0.1.72: pindah ke companion supaya dipakai
+        // ulang WatchdogGuardService (guardian :watchdog) tanpa
+        // duplikasi — pola Socket mentah yang sama (tanpa proxy,
+        // tidak kena larangan cleartext).
+        fun isApiAlive(): Boolean {
+            var socket: Socket? = null
+            return try {
+                socket = Socket()
+                socket.connect(InetSocketAddress("127.0.0.1", ApiServer.PORT), 2000)
+                socket.soTimeout = 2000
+                val out = socket.getOutputStream()
+                out.write(
+                    "GET /ping HTTP/1.0\r\nHost: 127.0.0.1\r\n\r\n"
+                        .toByteArray(Charsets.UTF_8)
+                )
+                out.flush()
+                val first = BufferedReader(
+                    InputStreamReader(socket.getInputStream(), Charsets.UTF_8)
+                ).readLine() ?: ""
+                first.contains("200")
+            } catch (e: Exception) {
+                Log.w(TAG, "isApiAlive: ping gagal: ${e.message}")
+                false
+            } finally {
+                try {
+                    socket?.close()
+                } catch (_: Exception) {
+                }
             }
         }
     }
@@ -82,15 +121,20 @@ class WatchdogWorker(appContext: Context, params: WorkerParameters) :
         // Android 12+ (ForegroundServiceStartNotAllowedException).
         // Expedited saja tidak cukup — worker wajib setForeground.
         // Tunggu promosi selesai supaya start di bawah legal; bila
-        // promosi gagal, tetap lanjut (ApiService.start punya
-        // fallback sendiri dan tidak pernah throw).
+        // promosi gagal, tetap lanjut (ApiService.start mengembalikan
+        // Boolean + mencatat kegagalan, tidak pernah throw).
         try {
             setForegroundAsync(createForegroundInfo())
                 .get(10, TimeUnit.SECONDS)
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            Log.w(TAG, "doWork: promosi foreground gagal: ${e.message}")
         }
         if (!isApiAlive()) {
-            ApiService.start(applicationContext)
+            Log.w(TAG, "doWork: /ping tidak menjawab — menyalakan ApiService")
+            val started = ApiService.start(applicationContext)
+            Log.i(TAG, "doWork: ApiService.start=$started")
+        } else {
+            Log.d(TAG, "doWork: /ping menjawab — API hidup")
         }
         return Result.success()
     }
@@ -125,31 +169,6 @@ class WatchdogWorker(appContext: Context, params: WorkerParameters) :
         )
     }
 
-    // GET /ping harus balas HTTP 200. Timeout pendek: worker hanya
-    // butuh tahu server menjawab atau tidak, bukan isi balasannya.
-    private fun isApiAlive(): Boolean {
-        var socket: Socket? = null
-        return try {
-            socket = Socket()
-            socket.connect(InetSocketAddress("127.0.0.1", ApiServer.PORT), 2000)
-            socket.soTimeout = 2000
-            val out = socket.getOutputStream()
-            out.write(
-                "GET /ping HTTP/1.0\r\nHost: 127.0.0.1\r\n\r\n"
-                    .toByteArray(Charsets.UTF_8)
-            )
-            out.flush()
-            val first = BufferedReader(
-                InputStreamReader(socket.getInputStream(), Charsets.UTF_8)
-            ).readLine() ?: ""
-            first.contains("200")
-        } catch (_: Exception) {
-            false
-        } finally {
-            try {
-                socket?.close()
-            } catch (_: Exception) {
-            }
-        }
-    }
+    // v0.1.72: isApiAlive pindah ke companion object (dipakai ulang
+    // WatchdogGuardService) — lihat atas.
 }

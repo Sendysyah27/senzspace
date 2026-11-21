@@ -3,6 +3,7 @@ package id.senzspace
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.util.Log
 
 // v0.1.71 — revive ApiService dari VM (adb shell am broadcast).
 // `am startservice` untuk ApiService ditolak sistem (service
@@ -21,18 +22,28 @@ import android.content.Intent
 class ReviveReceiver : BroadcastReceiver() {
     companion object {
         const val ACTION = "id.senzspace.debug.action.REVIVE_API"
+        private const val TAG = "SenzRevive"
     }
 
     override fun onReceive(context: Context, intent: Intent) {
-        if (intent.action != ACTION) return
-        if (!ApiToken.isEnabled(context)) return
+        Log.i(TAG, "onReceive: action=${intent.action}")
+        if (intent.action != ACTION) {
+            Log.w(TAG, "onReceive: aksi bukan REVIVE_API — abaikan")
+            return
+        }
+        if (!ApiToken.isEnabled(context)) {
+            Log.i(TAG, "onReceive: saklar API mati — abaikan")
+            return
+        }
         // Coba langsung dulu (gratis bila ada exemption — mis. app
-        // baru saja di foreground); ApiService.start menelan
-        // exception sendiri bila ditolak.
-        ApiService.start(context)
+        // baru saja di foreground); ApiService.start mengembalikan
+        // Boolean + mencatat throw sendiri (v0.1.72).
+        val started = ApiService.start(context)
+        Log.i(TAG, "onReceive: ApiService.start=$started")
         // Jalur andalan: expedited one-time work.
         WatchdogWorker.enqueueNow(context)
         // Pastikan watchdog periodik juga terdaftar.
         WatchdogWorker.enqueue(context)
+        Log.i(TAG, "onReceive: enqueueNow + enqueue dipanggil")
     }
 }

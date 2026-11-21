@@ -855,6 +855,9 @@ abstract class BrowserActivity : AppCompatActivity() {
         if (ApiToken.isEnabled(this)) {
             ApiService.start(this)
             WatchdogWorker.enqueue(this)
+            // v0.1.72: guardian watchdog (:watchdog) — proses sendiri
+            // yang menjaga ApiService tetap hidup; idempotent.
+            WatchdogGuardService.start(this)
         }
         // v0.1.31: ikuti sensor putar HP (berlaku walau auto-rotate
         // sistem mati) — app sebelumnya tidak bisa horizontal.

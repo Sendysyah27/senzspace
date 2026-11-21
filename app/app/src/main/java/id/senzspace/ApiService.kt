@@ -10,6 +10,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.IBinder
+import android.util.Log
 import androidx.core.app.NotificationCompat
 
 // Service penjaga API kontrol lokal (v0.1.36): menjalankan ApiServer
@@ -23,8 +24,15 @@ class ApiService : Service() {
     companion object {
         const val CHANNEL_ID = "senzspace_api"
         const val NOTIF_ID = 1200
+        private const val TAG = "SenzWatchdog"
 
-        fun start(ctx: Context) {
+        // v0.1.72: kembalikan Boolean — true bila salah satu jalur
+        // start terpanggil, false bila keduanya ditolak sistem.
+        // Pemanggil lama yang mengabaikan nilai balik tidak rusak
+        // (Kotlin boleh mengabaikan return value). Kegagalan start
+        // TIDAK PERNAH ditelan diam-diam lagi: tiap throw dicatat
+        // Log.e supaya revive yang gagal terdiagnosis dari logcat.
+        fun start(ctx: Context): Boolean {
             val intent = Intent(ctx, ApiService::class.java)
             val canForeground = Build.VERSION.SDK_INT < 33 ||
                 ctx.checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) ==
@@ -35,10 +43,15 @@ class ApiService : Service() {
                 } else {
                     ctx.startService(intent)
                 }
+                return true
             } catch (e: Exception) {
+                Log.e(TAG, "start: start gagal: ${e.message}", e)
                 try {
                     ctx.startService(intent)
-                } catch (_: Exception) {
+                    return true
+                } catch (e2: Exception) {
+                    Log.e(TAG, "start: fallback startService juga gagal: ${e2.message}", e2)
+                    return false
                 }
             }
         }
