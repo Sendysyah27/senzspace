@@ -805,3 +805,26 @@ Jangan cuma diagnosa dari kodenya.
   Tanpa ubah perilaku: eksekutor prompt (OPT-1/OPT-2), TTS,
   Studio, FM picker, BootReceiver, SpaceRegistry, dan rute lain
   tidak disentuh.
+- API 69 (21 Nov, v0.1.69): UNDUH TTS LEWAT IKON BAR PLAYER.
+  (a) Pemilihan tombol unduh: selektor lama hanya cocok <button>
+  berlabel atau teks PERSIS 'Download'/'Unduh' lalu ambil yang
+  terakhir di DOM — tombol di bar player (aria-label mengandung
+  'Download audio' atau elemen [role="button"]) lolos dari
+  selektor itu. Kini pencocokan diperluas: aria-label MENGANDUNG
+  'download'/'unduh', teks mengandung (maks 30 karakter), elemen
+  button + [role="button"]; di antara kandidat, utamakan yang
+  paling dekat dengan bar player — jarak vertikal ke tombol
+  putar/jeda (teks/aria 'play_arrow', 'pause_circle', 'play',
+  'pause', 'putar', 'jeda'), fallback ke elemen <audio> bila
+  tingginya > 0; bila tidak ada jangkar, tetap ambil yang
+  terakhir di DOM (perilaku lama).
+  (b) Dump kandidat: ttsDownloadButtonRectJs kini mengembalikan
+  'x|y|count|dump' — dump = label@x,y tiap kandidat (maks 6,
+  pisah ' ;; '); disimpan ke ttsDownloadCandidates dan dibawa ke
+  detail gagal supaya tombol yang ditap bisa diidentifikasi
+  tanpa tebakan.
+  (c) Retry tap sekali (v0.1.51) + verifikasi file di folder
+  aistudio tidak berubah. Tanpa ubah perilaku: alur
+  Style/Speaker/Run, waitTtsDone (Download ADA + audio
+  readyState 4 + duration > 0), watchPickup 60 dtk, dan
+  penanganan naskah.
