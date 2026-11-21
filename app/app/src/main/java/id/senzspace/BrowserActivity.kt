@@ -188,11 +188,15 @@ abstract class BrowserActivity : AppCompatActivity() {
      *  upload (file _inbox + judul + deskripsi + jadwal). Aturan host:
      *  hanya studio.youtube.com (dicek ApiServer + maybeRunApiStudio).
      *  pendingStudioFile = file _inbox yang disodorkan ke chooser
-     *  saat JS mengklik "Upload videos"; studioChooserServed =
+     *  saat JS mengklik "Select files" di dialog upload;
+     *  studioChooserServed =
      *  chooser sudah dipanggil (dipakai tunggu upload);
      *  studioUploadFileName = nama file (tetap ada sesudah
      *  pendingStudioFile dikosongkan chooser — dipakai verifikasi
-     *  nama file di dialog upload). */
+     *  nama file di dialog upload); studioSelectFilesClicked =
+     *  klik "Select files" sudah dilakukan sekali di run ini
+     *  (v0.1.63 — jangan klik berulang, chooser kedua jatuh ke
+     *  pemilih file di layar karena file _inbox sudah terpakai). */
     private var pendingStudioAction: String? = null
     private var pendingStudioFile: java.io.File? = null
     private var pendingStudioTitle: String? = null
@@ -200,6 +204,7 @@ abstract class BrowserActivity : AppCompatActivity() {
     private var pendingStudioSchedule: String? = null
     private var studioRunning: Boolean = false
     private var studioChooserServed: Boolean = false
+    private var studioSelectFilesClicked: Boolean = false
     private var studioDashboardEmptyRetried: Boolean = false
     private var studioUploadFileName: String? = null
     private var studioVideoId: String? = null
@@ -2438,6 +2443,7 @@ abstract class BrowserActivity : AppCompatActivity() {
         studioUploadFileName = fileName
         studioRunning = false
         studioChooserServed = false
+        studioSelectFilesClicked = false
         studioDashboardEmptyRetried = false
         studioVideoId = null
         studioChannelId = null
@@ -2904,33 +2910,96 @@ abstract class BrowserActivity : AppCompatActivity() {
         })
     }
 
-    /** Langkah 3 upload (v0.1.61): tunggu dialog upload kebuka +
-     *  file benar tersaji ke chooser (flag studioChooserServed dari
-     *  cabang onShowFileChooser). Dialog diterima bila ada kolom
-     *  judul ATAU heading "Upload videos"/"Unggah video" di dalam
-     *  dialog; nama file yang dipilih dicek kemunculannya di teks
-     *  halaman bila memungkinkan. Poll 30x1 dtk. Bila dialog tidak
-     *  kebuka, detail gagal membawa bukti: 300 karakter pertama teks
-     *  halaman + label tombol + ada/tidaknya dialog, file-input, dan
-     *  flag chooser — supaya penyebabnya bisa dibaca tanpa menebak.
-     *  Dialog kebuka TANPA flag = dialog sisa sesi sebelumnya —
-     *  gagal jujur, jangan isi kolom orang lain. */
+    /** JS klik "Select files" (v0.1.63): cari di dalam dialog upload
+     *  (ytcp-uploads-dialog) di button/a/div/span/[role="button"]/
+     *  [role="link"]/[onclick] — teks persis tanpa peduli huruf,
+     *  elemen paling dalam (pola interstitial v0.1.62 — kontrol
+     *  Studio bukan selalu <button>). Balik '1' bila diklik, '0'
+     *  bila tidak ketemu. */
+    private fun studioSelectFilesJs(labelsJson: String): String {
+        return """(function(labels){var root=document.querySelector('ytcp-uploads-dialog')||document;var els=[...root.querySelectorAll('button,a,div,span,[role="button"],[role="link"],[onclick]')].filter(function(e){return e.offsetParent!==null;});for(var k=0;k<labels.length;k++){var best=null,bestDepth=-1;for(var i=0;i<els.length;i++){var tx=(els[i].textContent||'').trim().toLowerCase();if(tx===labels[k]){var d=0,p=els[i].parentElement;while(p){d++;p=p.parentElement;}if(d>bestDepth){bestDepth=d;best=els[i];}}}if(best){best.click();return '1';}}return '0';})($labelsJson)"""
+    }
+
+    /** Klik "Select files" di dialog upload (v0.1.63): picu
+     *  onShowFileChooser yang menyodorkan file _inbox pending.
+     *  Sesudah klik, tunggu 2 dtk lalu lanjutkan poll tunggu
+     *  dialog (chooser dipanggil async oleh Chromium). Tombol
+     *  tidak ketemu -> gagal jujur dengan bukti teks halaman. */
+    private fun runStudioClickSelectFiles(triesLeft: Int) {
+        if (pendingStudioAction == null) return
+        val labels = org.json.JSONArray(listOf("select files", "pilih file")).toString()
+        webView.evaluateJavascript(studioSelectFilesJs(labels)) { raw ->
+            val clicked = (raw?.trim()?.removeSurrounding("\"") ?: "") == "1"
+            if (!clicked) {
+                failStudioWithEvidence("tombol 'Select files' tidak ketemu di dialog upload")
+                return@evaluateJavascript
+            }
+            studioHandler.postDelayed({ runStudioWaitDialog(triesLeft) }, 2000)
+        }
+    }
+
+    /** Langkah 3 upload (v0.1.61, diubah v0.1.63): tunggu dialog
+     *  upload kebuka + file benar tersaji ke chooser (flag
+     *  studioChooserServed dari cabang onShowFileChooser). Dialog
+     *  diterima bila ada kolom judul ATAU heading "Upload videos" /
+     *  "Unggah video" di dalam dialog; nama file yang dipilih dicek
+     *  kemunculannya di teks halaman DAN di nilai kolom isian
+     *  (judul terisi nama file sesudah dipilih — nilai input tidak
+     *  masuk innerText). Poll 30x1 dtk. Bila dialog tidak kebuka,
+     *  detail gagal membawa bukti: 300 karakter pertama teks
+     *  halaman + label tombol + ada/tidaknya dialog, file-input,
+     *  dan flag chooser — supaya penyebabnya bisa dibaca tanpa
+     *  menebak. v0.1.63: dialog kebuka TANPA flag chooser BUKAN
+     *  lagi gagal langsung — klik menu "Upload videos" membuka
+     *  dialog TANPA memicu chooser, jadi eksekutor klik "Select
+     *  files" sendiri (sekali saja per run) buat memicunya; berlaku
+     *  sama untuk dialog yang baru dibuka run ini maupun dialog
+     *  sisa sesi sebelumnya (keduanya dipulihkan dengan cara yang
+     *  sama, tanpa dibedakan). Sesudah klik, poll sampai nama file
+     *  muncul; bila anggaran habis dan chooser sudah tersaji, tetap
+     *  lanjut isi judul — nama file bisa tidak tampil sebagai teks
+     *  dan isi judul punya verifikasi baca-balik sendiri. Bila
+     *  chooser tidak pernah tersaji, gagal jujur dengan bukti. */
     private fun runStudioWaitDialog(triesLeft: Int) {
         if (pendingStudioAction == null) return
         val fileName = studioUploadFileName
         val fileQuoted = org.json.JSONObject.quote(fileName ?: "")
-        val js = """(function(){var dlg=document.querySelector('ytcp-uploads-dialog');var scope=dlg||document;var hasTitle=0;var tas=[...scope.querySelectorAll('textarea,[contenteditable],input,[role="textbox"]')].filter(function(t){return t.offsetParent!==null;});for(var i=0;i<tas.length;i++){var s=((tas[i].getAttribute('aria-label')||'')+' '+(tas[i].getAttribute('placeholder')||'')).toLowerCase();if(s.indexOf('title')>=0||s.indexOf('judul')>=0){hasTitle=1;break;}}var heading=0;if(dlg){var ht=(dlg.innerText||'').toLowerCase();if(ht.indexOf('upload videos')>=0||ht.indexOf('upload video')>=0||ht.indexOf('unggah video')>=0)heading=1;}var fname=$fileQuoted;var fileSeen=0;if(fname){var t=document.body?document.body.innerText:'';var base=fname.replace(/\.[^.]+$/,'');if(t.indexOf(fname)>=0||t.indexOf(base)>=0)fileSeen=1;}var hasInput=!!document.querySelector('input[type="file"]');return (hasTitle||heading?'1':'0')+'|'+fileSeen+'|'+(hasInput?'1':'0')+'|'+(dlg?'1':'0');})()"""
+        val js = """(function(){var dlg=document.querySelector('ytcp-uploads-dialog');var scope=dlg||document;var hasTitle=0;var tas=[...scope.querySelectorAll('textarea,[contenteditable],input,[role="textbox"]')].filter(function(t){return t.offsetParent!==null;});for(var i=0;i<tas.length;i++){var s=((tas[i].getAttribute('aria-label')||'')+' '+(tas[i].getAttribute('placeholder')||'')).toLowerCase();if(s.indexOf('title')>=0||s.indexOf('judul')>=0){hasTitle=1;break;}}var heading=0;if(dlg){var ht=(dlg.innerText||'').toLowerCase();if(ht.indexOf('upload videos')>=0||ht.indexOf('upload video')>=0||ht.indexOf('unggah video')>=0)heading=1;}var fname=$fileQuoted;var fileSeen=0;if(fname){var t=document.body?document.body.innerText:'';var base=fname.replace(/\.[^.]+$/,'');if(t.indexOf(fname)>=0||t.indexOf(base)>=0)fileSeen=1;else{var ins=[...document.querySelectorAll('input,textarea')];for(var q=0;q<ins.length;q++){var v=ins[q].value||'';if(v&&v.indexOf(base)>=0){fileSeen=1;break;}}}}var hasInput=!!document.querySelector('input[type="file"]');return (hasTitle||heading?'1':'0')+'|'+fileSeen+'|'+(hasInput?'1':'0')+'|'+(dlg?'1':'0');})()"""
         webView.evaluateJavascript(js) { raw ->
             val parts = (raw?.trim()?.removeSurrounding("\"") ?: "").split("|")
             val dialogOpen = parts.getOrNull(0) == "1"
             val fileSeen = parts.getOrNull(1) == "1"
             if (dialogOpen) {
-                if (!studioChooserServed) {
-                    failStudio("dialog upload sudah kebuka dari sesi sebelumnya — file tidak tersaji ke chooser")
+                if (!studioChooserServed && !studioSelectFilesClicked) {
+                    // v0.1.63: dialog kebuka tapi chooser belum tersaji —
+                    // klik "Select files" sendiri buat picu chooser
+                    // (bukan gagal — klik menu "Upload videos" membuka
+                    // dialog TANPA memicu chooser).
+                    studioSelectFilesClicked = true
+                    writeStudioStatus("running", "dialog upload kebuka — memilih file (klik 'Select files')")
+                    runStudioClickSelectFiles(triesLeft)
                     return@evaluateJavascript
                 }
-                writeStudioStatus("running", "dialog upload kebuka — mengisi judul (nama file terlihat: ${if (fileSeen) "ya" else "tidak"})")
-                runStudioFillTitle()
+                if (!studioChooserServed) {
+                    // Sudah diklik sekali, chooser belum tersaji — tunggu.
+                    if (triesLeft <= 0) {
+                        failStudioWithEvidence("file tidak tersaji ke chooser sesudah klik 'Select files'")
+                    } else {
+                        studioHandler.postDelayed({ runStudioWaitDialog(triesLeft - 1) }, 1000)
+                    }
+                    return@evaluateJavascript
+                }
+                // Chooser tersaji — tunggu nama file muncul (bukti file
+                // benar masuk dialog), maks sisa anggaran. Bila anggaran
+                // habis tapi chooser sudah tersaji, tetap lanjut isi
+                // judul: nama file bisa tidak tampil sebagai teks dan
+                // isi judul punya verifikasi baca-balik sendiri.
+                if (fileSeen || triesLeft <= 0) {
+                    writeStudioStatus("running", "dialog upload kebuka — mengisi judul (nama file terlihat: ${if (fileSeen) "ya" else "tidak"})")
+                    runStudioFillTitle()
+                } else {
+                    studioHandler.postDelayed({ runStudioWaitDialog(triesLeft - 1) }, 1000)
+                }
             } else if (triesLeft <= 0) {
                 val diagJs = """(function(){var t=(document.body?document.body.innerText:'')||'';var head=t.replace(/\s+/g,' ').trim().slice(0,300);var hasDlg=!!document.querySelector('ytcp-uploads-dialog');var hasInput=!!document.querySelector('input[type="file"]');return head+' | dialog:'+(hasDlg?'ya':'tidak')+' | file-input:'+(hasInput?'ya':'tidak');})()"""
                 webView.evaluateJavascript(diagJs) { rawDiag ->

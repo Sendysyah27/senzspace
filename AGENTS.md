@@ -251,6 +251,34 @@ Jangan cuma diagnosa dari kodenya.
   dan alur lanjut tanpa jeda. Tanpa ubah perilaku: rantai upload
   (tunggu dialog 30 dtk, verifikasi Content), parse dasbor,
   eksekutor prompt/TTS, dan rute lain tidak disentuh.
+- API 63 (21 Nov, v0.1.63): KLIK "SELECT FILES" SENDIRI DI DIALOG
+  UPLOAD. Klik menu "Upload videos" membuka dialog TANPA memicu
+  file chooser — chooser hanya dipicu klik "Select files" di dalam
+  dialog — jadi flag studioChooserServed tidak pernah terisi dan
+  tunggu dialog gagal dengan label "dialog sudah kebuka dari sesi
+  sebelumnya", padahal dialog itu baru dibuka run ini sendiri
+  (label itu menyesatkan). Fix: (a) runStudioWaitDialog tidak lagi
+  gagal saat dialog kebuka tanpa flag — eksekutor klik "Select
+  files" / "Pilih file" sendiri (sekali saja per run, flag
+  studioSelectFilesClicked — klik kedua jatuh ke pemilih file di
+  layar karena file _inbox sudah terpakai), lewat JS
+  studioSelectFilesJs yang mencari di
+  button/a/div/span/[role="button"]/[role="link"]/[onclick] dalam
+  ytcp-uploads-dialog, teks persis, elemen paling dalam (pola
+  interstitial v0.1.62); tombol tidak ketemu -> gagal jujur dengan
+  bukti teks halaman (failStudioWithEvidence); (b) sesudah klik,
+  poll sampai nama file muncul di teks halaman (cek lama diperluas:
+  nama file dicari juga di nilai kolom input/textarea — judul
+  terisi nama file sesudah dipilih, dan nilai input tidak masuk
+  innerText); (c) bila anggaran 30 dtk habis dan chooser tidak
+  pernah tersaji -> gagal jujur dengan bukti; bila chooser sudah
+  tersaji tapi nama file tidak tampil -> tetap lanjut isi judul
+  (isi judul punya verifikasi baca-balik sendiri). Pemulihan ini
+  berlaku sama untuk dialog yang baru dibuka run ini maupun dialog
+  sisa sesi sebelumnya — keduanya tidak dibedakan. Tanpa ubah
+  perilaku: dismissal interstitial, tunggu dialog 30 dtk, isi
+  judul/deskripsi, audience, visibilitas, dan verifikasi Content
+  tidak disentuh.
 - API 57 (21 Nov, v0.1.57): AUTOSTART SESUDAH INSTALL/UPDATE.
   BootReceiver kini menangani MY_PACKAGE_REPLACED di samping
   BOOT_COMPLETED — cabang yang sama persis (ApiToken.isEnabled →
