@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <!-- Folder kerja SenzSpace (per Space + _Inbox + _Arsip + _Live). -->
+    <external-files-path name="senzspace" path="SenzSpace/" />
+</paths>

@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SenzSpace design system — tema gelap navy (diputuskan 16 Nov 2026).
+     Latar navy pekat + kartu navy muda + aksen indigo #5B5BD6 (warna Space 1).
+     Radius kartu 18dp mengikuti bahasa desain Harness. -->
+<resources>
+    <color name="senz_bg">#0B1220</color>
+    <color name="senz_card">#16233A</color>
+    <color name="senz_card_stroke">#24344D</color>
+    <color name="senz_text">#E8ECF4</color>
+    <color name="senz_muted">#8A94A6</color>
+    <color name="senz_accent">#5B5BD6</color>
+    <color name="senz_chip_bg">#1E2A44</color>
+    <color name="senz_green">#22C55E</color>
+    <color name="senz_amber">#E5B567</color>
+    <!-- Warna tiap Space (preset D2) — beda warna = anti-salah-akun -->
+    <color name="space_claude1">#5B5BD6</color>
+    <color name="space_claude2">#0EA5A5</color>
+    <color name="space_claude3">#E07A5F</color>
+    <color name="space_claude4">#E5B567</color>
+    <color name="space_claude5">#7BC47F</color>
+    <color name="space_claude6">#D66BA5</color>
+    <color name="space_aistudio">#38BDF8</color>
+    <!-- Latar ikon app (adaptive icon) — navy yang sama dengan Beranda. -->
+    <color name="ic_launcher_background">#0B1220</color>
+</resources>

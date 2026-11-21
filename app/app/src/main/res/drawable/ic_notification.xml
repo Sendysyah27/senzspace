@@ -1,0 +1,21 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <!-- Ikon notifikasi SenzSpace: 4 kotak membulat 2×2, PUTIH polos di
+         atas transparan. Ikon kecil notifikasi Android WAJIB siluet putih
+         (sistem yang memberi warna) — jangan pakai warna / latar. -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M5.8,4 h5.4 a1.8,1.8 0 0 1 1.8,1.8 v5.4 a1.8,1.8 0 0 1 -1.8,1.8 h-5.4 a1.8,1.8 0 0 1 -1.8,-1.8 v-5.4 a1.8,1.8 0 0 1 1.8,-1.8 z" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M14.8,4 h5.4 a1.8,1.8 0 0 1 1.8,1.8 v5.4 a1.8,1.8 0 0 1 -1.8,1.8 h-5.4 a1.8,1.8 0 0 1 -1.8,-1.8 v-5.4 a1.8,1.8 0 0 1 1.8,-1.8 z" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M5.8,13 h5.4 a1.8,1.8 0 0 1 1.8,1.8 v5.4 a1.8,1.8 0 0 1 -1.8,1.8 h-5.4 a1.8,1.8 0 0 1 -1.8,-1.8 v-5.4 a1.8,1.8 0 0 1 1.8,-1.8 z" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M14.8,13 h5.4 a1.8,1.8 0 0 1 1.8,1.8 v5.4 a1.8,1.8 0 0 1 -1.8,1.8 h-5.4 a1.8,1.8 0 0 1 -1.8,-1.8 v-5.4 a1.8,1.8 0 0 1 1.8,-1.8 z" />
+</vector>

@@ -1,0 +1,66 @@
+plugins {
+    id("com.android.application")
+    id("org.jetbrains.kotlin.android")
+}
+
+android {
+    namespace = "id.senzspace"
+    compileSdk = 34
+
+    defaultConfig {
+        applicationId = "id.senzspace"
+        minSdk = 24
+        targetSdk = 34
+        versionCode = 63
+        versionName = "0.1.58"
+    }
+
+    // Kunci debug TETAP (sejak 16 Nov 2026): keystore disimpan sebagai GitHub
+    // Actions secret (DEBUG_KEYSTORE_*), BUKAN di repo — kunci debug yang
+    // dibuat runner tiap run bikin tanda tangan APK berubah terus, jadi
+    // pengguna harus uninstall + login ulang tiap build. Dengan kunci tetap,
+    // APK baru bisa menimpa (install over) tanpa hapus sesi.
+    // ATURAN PKCS12 (pelajaran run #13 MERAH): password kunci HARUS SAMA
+    // dengan password store — PKCS12 mengabaikan keypass berbeda dan
+    // getKey() gagal "Given final block not properly padded".
+    signingConfigs {
+        debug {
+            storeFile = file("debug.keystore")
+            storePassword = System.getenv("DEBUG_KEYSTORE_PASSWORD")
+            keyAlias = System.getenv("DEBUG_KEY_ALIAS")
+            keyPassword = System.getenv("DEBUG_KEY_PASSWORD")
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled = false
+        }
+        debug {
+            applicationIdSuffix = ".debug"
+            signingConfig = signingConfigs.debug
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    }
+
+    kotlinOptions {
+        jvmTarget = "17"
+    }
+
+    buildFeatures {
+        viewBinding = true
+        buildConfig = true
+    }
+}
+
+dependencies {
+    implementation("androidx.core:core-ktx:1.13.1")
+    implementation("androidx.appcompat:appcompat:1.7.0")
+    implementation("com.google.android.material:material:1.12.0")
+    implementation("androidx.webkit:webkit:1.12.1")
+    implementation("androidx.biometric:biometric:1.1.0")
+}

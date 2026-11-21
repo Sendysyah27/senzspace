@@ -1,0 +1,261 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.USE_BIOMETRIC" />
+    <!-- Guard anti-kill Multi Live (S1): foreground service per proses
+         Space supaya sistem tidak mematikan Space yang lama tidak dibuka. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- v0.1.42: izin "tampil di atas aplikasi lain" — membebaskan launch Space dari background (BAL), supaya tugas API jalan tanpa ketuk walau activity Space sudah dihancurkan Android. Diminta sekali di Beranda + Pengaturan. -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+    <!-- Guard anti-kill lengkap (v0.1.10): minta user mengecualikan app
+         dari optimasi baterai supaya Doze tidak menidurkan Space.
+         Izinnya lewat dialog sistem di Pengaturan (tidak bisa diam-diam). -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+    <!-- v0.1.55 (audit API, AKAR 4): BootReceiver — hidupkan server API
+         sesudah HP reboot tanpa buka app. -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+
+    <application
+        android:allowBackup="true"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:label="SenzSpace"
+        android:theme="@style/Theme.SenzSpace"
+        android:usesCleartextTraffic="false">
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!-- S1: 7 Space, satu proses per Space, supaya
+             WebView.setDataDirectorySuffix benar-benar memisahkan
+             cookie/storage antar Space. -->
+        <activity
+            android:name=".Space1Activity"
+            android:process=":space1"
+            android:exported="false"
+            android:configChanges="screenSize|smallestScreenSize|screenLayout|orientation|density|layoutDirection"
+            android:resizeableActivity="true" />
+        <activity
+            android:name=".Space2Activity"
+            android:process=":space2"
+            android:exported="false"
+            android:configChanges="screenSize|smallestScreenSize|screenLayout|orientation|density|layoutDirection"
+            android:resizeableActivity="true" />
+        <activity
+            android:name=".Space3Activity"
+            android:process=":space3"
+            android:exported="false"
+            android:configChanges="screenSize|smallestScreenSize|screenLayout|orientation|density|layoutDirection"
+            android:resizeableActivity="true" />
+        <activity
+            android:name=".Space4Activity"
+            android:process=":space4"
+            android:exported="false"
+            android:configChanges="screenSize|smallestScreenSize|screenLayout|orientation|density|layoutDirection"
+            android:resizeableActivity="true" />
+        <activity
+            android:name=".Space5Activity"
+            android:process=":space5"
+            android:exported="false"
+            android:configChanges="screenSize|smallestScreenSize|screenLayout|orientation|density|layoutDirection"
+            android:resizeableActivity="true" />
+        <activity
+            android:name=".Space6Activity"
+            android:process=":space6"
+            android:exported="false"
+            android:configChanges="screenSize|smallestScreenSize|screenLayout|orientation|density|layoutDirection"
+            android:resizeableActivity="true" />
+        <activity
+            android:name=".AiStudioActivity"
+            android:process=":aistudio"
+            android:exported="false"
+            android:configChanges="screenSize|smallestScreenSize|screenLayout|orientation|density|layoutDirection"
+            android:resizeableActivity="true" />
+        <activity
+            android:name=".Space8Activity"
+            android:process=":space8"
+            android:exported="false"
+            android:configChanges="screenSize|smallestScreenSize|screenLayout|orientation|density|layoutDirection"
+            android:resizeableActivity="true" />
+        <activity
+            android:name=".Space9Activity"
+            android:process=":space9"
+            android:exported="false"
+            android:configChanges="screenSize|smallestScreenSize|screenLayout|orientation|density|layoutDirection"
+            android:resizeableActivity="true" />
+        <activity
+            android:name=".Space10Activity"
+            android:process=":space10"
+            android:exported="false"
+            android:configChanges="screenSize|smallestScreenSize|screenLayout|orientation|density|layoutDirection"
+            android:resizeableActivity="true" />
+
+        <!-- File Manager: jalan di proses utama (bukan proses Space) —
+             ia membaca/menulis folder kerja semua Space. -->
+        <activity
+            android:name=".FileManagerActivity"
+            android:exported="false" />
+
+        <!-- Pratinjau file (Fungsi View, v0.1.13): gambar/teks/video
+             dibuka di dalam app; proses utama. -->
+        <activity
+            android:name=".FileViewerActivity"
+            android:exported="false" />
+
+        <!-- Kunci App (D4) + Pengaturan: proses utama. -->
+        <activity
+            android:name=".LockActivity"
+            android:exported="false" />
+        <activity
+            android:name=".SettingsActivity"
+            android:exported="false" />
+
+        <!-- Tambah Space (CRUD S1): proses utama. -->
+        <activity
+            android:name=".AddSpaceActivity"
+            android:exported="false" />
+
+        <!-- FileProvider (File Manager native v2): Buka / Bagikan file ke
+             app lain lewat URI content:// — file di external-files dir
+             tidak bisa dilempar mentah sebagai file:// (Android 7+). -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
+
+        <!-- Guard anti-kill Multi Live: satu foreground service per proses
+             :spaceN (START_STICKY). Tipe specialUse + penjelasan pemakaian
+             wajib di Android 14 (target SDK 34). -->
+        <service
+            android:name=".KeepAliveSpace1Service"
+            android:exported="false"
+            android:foregroundServiceType="specialUse"
+            android:process=":space1">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Menjaga sesi dan tampilan live Space 1 tetap berjalan untuk Multi Live Display." />
+        </service>
+        <service
+            android:name=".KeepAliveSpace2Service"
+            android:exported="false"
+            android:foregroundServiceType="specialUse"
+            android:process=":space2">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Menjaga sesi dan tampilan live Space 2 tetap berjalan untuk Multi Live Display." />
+        </service>
+        <service
+            android:name=".KeepAliveSpace3Service"
+            android:exported="false"
+            android:foregroundServiceType="specialUse"
+            android:process=":space3">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Menjaga sesi dan tampilan live Space 3 tetap berjalan untuk Multi Live Display." />
+        </service>
+        <service
+            android:name=".KeepAliveSpace4Service"
+            android:exported="false"
+            android:foregroundServiceType="specialUse"
+            android:process=":space4">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Menjaga sesi dan tampilan live Space 4 tetap berjalan untuk Multi Live Display." />
+        </service>
+        <service
+            android:name=".KeepAliveSpace5Service"
+            android:exported="false"
+            android:foregroundServiceType="specialUse"
+            android:process=":space5">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Menjaga sesi dan tampilan live Space 5 tetap berjalan untuk Multi Live Display." />
+        </service>
+        <service
+            android:name=".KeepAliveSpace6Service"
+            android:exported="false"
+            android:foregroundServiceType="specialUse"
+            android:process=":space6">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Menjaga sesi dan tampilan live Space 6 tetap berjalan untuk Multi Live Display." />
+        </service>
+        <service
+            android:name=".KeepAliveAiStudioService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse"
+            android:process=":aistudio">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Menjaga sesi dan tampilan live AI Studio tetap berjalan untuk Multi Live Display." />
+        </service>
+        <service
+            android:name=".KeepAliveSpace8Service"
+            android:exported="false"
+            android:foregroundServiceType="specialUse"
+            android:process=":space8">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Menjaga sesi dan tampilan live Space 8 tetap berjalan untuk Multi Live Display." />
+        </service>
+        <service
+            android:name=".KeepAliveSpace9Service"
+            android:exported="false"
+            android:foregroundServiceType="specialUse"
+            android:process=":space9">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Menjaga sesi dan tampilan live Space 9 tetap berjalan untuk Multi Live Display." />
+        </service>
+        <service
+            android:name=".KeepAliveSpace10Service"
+            android:exported="false"
+            android:foregroundServiceType="specialUse"
+            android:process=":space10">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Menjaga sesi dan tampilan live Space 10 tetap berjalan untuk Multi Live Display." />
+        </service>
+
+        <!-- API kontrol lokal (v0.1.36): server HTTP localhost untuk
+             kontrol API (proses utama, START_STICKY). -->
+        <service
+            android:name=".ApiService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Menjalankan server API lokal SenzSpace (localhost) untuk kontrol oleh Jhon." />
+        </service>
+
+        <!-- v0.1.55 (audit API, AKAR 4): hidupkan ApiService sesudah
+             HP reboot — tanpa ini API mati sampai app dibuka manual.
+             v0.1.57: + MY_PACKAGE_REPLACED — hidupkan ApiService
+             sesudah app di-update/di-install ulang, tanpa buka app
+             sekali (aksi ini hanya dikirim ke app sendiri). -->
+        <receiver
+            android:name=".BootReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
+
+    </application>
+</manifest>

@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- WAJIB MaterialComponents: MaterialCardView di dashboard melempar
+         IllegalArgumentException ("requires your app theme to be
+         Theme.MaterialComponents") bila parent-nya AppCompat — itu yang
+         bikin S0.1 force-close di launch (18:49). -->
+    <style name="Theme.SenzSpace" parent="Theme.MaterialComponents.NoActionBar">
+        <item name="colorPrimary">@color/senz_accent</item>
+        <item name="colorPrimaryDark">@color/senz_bg</item>
+        <item name="colorAccent">@color/senz_accent</item>
+        <item name="android:windowBackground">@color/senz_bg</item>
+        <item name="android:textColorPrimary">@color/senz_text</item>
+        <item name="android:textColorSecondary">@color/senz_muted</item>
+    </style>
+</resources>

@@ -1,0 +1,15 @@
+*.iml
+.gradle/
+local.properties
+.idea/
+app/build/
+build/
+*.apk
+!releases/*.apk
+*.aab
+target/
+**/*.rs.bk
+.DS_Store
+*.log
+*_url.txt
+artifact_url.txt
