@@ -9,7 +9,7 @@ import org.json.JSONObject
 // Slot 1-10 = proses + direktori data WebView tetap (space1..space6,
 // aistudio untuk slot 7, space8..space10). Nama/warna/URL bisa diubah;
 // preset 9 (Claude 1-6 + AI Studio + YT Studio slot 9-10, sejak
-// v0.1.58 atas perintah Sendy 21 Nov 11:34) juga boleh diubah/dihapus
+// v0.1.58) juga boleh diubah/dihapus
 // (D2). Sejak v0.1.58 SEMUA 10 slot terisi — tambah Space baru butuh
 // perubahan aturan D1 (maks 10), bukan sekadar tambah preset.
 // Disimpan sebagai JSON di SharedPreferences — BUKAN sesi/secret, hanya
@@ -51,7 +51,7 @@ object SpaceRegistry {
         }
     }
 
-    // v0.1.58: preset YT Studio slot 9-10 (perintah Sendy 21 Nov 11:34).
+    // v0.1.58: preset YT Studio slot 9-10.
     // Warna = 2 warna PALETTE pertama yang belum terpakai (slot 1-7 pakai
     // 7 warna pertama; slot 8 Transkrip menduplikasi #E5B567 milik slot 4).
     // Aturan Space (maks 10, preset) sumber kebenarannya Rust profile-core;

@@ -118,29 +118,25 @@ Jangan cuma diagnosa dari kodenya.
   (BufferedReader bisa menelan byte body). senz.py v2 ngomong ke
   API via `adb forward tcp:19335 tcp:19335`; procs/shot/type/tap/
   key/home tetap ADB (level perangkat).
-- API 58 (21 Nov, v0.1.58): 2 SPACE YOUTUBE STUDIO SLOT 9-10
-  (Gas Sendy 11:34 — "space 9 dan 10", koreksi dari "9 dan 8" yang
-  sempat terucap; slot 8 Transkrip TETAP, jangan disentuh). Slot 9 =
-  "YT Studio" (#A78BFA), slot 10 = "YT Studio 2" (#22D3EE), URL
-  keduanya https://studio.youtube.com (akun YouTube Sendy).
-  SEMUA 10 slot kini terisi — tambah Space baru butuh perubahan
-  aturan D1 (maks 10), bukan sekadar preset baru; preset kini 9.
-  Mekanisme: registry di HP SUDAH ADA (8 entri), jadi ubah seed()
-  saja TIDAK BERPENGARUH — SpaceRegistry.load() migrasi satu-kali
-  yang idempotent: tambah entri YT Studio HANYA bila slot 9/10
-  kosong, JANGAN PERNAH menimpa entri yang sudah ada; simpan hanya
-  bila ada yang ditambahkan. seed() ikut diperluas dengan kedua
-  entri yang sama (fresh install langsung dapat). Warna = 2 warna
-  PALETTE pertama yang belum terpakai (slot 8 Transkrip menduplikasi
-  #E5B567 milik slot 4 — bukan warna kosong). Tanpa izin baru, tanpa
-  ubah manifest (activity + service :space9/:space10 SUDAH ADA),
-  tanpa sentuh prompt/TTS/chooser/file manager/TRAP_HOSTS/
-  BootReceiver/rute API — Space YT Studio cuma browsing biasa
-  (eksekutor prompt khusus Claude, TTS khusus AI Studio).
-  Login YouTube adalah tugas Sendy sendiri (redirect ke
-  accounts.google.com sampai login — DITERIMA di tes, JANGAN coba
-  login). Tes live: /spaces tunjukkan slot 9/10 + URL-nya, slot 8
-  tetap Transkrip; /open + /page slot 9/10 → URL studio.youtube.com.
+- API 58 (21 Nov, v0.1.58): 2 SPACE YOUTUBE STUDIO SLOT 9-10.
+  Slot 9 = "YT Studio" (#A78BFA), slot 10 = "YT Studio 2" (#22D3EE),
+  URL keduanya https://studio.youtube.com. Semua 10 slot kini
+  terisi — tambah Space baru butuh perubahan aturan D1 (maks 10),
+  bukan sekadar preset baru; preset kini 9. Mekanisme: registry di
+  perangkat sudah berisi 8 entri, jadi ubah seed() saja tidak
+  berpengaruh pada install yang sudah ada — SpaceRegistry.load()
+  migrasi satu-kali yang idempotent: tambah entri YT Studio HANYA
+  bila slot 9/10 kosong, tidak pernah menimpa entri yang sudah ada;
+  simpan hanya bila ada yang ditambahkan. seed() ikut diperluas
+  dengan kedua entri yang sama (fresh install langsung mendapat
+  keduanya). Warna = 2 warna PALETTE pertama yang belum terpakai
+  (slot 8 menduplikasi #E5B567 milik slot 4 — bukan warna kosong).
+  Tanpa izin baru, tanpa ubah manifest (activity + service
+  :space9/:space10 sudah ada), tanpa sentuh prompt/TTS/chooser/
+  file manager/TRAP_HOSTS/BootReceiver/rute API — Space YT Studio
+  hanya browsing biasa (eksekutor prompt khusus Claude, TTS khusus
+  AI Studio). Halaman YT Studio mengarah ke sign-in Google sampai
+  akun masuk di Space itu.
 - API 57 (21 Nov, v0.1.57): AUTOSTART SESUDAH INSTALL/UPDATE
   (Gas Sendy 11:11 — "update lagi bro sekalian tambah autostart
   receiver nya, agar jalur API ngga ada hambatan"). Bukti 11:05:
