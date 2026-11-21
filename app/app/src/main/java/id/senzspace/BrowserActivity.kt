@@ -1391,7 +1391,11 @@ abstract class BrowserActivity : AppCompatActivity() {
         }
         promptRunning = true
         // v0.1.40: prompt masuk Project - navigasi sendiri dari tombol
-        // kiri atas (sidebar) ke Project, baru buka chat baru di sana.
+        // kiri atas (sidebar) ke Project.
+        // v0.1.70: sesudah halaman Project kebuka, LANGSUNG diagnose
+        // composer halaman Project (mengetik di situ memulai chat baru
+        // DI DALAM project); tanpa klik "New chat" (tombol itu tidak
+        // ada di halaman Project).
         if (pendingPromptProject != null && !promptProjectDone) {
             writePromptStatus("running", "menuju Project ${pendingPromptProject}")
             runPromptProject()
@@ -1403,7 +1407,10 @@ abstract class BrowserActivity : AppCompatActivity() {
 
     /** v0.1.40 - navigasi ke Project Claude dari dalam Space.
      *  Langkah: klik tombol kiri atas (sidebar) -> klik nama Project
-     *  -> tunggu URL /project/ -> klik "New chat" -> diagnose composer.
+     *  (by NAMA lewat sidebar — Project itu per-akun, tiap akun punya
+     *  ID project sendiri, JANGAN hardcode URL project) -> tunggu URL
+     *  /project/ (baca LIVE via JS, v0.1.70) -> diagnose composer
+     *  halaman Project langsung.
      *  Semua jalan di background (WebView tetap mengeksekusi meski
      *  activity tidak tampil). */
     private fun runPromptProject() {
@@ -1436,25 +1443,26 @@ abstract class BrowserActivity : AppCompatActivity() {
 
     private fun waitPromptProjectUrl(triesLeft: Int) {
         if (pendingPromptText == null) return
-        if (currentUrl.contains("/project/")) {
-            runPromptNewChat()
-        } else if (triesLeft <= 0) {
-            failPrompt("halaman Project tidak kebuka (URL sekarang: $currentUrl)")
-        } else {
-            promptHandler.postDelayed({ waitPromptProjectUrl(triesLeft - 1) }, 2000)
-        }
-    }
-
-    private fun runPromptNewChat() {
-        val js = """(function(){var bs=[...document.querySelectorAll('button,a')].filter(function(b){return b.offsetParent!==null;});for(var i=0;i<bs.length;i++){var l=(bs[i].getAttribute('aria-label')||'').trim();var tx=(bs[i].textContent||'').trim();if(/(new chat|chat baru)/i.test(l)||/(new chat|chat baru)/i.test(tx)){bs[i].click();return '1';}}return '0';})()"""
+        // v0.1.70 - baca URL LIVE via JS: currentUrl hanya update di
+        // onPageStarted/onPageFinished, sedangkan navigasi sidebar
+        // Claude itu SPA (pushState, tanpa full load) -> cache basi
+        // dan wait ini tidak pernah melihat "/project/".
+        val js = """(function(){return location.href;})()"""
         webView.evaluateJavascript(js) { raw ->
-            val clean = raw?.trim()?.removeSurrounding("\"") ?: ""
-            if (clean == "1") {
+            if (pendingPromptText == null) return@evaluateJavascript
+            val liveUrl = raw?.trim()?.removeSurrounding("\"") ?: ""
+            if (liveUrl.contains("/project/")) {
+                // Composer halaman Project SUDAH ADA; mengetik di situ
+                // memulai chat baru DI DALAM project — tidak perlu klik
+                // "New chat" (tombol itu tidak ada di halaman Project).
+                // Tandai selesai supaya onPageFinished berikutnya tidak
+                // mengulang flow Project (penjaga maybeRunApiPrompt).
                 promptProjectDone = true
-                writePromptStatus("running", "chat baru di Project dibuka - mencari kolom chat")
-                promptHandler.postDelayed({ runPromptDiagnose(5) }, 2000)
+                runPromptDiagnose(5)
+            } else if (triesLeft <= 0) {
+                failPrompt("halaman Project tidak kebuka (URL sekarang: $liveUrl)")
             } else {
-                failPrompt("tombol 'New chat' di Project tidak ketemu")
+                promptHandler.postDelayed({ waitPromptProjectUrl(triesLeft - 1) }, 2000)
             }
         }
     }
@@ -1485,20 +1493,65 @@ abstract class BrowserActivity : AppCompatActivity() {
     }
 
     /** Langkah 2 (bila ada file): klik tombol attach, tunggu chooser
-     *  disodori file, tunggu 3 dtk, cek chip lampiran muncul. */
+     *  disodori file, tunggu 3 dtk, cek chip lampiran muncul.
+     *  v0.1.70 - MENU ATTACH: di composer halaman Project, klik attach
+     *  membuka MENU ("Upload from device" / "Unggah dari perangkat"),
+     *  bukan chooser langsung. Menu bisa juga sudah terbuka dari
+     *  percobaan sebelumnya -> cek item menu DULU sebelum klik attach
+     *  (klik attach saat menu terbuka malah menutup menu). Pencarian
+     *  item menu by teks + visibility, BUKAN koordinat (posisi menu
+     *  mengikuti tinggi composer). */
     private fun runPromptAttach() {
         val files = pendingPromptFiles ?: emptyList()
-        val js = """(function(){var labels=['Add files','Attach files','Upload files','Add content','Attach','Lampirkan','Tambah file','Lampirkan file','Unggah file'];for(var k=0;k<labels.length;k++){var b=document.querySelector('button[aria-label="'+labels[k]+'"]');if(b){b.click();return labels[k];}}var bs=document.querySelectorAll('button');for(var i=0;i<bs.length;i++){var l=bs[i].getAttribute('aria-label')||'';if(/attach|add file|upload|lampir|unggah/i.test(l)){bs[i].click();return l;}}return '';})()"""
         promptChooserServed = false
-        writePromptStatus("running", "mengklik tombol attach (${files.size} file)")
+        writePromptStatus("running", "mencari item menu unduh (${files.size} file)")
+        clickAttachMenuItem { clicked ->
+            if (pendingPromptText == null) return@clickAttachMenuItem
+            if (clicked) {
+                writePromptStatus("running", "item menu unduh diklik")
+                waitPromptChooser(20)
+            } else {
+                clickAttachButton()
+            }
+        }
+    }
+
+    /** v0.1.70 - cari item menu "Upload from device" / "Unggah dari
+     *  perangkat" yang TERLIHAT lalu klik; callback true = diklik.
+     *  Bila beberapa elemen cocok (induk + anak), ambil yang
+     *  TERAKHIR di urutan DOM = yang paling dalam/spesifik. */
+    private fun clickAttachMenuItem(onDone: (Boolean) -> Unit) {
+        val js = """(function(){var labels=['upload from device','unggah dari perangkat'];var els=[...document.querySelectorAll('button,[role="menuitem"],[role="button"],li')].filter(function(e){return e.offsetParent!==null;});var hit=null;for(var i=0;i<els.length;i++){var t=(els[i].textContent||'').trim().toLowerCase();for(var k=0;k<labels.length;k++){if(t===labels[k]||(t.indexOf(labels[k])>=0&&t.length<60)){hit=els[i];}}}if(hit){hit.click();return '1';}return '';})()"""
         webView.evaluateJavascript(js) { raw ->
+            val clean = raw?.trim()?.removeSurrounding("\"") ?: ""
+            onDone(clean == "1")
+        }
+    }
+
+    /** Klik tombol attach (perilaku lama), lalu tunggu ~1,5 dtk dan
+     *  coba lagi item menu — bila menu muncul, klik; bila tidak ada
+     *  menu (chooser langsung terbuka, seperti di chat biasa),
+     *  langsung tunggu chooser. */
+    private fun clickAttachButton() {
+        val js = """(function(){var labels=['Add files','Attach files','Upload files','Add content','Attach','Lampirkan','Tambah file','Lampirkan file','Unggah file'];for(var k=0;k<labels.length;k++){var b=document.querySelector('button[aria-label="'+labels[k]+'"]');if(b){b.click();return labels[k];}}var bs=document.querySelectorAll('button');for(var i=0;i<bs.length;i++){var l=bs[i].getAttribute('aria-label')||'';if(/attach|add file|upload|lampir|unggah/i.test(l)){bs[i].click();return l;}}return '';})()"""
+        writePromptStatus("running", "mengklik tombol attach (${pendingPromptFiles?.size ?: 0} file)")
+        webView.evaluateJavascript(js) { raw ->
+            if (pendingPromptText == null) return@evaluateJavascript
             val label = raw?.trim()?.removeSurrounding("\"") ?: ""
             if (label.isBlank()) {
                 failPrompt("tombol attach Claude tidak ketemu - cek /prompt-status tombol")
                 return@evaluateJavascript
             }
             writePromptStatus("running", "tombol attach diklik: $label")
-            waitPromptChooser(20)
+            promptHandler.postDelayed({
+                clickAttachMenuItem { clicked ->
+                    if (pendingPromptText == null) return@clickAttachMenuItem
+                    if (clicked) {
+                        writePromptStatus("running", "item menu unduh diklik")
+                    }
+                    waitPromptChooser(20)
+                }
+            }, 1500)
         }
     }
 

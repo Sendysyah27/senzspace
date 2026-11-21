@@ -828,3 +828,31 @@ Jangan cuma diagnosa dari kodenya.
   Style/Speaker/Run, waitTtsDone (Download ADA + audio
   readyState 4 + duration > 0), watchPickup 60 dtk, dan
   penanganan naskah.
+- API 70 (21 Nov, v0.1.70): ALUR PROJECT LEWAT COMPOSER HALAMAN PROJECT.
+  (a) URL live, bukan cache: waitPromptProjectUrl kini membaca
+  location.href lewat evaluateJavascript tiap percobaan (budget
+  tetap 5×2 dtk). currentUrl hanya update di onPageStarted/
+  onPageFinished, sedangkan navigasi sidebar Claude itu SPA
+  (pushState, tanpa full load) sehingga cache tidak pernah
+  melihat "/project/" sesudah klik nama Project di sidebar.
+  (b) Tanpa klik "New chat": sesudah URL project terkonfirmasi,
+  flow langsung ke runPromptDiagnose — composer halaman Project
+  sudah ada dan mengetik di situ memulai chat baru DI DALAM
+  project. runPromptNewChat dihapus (tombol "New chat" tidak ada
+  di halaman Project; tombol sidebar cuma "New"). promptProjectDone
+  ditandai saat URL project terkonfirmasi supaya onPageFinished
+  berikutnya tidak mengulang flow Project.
+  (c) Menu attach: klik tombol attach di composer halaman Project
+  membuka menu, bukan file chooser langsung. runPromptAttach kini
+  cek dulu item menu "Upload from device"/"Unggah dari perangkat"
+  yang terlihat (by teks + visibility, bukan koordinat — posisi
+  menu mengikuti tinggi composer); bila ada, klik langsung; bila
+  belum, klik tombol attach, tunggu 1,5 dtk, lalu cari + klik item
+  menu itu; bila tidak ada menu (chooser langsung, seperti di chat
+  biasa), langsung tunggu chooser. Bila beberapa elemen cocok,
+  diambil yang terakhir di urutan DOM (paling dalam/spesifik).
+  Project dipilih by NAMA lewat sidebar (runPromptPickProject
+  tidak berubah) — Project itu per-akun, tiap akun punya ID
+  project sendiri; URL project tidak pernah di-hardcode.
+  Tanpa ubah perilaku: eksekutor TTS, Studio, snapshot/thumbnail,
+  runPromptFill/runPromptSend, budget waitPromptChooser, fill guard.
