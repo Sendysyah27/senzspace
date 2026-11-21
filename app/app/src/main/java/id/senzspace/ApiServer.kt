@@ -328,12 +328,112 @@ class ApiServer(private val ctx: Context) {
                 }
                 val dir = FileStore.folderDir(ctx, folder)
                 dir.mkdirs()
-                val dest = java.io.File(dir, name)
+                // v0.1.56: nama bentrok → tambah (1), (2) (uniqueFile),
+                // JANGAN timpa file lama diam-diam (audit §6.1). Balasan
+                // membawa nama FINAL yang dipakai.
+                val dest = FileStore.uniqueFile(dir, name)
                 dest.writeBytes(bodyBytes)
                 sendJson(client, 200, JSONObject().apply {
-                    put("uploaded", name)
+                    put("uploaded", dest.name)
                     put("folder", folder)
                     put("size", bodyBytes.size)
+                })
+            }
+            method == "POST" && path == "/stage" -> {
+                // v0.1.56 (Opsi B): salin/pindah satu file kerja ke
+                // _inbox supaya bisa dilampirkan /prompt — staging yang
+                // tadinya cuma bisa lewat layar FM. toFolder DIKUNCI
+                // "_inbox": tidak ada jalan pintas antar-Space tanpa
+                // lewat _inbox. File yang sudah di _inbox = sudah
+                // ter-stage, langsung dikembalikan namanya.
+                val req = try {
+                    JSONObject(body)
+                } catch (_: Exception) {
+                    sendJson(client, 400, JSONObject().put("error", "body bukan JSON"))
+                    return
+                }
+                val space = req.optString("space", "")
+                val path = req.optString("path", "")
+                val move = req.optBoolean("move", false)
+                if (space.isBlank() || path.isBlank()) {
+                    sendJson(client, 400, JSONObject().put("error", "space + path wajib diisi"))
+                    return
+                }
+                val src = resolveFile(space, path, mustBeDir = false)
+                if (src == null || !src.isFile) {
+                    sendJson(client, 404, JSONObject().put("error", "file tidak ketemu: $path"))
+                    return
+                }
+                val inboxDir = FileStore.folderDir(ctx, "_inbox")
+                if (src.parentFile == inboxDir) {
+                    sendJson(client, 200, JSONObject().apply {
+                        put("staged", src.name)
+                        put("folder", "_inbox")
+                        put("size", src.length())
+                        put("moved", false)
+                        put("already_staged", true)
+                    })
+                    return
+                }
+                val staged = if (move) FileStore.move(ctx, src, "_inbox")
+                else FileStore.copy(ctx, src, "_inbox")
+                if (staged == null) {
+                    sendJson(client, 500, JSONObject().put("error", "gagal menyalin file ke _inbox"))
+                    return
+                }
+                sendJson(client, 200, JSONObject().apply {
+                    put("staged", staged.name)
+                    put("folder", "_inbox")
+                    put("size", staged.length())
+                    put("moved", move)
+                })
+            }
+            method == "POST" && path == "/delete" -> {
+                // v0.1.56: hapus satu file/folder kerja (audit §6.2 —
+                // _inbox menumpuk tanpa sapu; TIDAK ADA sapu otomatis,
+                // hapus hanya atas perintah eksplisit per file).
+                // Guard: resolveFile yang sama (allowlist folder +
+                // canonical path), dan root folder TIDAK BOLEH dihapus.
+                val req = try {
+                    JSONObject(body)
+                } catch (_: Exception) {
+                    sendJson(client, 400, JSONObject().put("error", "body bukan JSON"))
+                    return
+                }
+                val space = req.optString("space", "")
+                val path = req.optString("path", "")
+                if (space.isBlank() || path.isBlank()) {
+                    sendJson(client, 400, JSONObject().put("error", "space + path wajib diisi"))
+                    return
+                }
+                val target = resolveFile(space, path, mustBeDir = false)
+                if (target == null || !target.exists()) {
+                    sendJson(client, 404, JSONObject().put("error", "file tidak ketemu: $path"))
+                    return
+                }
+                val baseCanon = try {
+                    FileStore.folderDir(ctx, space).canonicalPath
+                } catch (_: Exception) {
+                    sendJson(client, 500, JSONObject().put("error", "gagal membaca folder"))
+                    return
+                }
+                val targetCanon = try {
+                    target.canonicalPath
+                } catch (_: Exception) {
+                    sendJson(client, 500, JSONObject().put("error", "gagal membaca file"))
+                    return
+                }
+                if (targetCanon == baseCanon) {
+                    sendJson(client, 400, JSONObject().put("error", "tidak boleh menghapus folder itu sendiri"))
+                    return
+                }
+                if (!FileStore.delete(target)) {
+                    sendJson(client, 500, JSONObject().put("error", "gagal menghapus: $path"))
+                    return
+                }
+                sendJson(client, 200, JSONObject().apply {
+                    put("deleted", target.name)
+                    put("space", space)
                 })
             }
             method == "POST" && path == "/prompt" -> {

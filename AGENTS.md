@@ -118,6 +118,38 @@ Jangan cuma diagnosa dari kodenya.
   (BufferedReader bisa menelan byte body). senz.py v2 ngomong ke
   API via `adb forward tcp:19335 tcp:19335`; procs/shot/type/tap/
   key/home tetap ADB (level perangkat).
+- API 56 (21 Nov, v0.1.56): FILE MANAGER JADI PICKER + /stage + /delete
+  (Gas Sendy 10:32 — "kerjakan OPSI A + B dan temuan lainnya langsung di
+  fix juga", lanjutan audit FM+API 21 Nov 10:11). AKAR 7-11: (a) OPSI A —
+  FileManagerActivity mode pilih (EXTRA_PICK_MODE di samping
+  EXTRA_FOLDER): ketuk file → FileStore.copy ke _inbox → setResult
+  EXTRA_PICK_RESULT (path HASIL, JANGAN PERNAH path asli folder Space)
+  + finish(); tombol "Pilih dari HP" (ACTION_GET_CONTENT, jalan kedua —
+  isi disalin ke _inbox, nama unik bila bentrok); tolak file >100 MB
+  seperti /upload. BrowserActivity: fmPickLauncher baru (pola
+  fileChooserLauncher, yang lama DIHAPUS — kedua cabang chooser kini
+  lewat FM); cabang fallback onShowFileChooser utama (1065-1100) DAN
+  pop-up OAuth (629) diganti launchFmPicker() — pop-up ikut cabang
+  yang sama karena berbagi launcher + callback, perubahannya kecil.
+  Hasil launcher → FileProvider.getUriForFile + grantUriPermission
+  (pola cabang _inbox 1040-1052) → fileChooserCallback.onReceiveValue;
+  batal → onReceiveValue(null). Manifest + file_paths.xml TIDAK diubah.
+  (b) OPSI B — POST /stage (di samping /upload): body JSON {space,
+  path, move?} → resolveFile yang sama (canonical, tolak ../) +
+  FileStore.copy/move; toFolder DIKUNCI "_inbox"; file yang sudah di
+  _inbox dikembalikan langsung (already_staged). senz.py: `stage
+  --space KEY --path REL [--move]`. (c) POST /delete: {space, path} →
+  resolveFile + guard root folder TIDAK BOLEH dihapus; senz.py: `delete
+  --space KEY --path REL`. TIDAK ADA sapu otomatis (hapus file user
+  diam-diam di luar lingkup — keputusan dicatat). (d) /upload nama
+  bentrok → FileStore.uniqueFile, balasan "uploaded" = nama FINAL
+  (dulu menimpa diam-diam). (e) consumeApiPrompt: file lampiran hilang
+  antara validasi POST /prompt dan eksekusi → status FAILED dengan nama
+  file yang hilang (dulu mapNotNull membuang diam-diam, kirim bisa
+  "berhasil" dengan lampiran kurang). RESIDUAL: pop-up chooser SUDAH
+  ikut FM (bukan residual); tanpa sapu otomatis _inbox (sengaja);
+  verifikasi "sent" beneran + tunggu modal limit + /prompt tanpa project
+  buka chat baru TETAP kandidat terpisah, belum dibangun.
 - API 55 (20 Nov, v0.1.55): DWI-BAHASA + BOOTRECEIVER (Gas Sendy
   22:26 — "Gas, bangun v0.1.55", lanjutan audit API 22:01). AKAR 1:
   semua selektor UI kini EN + ID, dicocokkan tanpa peduli huruf

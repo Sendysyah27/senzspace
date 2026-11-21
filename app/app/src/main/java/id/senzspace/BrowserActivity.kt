@@ -193,10 +193,16 @@ abstract class BrowserActivity : AppCompatActivity() {
      *  WAJIB dipanggil tepat sekali (dengan array URI atau null). */
     private var fileChooserCallback: android.webkit.ValueCallback<Array<android.net.Uri>>? = null
 
-    /** Pemilih file sistem untuk <input type="file"> di WebView.
-     *  Didaftar di sini (bukan di onCreate) supaya siap sebelum WebView
-     *  pertama kali dipakai; dipanggil dari onShowFileChooser. */
-    private val fileChooserLauncher = registerForActivityResult(
+    /** Pemilih file untuk <input type="file"> di WebView (v0.1.56,
+     *  Opsi A — AKAR 7): File Manager in-app dalam mode pilih.
+     *  FM menyalin file pilihan ke _inbox lalu mengembalikan path
+     *  HASIL (extra EXTRA_PICK_RESULT); hasilnya diubah jadi URI
+     *  FileProvider persis seperti jalur _inbox API (v0.1.38).
+     *  Didaftar di sini (bukan di onCreate) supaya siap sebelum
+     *  WebView pertama kali dipakai; dipanggil dari onShowFileChooser
+     *  (utama + pop-up). System picker HP tetap ada sebagai jalan
+     *  kedua — lewat tombol "Pilih dari HP" di dalam FM. */
+    private val fmPickLauncher = registerForActivityResult(
         androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult()
     ) { result ->
         val cb = fileChooserCallback
@@ -206,18 +212,34 @@ abstract class BrowserActivity : AppCompatActivity() {
             cb.onReceiveValue(null)
             return@registerForActivityResult
         }
-        val data = result.data!!
-        val uris = mutableListOf<android.net.Uri>()
-        // Pilih banyak: ClipData; pilih satu: data.data.
-        val clip = data.clipData
-        if (clip != null) {
-            for (i in 0 until clip.itemCount) {
-                clip.getItemAt(i).uri?.let { uris.add(it) }
-            }
-        } else {
-            data.data?.let { uris.add(it) }
+        val stagedPath = result.data!!.getStringExtra(FileManagerActivity.EXTRA_PICK_RESULT)
+        val staged = stagedPath?.let { java.io.File(it) }
+        if (staged == null || !staged.isFile) {
+            cb.onReceiveValue(null)
+            return@registerForActivityResult
         }
-        cb.onReceiveValue(if (uris.isEmpty()) null else uris.toTypedArray())
+        try {
+            val uri = androidx.core.content.FileProvider.getUriForFile(
+                this, "${packageName}.fileprovider", staged
+            )
+            grantUriPermission(
+                packageName, uri,
+                Intent.FLAG_GRANT_READ_URI_PERMISSION
+            )
+            cb.onReceiveValue(arrayOf(uri))
+        } catch (e: Exception) {
+            cb.onReceiveValue(null)
+        }
+    }
+
+    /** v0.1.56: buka FM mode pilih untuk chooser WebView. Folder awal
+     *  = folder Space ini (dataDirectorySuffix = "spaceN"/"aistudio"). */
+    private fun launchFmPicker() {
+        val intent = android.content.Intent(this, FileManagerActivity::class.java).apply {
+            putExtra(FileManagerActivity.EXTRA_FOLDER, dataDirectorySuffix)
+            putExtra(FileManagerActivity.EXTRA_PICK_MODE, true)
+        }
+        fmPickLauncher.launch(intent)
     }
 
     // Multi Live v2 (S1, perintah Sendy 21:58 WIB — "bener bener direct
@@ -636,31 +658,11 @@ abstract class BrowserActivity : AppCompatActivity() {
                     fileChooserCallback?.onReceiveValue(null)
                     fileChooserCallback = filePathCallback
                     try {
-                        val acceptTypes = fileChooserParams.acceptTypes
-                        val mimeType = acceptTypes.firstOrNull {
-                            it.isNotBlank() && it != "*/*"
-                        } ?: "*/*"
-                        val intent = android.content.Intent(
-                            android.content.Intent.ACTION_GET_CONTENT
-                        ).apply {
-                            addCategory(android.content.Intent.CATEGORY_OPENABLE)
-                            type = mimeType
-                            if (fileChooserParams.mode ==
-                                WebChromeClient.FileChooserParams.MODE_OPEN_MULTIPLE
-                            ) {
-                                putExtra(
-                                    android.content.Intent.EXTRA_ALLOW_MULTIPLE, true
-                                )
-                            }
-                            addFlags(
-                                android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION
-                            )
-                        }
-                        fileChooserLauncher.launch(
-                            android.content.Intent.createChooser(
-                                intent, "Pilih file"
-                            )
-                        )
+                        // v0.1.56: File Manager in-app mode pilih (Opsi A)
+                        // — bukan lagi system picker langsung. File di
+                        // luar SenzSpace tetap bisa dipilih lewat tombol
+                        // "Pilih dari HP" di dalam FM.
+                        launchFmPicker()
                     } catch (e: Exception) {
                         fileChooserCallback = null
                         filePathCallback.onReceiveValue(null)
@@ -1062,31 +1064,11 @@ abstract class BrowserActivity : AppCompatActivity() {
                     fileChooserCallback?.onReceiveValue(null)
                     fileChooserCallback = filePathCallback
                     try {
-                        val acceptTypes = fileChooserParams.acceptTypes
-                        val mimeType = acceptTypes.firstOrNull {
-                            it.isNotBlank() && it != "*/*"
-                        } ?: "*/*"
-                        val intent = android.content.Intent(
-                            android.content.Intent.ACTION_GET_CONTENT
-                        ).apply {
-                            addCategory(android.content.Intent.CATEGORY_OPENABLE)
-                            type = mimeType
-                            if (fileChooserParams.mode ==
-                                WebChromeClient.FileChooserParams.MODE_OPEN_MULTIPLE
-                            ) {
-                                putExtra(
-                                    android.content.Intent.EXTRA_ALLOW_MULTIPLE, true
-                                )
-                            }
-                            addFlags(
-                                android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION
-                            )
-                        }
-                        fileChooserLauncher.launch(
-                            android.content.Intent.createChooser(
-                                intent, "Pilih file"
-                            )
-                        )
+                        // v0.1.56: File Manager in-app mode pilih (Opsi A)
+                        // — bukan lagi system picker langsung. File di
+                        // luar SenzSpace tetap bisa dipilih lewat tombol
+                        // "Pilih dari HP" di dalam FM.
+                        launchFmPicker()
                     } catch (e: Exception) {
                         fileChooserCallback = null
                         filePathCallback.onReceiveValue(null)
@@ -1206,6 +1188,20 @@ abstract class BrowserActivity : AppCompatActivity() {
         intent.removeExtra(MainActivity.EXTRA_API_PROMPT_URL)
         val project = intent.getStringExtra(MainActivity.EXTRA_API_PROMPT_PROJECT)
         intent.removeExtra(MainActivity.EXTRA_API_PROMPT_PROJECT)
+        // v0.1.56: JANGAN buang diam-diam nama file yang hilang di
+        // tengah jalan (audit §6.3) — bila ada yang hilang antara
+        // validasi POST /prompt dan eksekusi, gagal jujur dengan nama
+        // file yang hilang; JANGAN kirim dengan lampiran lebih sedikit.
+        val missing = names?.filter { n ->
+            !java.io.File(FileStore.folderDir(this, "_inbox"), n).isFile
+        } ?: emptyList()
+        if (missing.isNotEmpty()) {
+            writePromptStatus(
+                "failed",
+                "file lampiran tidak ketemu di _inbox: ${missing.joinToString(", ")}"
+            )
+            return
+        }
         val files = names?.mapNotNull { n ->
             val f = java.io.File(FileStore.folderDir(this, "_inbox"), n)
             if (f.isFile) f else null

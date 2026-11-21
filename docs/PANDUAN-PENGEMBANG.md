@@ -5,6 +5,44 @@ panduan tes per slice (bahasa bayi) — dipindah dari README utama saat
 repo dibuka untuk semua pengguna (17 Nov 2026). README utama sekarang
 adalah halaman produk untuk pengguna.
 
+## Tes FM picker + /stage + /delete + nama-unik upload v0.1.56 di HP (bahasa bayi)
+
+"FM picker" = File Manager di dalam app SenzSpace yang dipakai buat
+milih file lampiran (dulu yang muncul file manager HP). "_Inbox" =
+folder bersama di dalam app tempat file lampiran disiapkan. "Stage" =
+menyalin file ke _Inbox supaya bisa dilampirkan.
+
+1. Install APK v0.1.56 (nimpa, JANGAN uninstall — uninstall = semua
+   login 7 Space hilang). Buka SenzSpace sekali supaya API jalan.
+2. Buka **Claude 3** (atau Space lain yang login), buka satu chat,
+   ketuk tombol **+** (lampirkan) di kolom tulis pesan.
+   **LULUS** bila: yang terbuka File Manager SenzSpace (judulnya
+   "Ketuk file untuk dilampirkan"), BUKAN file manager HP.
+   **GAGAL** bila: yang terbuka file manager HP / tidak ada yang terbuka.
+3. Di File Manager itu, ketuk satu file di folder Claude 3.
+   **LULUS** bila: File Manager ketutup sendiri dan di kolom chat muncul
+   chip (kotak kecil) nama file itu sebagai lampiran.
+   **GAGAL** bila: tidak ada chip / chip-nya nama file lain.
+4. Ulangi langkah 2, lalu ketuk tombol **"Pilih dari HP"** di toolbar
+   File Manager, pilih satu file dari Download HP.
+   **LULUS** bila: chip lampiran muncul di chat (file dari HP tetap bisa
+   dipilih — jalan kedua masih jalan). **GAGAL** bila: tidak ada chip.
+5. Tes batal: ulangi langkah 2, lalu tekan tombol kembali HP (tanpa
+   pilih file). **LULUS** bila: kembali ke chat, tidak ada chip, tidak
+   ada pesan error aneh. **GAGAL** bila: app macet / chat ketutup.
+6. Tes /stage + /delete + nama-unik lewat komputer (senz.py, tanpa
+   ketuk layar): `stage --space space3 --path <file>` → balasan
+   "staged" + nama file; `upload --folder _inbox` file yang sama dua
+   kali → balasan kedua "uploaded" namanya ada "(1)" dan file pertama
+   tetap ada (cek `files --space _inbox`); `delete --space _inbox
+   --path <file>` → file itu hilang dari `files --space _inbox`.
+   **LULUS** bila ketiganya sesuai balasan. **GAGAL** bila ada yang
+   menimpa diam-diam / tidak ketemu / error.
+7. Tes file hilang: kirim `prompt --file <nama yang tidak ada>` →
+   **LULUS** bila balasan 404 "file _inbox tidak ketemu". (Bila file
+   terhapus DI ANTARA kirim prompt dan eksekusi, status prompt harus
+   "failed" dengan nama file yang hilang — BUKAN "sent".)
+
 ## Arsitektur
 
 | Lapisan | Teknologi | Tanggung jawab |

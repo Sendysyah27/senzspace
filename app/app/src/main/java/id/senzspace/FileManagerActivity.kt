@@ -39,6 +39,15 @@ class FileManagerActivity : AppCompatActivity() {
 
     companion object {
         const val EXTRA_FOLDER = "extra_folder"
+        // v0.1.56 (Opsi A, AKAR 7-8): mode pilih — FM dipakai sebagai
+        // pemilih file untuk lampiran WebView. Ketuk file → salin ke
+        // _inbox → kembalikan path HASIL lewat EXTRA_PICK_RESULT.
+        // JANGAN PERNAH kembalikan path asli folder Space (jejak
+        // staging hilang, lampiran Space A bisa ke Space B tanpa jejak).
+        const val EXTRA_PICK_MODE = "extra_pick_mode"
+        const val EXTRA_PICK_RESULT = "extra_pick_result"
+        // Batas ukuran pick sama seperti /upload (100 MB).
+        const val PICK_MAX_BYTES = 100L * 1024 * 1024
         private const val PREFS_UI = "senzspace_ui"
         private const val KEY_SORT = "fm_sort"
         private const val KEY_VIEW = "fm_view"
@@ -58,6 +67,17 @@ class FileManagerActivity : AppCompatActivity() {
     private var showHidden = false
     private var clipboard = listOf<File>()
     private var clipboardCut = false
+
+    // v0.1.56: mode pilih (lihat EXTRA_PICK_MODE) + launcher system
+    // picker ("Pilih dari HP") — jalan kedua bila file di luar SenzSpace.
+    private var pickMode = false
+    private val pickFromPhoneLauncher = registerForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == RESULT_OK && result.data?.data != null) {
+            pickFromPhoneUri(result.data!!.data!!)
+        }
+    }
 
     private lateinit var content: LinearLayout
     private lateinit var crumbBar: TextView
@@ -98,6 +118,8 @@ class FileManagerActivity : AppCompatActivity() {
         intent.getStringExtra(EXTRA_FOLDER)?.let { key ->
             pathStack.addLast(FileStore.folderDir(this, key))
         }
+        // v0.1.56: mode pilih (Opsi A) — FM dibuka dari chooser WebView.
+        pickMode = intent.getBooleanExtra(EXTRA_PICK_MODE, false)
 
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -120,7 +142,9 @@ class FileManagerActivity : AppCompatActivity() {
             setTextColor(Color.parseColor("#E8ECF4"))
         })
         appBar.addView(TextView(this).apply {
-            text = "Folder per Space • pindah antar-Space"
+            // v0.1.56: mode pilih — judul menjelaskan tugasnya.
+            text = if (pickMode) "Ketuk file untuk dilampirkan • salinan masuk _Inbox"
+            else "Folder per Space • pindah antar-Space"
             textSize = 11.5f
             setTextColor(Color.parseColor("#8A94A6"))
         })
@@ -226,6 +250,35 @@ class FileManagerActivity : AppCompatActivity() {
             visibility = View.GONE
         }
         pasteBtn.setOnClickListener { pasteClipboard() }
+        // v0.1.56: mode pilih — tombol "Pilih dari HP" (jalan kedua):
+        // system picker HP untuk file di luar SenzSpace; hasilnya
+        // disalin ke _inbox seperti pick file SenzSpace.
+        val phoneBtn = TextView(this).apply {
+            text = "Pilih dari HP"
+            textSize = 12f
+            typeface = Typeface.DEFAULT_BOLD
+            setTextColor(Color.WHITE)
+            setBackgroundResource(R.drawable.btn_primary)
+            setPadding(dp(10), dp(8), dp(10), dp(8))
+        }
+        phoneBtn.setOnClickListener {
+            val intent = android.content.Intent(
+                android.content.Intent.ACTION_GET_CONTENT
+            ).apply {
+                addCategory(android.content.Intent.CATEGORY_OPENABLE)
+                type = "*/*"
+                addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            try {
+                pickFromPhoneLauncher.launch(
+                    android.content.Intent.createChooser(intent, "Pilih file dari HP")
+                )
+            } catch (e: Exception) {
+                Toast.makeText(
+                    this, "Tidak bisa membuka pemilih HP: ${e.message}", Toast.LENGTH_LONG
+                ).show()
+            }
+        }
         toolbarRow.addView(searchBox)
         toolbarRow.addView(sortBtn.apply {
             layoutParams = LinearLayout.LayoutParams(
@@ -251,6 +304,15 @@ class FileManagerActivity : AppCompatActivity() {
                 ViewGroup.LayoutParams.WRAP_CONTENT
             ).apply { leftMargin = dp(8) }
         })
+        // v0.1.56: tombol "Pilih dari HP" hanya tampil di mode pilih.
+        if (pickMode) {
+            toolbarRow.addView(phoneBtn.apply {
+                layoutParams = LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT
+                ).apply { leftMargin = dp(8) }
+            })
+        }
         root.addView(toolbarRow)
 
         val scroll = ScrollView(this).apply {
@@ -572,7 +634,11 @@ class FileManagerActivity : AppCompatActivity() {
             setPadding(0, dp(6), 0, 0)
         })
         cell.setOnClickListener {
-            if (selected.isNotEmpty()) {
+            // v0.1.56: mode pilih — ketuk file = pilih (salin ke
+            // _inbox); ketuk folder tetap drill-down.
+            if (pickMode && !isFolder && selected.isEmpty()) {
+                pickFile(entry)
+            } else if (selected.isNotEmpty()) {
                 toggleSelect(entry)
             } else if (isFolder) {
                 pathStack.addLast(entry)
@@ -584,8 +650,8 @@ class FileManagerActivity : AppCompatActivity() {
             }
         }
         cell.setOnLongClickListener {
-            toggleSelect(entry)
-            true
+            // v0.1.56: mode pilih — tahan tidak memilih banyak.
+            if (pickMode) true else { toggleSelect(entry); true }
         }
         return cell
     }
@@ -675,7 +741,11 @@ class FileManagerActivity : AppCompatActivity() {
             row.addView(more)
         }
         row.setOnClickListener {
-            if (selected.isNotEmpty()) {
+            // v0.1.56: mode pilih — ketuk file = pilih (salin ke
+            // _inbox); ketuk folder tetap drill-down.
+            if (pickMode && !isFolder && selected.isEmpty()) {
+                pickFile(entry)
+            } else if (selected.isNotEmpty()) {
                 toggleSelect(entry)
             } else if (isFolder) {
                 pathStack.addLast(entry)
@@ -687,8 +757,8 @@ class FileManagerActivity : AppCompatActivity() {
             }
         }
         row.setOnLongClickListener {
-            toggleSelect(entry)
-            true
+            // v0.1.56: mode pilih — tahan tidak memilih banyak.
+            if (pickMode) true else { toggleSelect(entry); true }
         }
         return row
     }
@@ -774,6 +844,75 @@ class FileManagerActivity : AppCompatActivity() {
                 this, "Tidak ada app untuk membuka file ini", Toast.LENGTH_LONG
             ).show()
         }
+    }
+
+    // ---------- Mode pilih v0.1.56 (Opsi A) ----------
+
+    /** Ketuk file dalam mode pilih — salin ke _inbox dulu (jejak
+     *  staging), lalu kembalikan path HASIL. JANGAN PERNAH kembalikan
+     *  path asli folder Space. */
+    private fun pickFile(file: File) {
+        if (file.length() > PICK_MAX_BYTES) {
+            Toast.makeText(
+                this, "File lebih dari 100 MB — tidak bisa dilampirkan",
+                Toast.LENGTH_LONG
+            ).show()
+            return
+        }
+        val staged = FileStore.copy(this, file, "_inbox")
+        if (staged == null) {
+            Toast.makeText(
+                this, "Gagal menyalin file ke _Inbox", Toast.LENGTH_LONG
+            ).show()
+            return
+        }
+        finishWithPick(staged)
+    }
+
+    /** File dari system picker ("Pilih dari HP") — salin isinya ke
+     *  _inbox (nama unik bila bentrok), lalu kembalikan path hasil
+     *  seperti pick file SenzSpace. Tolak > 100 MB. */
+    private fun pickFromPhoneUri(uri: android.net.Uri) {
+        val rawName = contentResolver.query(
+            uri,
+            arrayOf(android.provider.OpenableColumns.DISPLAY_NAME),
+            null, null, null
+        )?.use { c -> if (c.moveToFirst()) c.getString(0) else null } ?: "file"
+        val clean = rawName.trim().replace("/", "_").replace("\\", "_")
+        if (clean.isEmpty() || clean == "." || clean == ".." || clean.contains("..")) {
+            Toast.makeText(this, "Nama file tidak bisa dipakai", Toast.LENGTH_LONG).show()
+            return
+        }
+        val inboxDir = FileStore.folderDir(this, "_inbox")
+        inboxDir.mkdirs()
+        val dest = FileStore.uniqueFile(inboxDir, clean)
+        try {
+            contentResolver.openInputStream(uri)?.use { input ->
+                dest.outputStream().use { out -> input.copyTo(out) }
+            } ?: run {
+                Toast.makeText(this, "Tidak bisa membaca file itu", Toast.LENGTH_LONG).show()
+                return
+            }
+        } catch (e: Exception) {
+            dest.delete()
+            Toast.makeText(this, "Gagal menyalin file: ${e.message}", Toast.LENGTH_LONG).show()
+            return
+        }
+        if (dest.length() > PICK_MAX_BYTES) {
+            dest.delete()
+            Toast.makeText(
+                this, "File lebih dari 100 MB — tidak bisa dilampirkan",
+                Toast.LENGTH_LONG
+            ).show()
+            return
+        }
+        finishWithPick(dest)
+    }
+
+    private fun finishWithPick(staged: File) {
+        val result = Intent().putExtra(EXTRA_PICK_RESULT, staged.absolutePath)
+        setResult(RESULT_OK, result)
+        finish()
     }
 
     private fun shareFiles(files: List<File>) {

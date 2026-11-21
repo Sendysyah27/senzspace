@@ -1,0 +1,89 @@
+{
+  "episodes": {
+    "charger": {
+      "account": "SENDY09",
+      "action": "LIMIT until 13:50 WIB 21 Nov — cron resume-charger-1350 owns the 13:50 resume; DO NOT resume before 13:50",
+      "ageSec": 6,
+      "checked": "2026-11-21T10:32+07:00",
+      "generating": false,
+      "lastMessage": "Claude finished the response + Pro upsell 'Your free messages return at 1:50 PM'. Round 3 work done: S06/S07 camera fix in progress at 09:03, then paused on limit. UNCHANGED since 09:33.",
+      "limit": true,
+      "limitReset": "13:50 WIB 21 Nov",
+      "mp4": false,
+      "slot": 1,
+      "stage": "M3 (CHECKPOINT v1)",
+      "url": "https://claude.ai/chat/4a759bfc-7053-4022-9eed-8158d4705aef"
+    },
+    "gigi": {
+      "account": "senzwh",
+      "action": "LIMIT until 12:00 WIB 21 Nov — monitor run ~12:01 resumes via stuck detection once limit lifts; DO NOT resume before 12:00",
+      "ageSec": 2,
+      "checked": "2026-11-21T10:32+07:00",
+      "generating": false,
+      "lastMessage": "CHECKPOINT v4 saved; menulis lib/setlife.js (S06 kerumunan 10 orang, S07 kamar mandi, S08 klinik+dokter) — 'Posing the patient and dentist in the clinic scene' — lalu Paused: 'Your free usage returns at 12:00 PM'. 'You are out of free messages until 12:00 PM'. Claude finished the response.",
+      "limit": true,
+      "limitReset": "12:00 WIB 21 Nov",
+      "mp4": false,
+      "slot": 2,
+      "stage": "M3 (CHECKPOINT v4) — setlife.js started, then LIMIT",
+      "url": "https://claude.ai/chat/e63e3528-5c3b-4747-9481-af32f5a0d762"
+    },
+    "lupa": {
+      "account": "sendy753",
+      "action": "DONE — do NOT resume; MP4 delivered. Sendy checks the MP4 himself (07:54) — do NOT download/offer again.",
+      "ageSec": 18,
+      "checked": "2026-11-21T10:32+07:00",
+      "generating": false,
+      "lastMessage": "DELIVERED ~05:50 WIB: SSR-20261119-LUPARUANGAN.mp4 + thumbnail JPG + final.srt + teks_upload.txt + QC_REPORT.md + PROJECT_STATE.md + source ZIP. QC: modeling 3, motion 3, tanpa nilai 1, tanpa Critical. UNCHANGED.",
+      "limit": false,
+      "mp4": true,
+      "slot": 4,
+      "stage": "DONE — MP4 delivered ~05:50 WIB",
+      "url": "https://claude.ai/chat/79b1a065-3b5e-456c-a793-fce5c8539a7b"
+    },
+    "makan-siang": {
+      "account": "Claude 5",
+      "action": "DONE — do NOT resume. MP4 delivered ~09:02 WIB. Claude waits for SENDY's watch verdict.",
+      "ageSec": 17,
+      "checked": "2026-11-21T10:32+07:00",
+      "generating": false,
+      "lastMessage": "DELIVERED ~09:02 WIB: CHECKPOINT SSR-20261117-FOODCOMA v4 — M1–M5 selesai, M6 sebagian. SSR-20261117-FOODCOMA.mp4 + thumbnail (frame 150) + SRT (estimasi) + teks upload (draf) + source zip. QC teknis lulus. Minor: overlap kata kunci ~28 & ~45 dtk, marker vs label ~56 dtk, kepala tidur bulatan hitam. UNCHANGED.",
+      "limit": false,
+      "mp4": true,
+      "slot": 5,
+      "stage": "DONE — MP4 delivered ~09:02 WIB (M6 partial)",
+      "url": "https://claude.ai/chat/0afb3923-b253-4adc-a3dd-4bb0b29327ab"
+    },
+    "papercut": {
+      "account": "eneng127",
+      "action": "LIMIT until 12:00 WIB 21 Nov — monitor run ~12:01 resumes via stuck detection once limit lifts; DO NOT resume before 12:00",
+      "ageSec": 2,
+      "checked": "2026-11-21T10:32+07:00",
+      "generating": false,
+      "lastMessage": "CHECKPOINT v3: M1–M5 done, M6 partial (papercut_final.mp4 2173 frame, 72,43 dtk, -16,9 LUFS, QC teknis done). Sendy gave revision feedback (S03 diperbesar, tangan kiri S07 digeser dari telunjuk, mata meringis dibenahi, rongga luka dinding jaringan, musik+SFX tipis); Claude started fixes ('Siap, gue kerjakan perbaikannya... Running a command'), lalu Paused: 'Your free usage returns at 12:00 PM'. 'You are out of free messages until 12:00 PM'.",
+      "limit": true,
+      "limitReset": "12:00 WIB 21 Nov",
+      "mp4": false,
+      "slot": 3,
+      "stage": "M6 partial (CHECKPOINT v3) — revision round started, then LIMIT",
+      "url": "https://claude.ai/chat/7926a036-28f9-4c38-8bd3-d4b1d296f748"
+    }
+  },
+  "job": "pantau-produksi-ssr",
+  "notes": [
+    "status /spaces limit 'LIMIT' for slot 2 is STALE — page snapshot says limit=false and Claude is responding (snapshot never clears the limit file). Page text is source of truth for limit.",
+    "Page 'generating' flag read false on slots 2/3/5 while tail text shows 'Claude is responding' + a command running — flag is best-effort (Stop-button detection), trust the visible text.",
+    "Relative-time labels in page text are stale ('just now' for the 07:10-07:12 resumes); prompt-status updated timestamps confirm no other run sent resumes.",
+    "Space 5 download folder holds one old file: 050f0cc5-b4bf-4bcb-8ac5-44b00af1f508.zip, 23.4 MB, modified 19 Nov 17:13 WIB — not a new deliverable.",
+    "Space 4 REVIVED 07:52: snapshot writer dead since ~00:20 + thumbnail frozen (md5 9d84450c42f7bf56cc02b389fbed38ff since 05:32). /open + /navigate did NOT revive it. Fix: `adb shell run-as id.senzspace.debug kill <pid :space4>` (plain `kill` = Operation not permitted; force-stop NOT used — would kill the API server too). After kill + /open, snapshot fresh (ageSec 11, then 19 on Lupa chat). Thumb md5 STILL identical after restart — thumb route may lag/serve cached frame; snapshot is source of truth for Space 4 now.",
+    "LUPA DONE ~05:50 WIB — first MP4 of the night batch. The 07:07 'still rendering' read was a frozen thumb; the render had already finished. Monitor must NOT resume Lupa.",
+    "STALL MISS 21 Nov ~09:02 (Sendy menegur): Gigi idle ~2 jam (Claude selesai ~07:03, pesan terakhir 'Kalau mau lanjut, tulis continue last checkpoint lagi') sementara monitor 07:31/08:01/08:31 + cek manual 07:56 semua baca 'Claude is responding' dari tail dan tidak resume. Penyebab: tail 'Claude is responding' TIDAK BISA DIPERCAYA sendirian (tampil walau Claude sudah selesai) + monitor hanya pantau limit, bukan progres. Perbaikan 09:04: STUCK DETECTION masuk ke body cron (bandingkan fingerprint pesan terakhir antar run; generating=false + limit=false + pesan tidak berubah = STUCK → resume; MP4 terserahkan = DONE, JANGAN resume). Run 09:01 dihentikan manual (cron.stop) supaya tidak resume S5 yang baru selesai.",
+    "MAKAN SIANG DONE ~09:02 WIB — MP4 kedua batch ini (SSR-20261117-FOODCOMA.mp4). Sendy yang resume manual ~09:00 sesudah tool step berhenti; Claude menyelesaikan render + menyerahkan paket lengkap. Menunggu verdict tonton Sendy.",
+    "CHARGER LIMIT LAGI 09:31: round 3 (resume 08:51) jalan sampai S06/S07 camera fix, lalu 'Claude finished the response' + 'Your free messages return at 1:50 PM'. Cron resume-charger-1350 dibuat 09:31 (runonce 13:50 WIB).",
+    "PAPER CUT 09:31: papercut_final.mp4 + thumbnail SUDAH ter-render, tapi BELUM final — Claude: QC teknis+kreatif belum mulai, S02 masih perlu diperbaiki, PROJECT_STATE belum di-update; respons 'ended early'. Claude minta 'continue last checkpoint'. Bukan DONE — jangan tandai mp4=true sampai ada pesan penyerahan final sesudah QC.",
+    "10:02 RUN: Gigi + Paper Cut BOTH hit limit, reset 12:00 PM WIB. Paper Cut CHECKPOINT v3 (M1–M5 done, M6 partial, QC teknis lolos: papercut_final.mp4 2173f 72,43 dtk -16,9 LUFS) + Sendy revision feedback (S03 diperbesar, tangan kiri S07, mata meringis, dinding rongga luka, musik+SFX) + Claude started fixes then paused on limit. Gigi CHECKPOINT v4 saved, setlife.js (S06–S08) started, then paused on limit. Charger unchanged (limit 13:50). Lupa + Makan Siang DONE unchanged. No resume cron created this run — next monitor run ~12:01 resumes both via stuck detection once limits lift.",
+    "10:32 RUN: no change vs 10:02 — all snapshots fresh (ageSec 2-18, stale=false, URLs correct). Charger limit 13:50 (M3 CHECKPOINT v1, S06/S07 camera fix, fingerprint UNCHANGED). Gigi limit 12:00 (CHECKPOINT v4, setlife.js started then paused, fingerprint UNCHANGED). Paper Cut limit 12:00 (CHECKPOINT v3, revision fixes started then paused, fingerprint UNCHANGED). Lupa + Makan Siang DONE unchanged. No resumes (all active limits still on). No report sent (DIAM)."
+  ],
+  "run_scheduled": "2026-11-21T10:31:59+07:00",
+  "updated": "2026-11-21T10:32+07:00"
+}
