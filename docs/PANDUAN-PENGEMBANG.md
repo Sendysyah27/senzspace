@@ -5,6 +5,40 @@ panduan tes per slice (bahasa bayi) — dipindah dari README utama saat
 repo dibuka untuk semua pengguna (17 Nov 2026). README utama sekarang
 adalah halaman produk untuk pengguna.
 
+## Tes 2 Space YouTube Studio v0.1.58 di HP (bahasa bayi)
+
+"Space" = satu tab browser sendiri-sendiri di dalam app SenzSpace, tiap
+Space punya login sendiri. "YT Studio" = YouTube Studio
+(studio.youtube.com), tempat Sendy ngatur channel YouTube-nya. Slot 9
+dan 10 = dua Space terakhir yang masih kosong (sekarang semua 10 slot
+terisi penuh).
+
+1. Install APK v0.1.58 (nimpa, JANGAN uninstall — uninstall = semua
+   login 7 Space hilang). SESUDAH install, JANGAN buka app dulu — API
+   harus hidup sendiri (receiver v0.1.57), tunggu `ping` jawab OK
+   (versi 0.1.58, build 63) paling lama 5 menit.
+   **LULUS** bila: ping OK tanpa buka app.
+   **GAGAL** bila: sesudah 5 menit ping masih mati — boleh hidupkan
+   app pakai perintah komputer (izin Sendy buat testing), tapi
+   autostart-nya dilaporkan GAGAL.
+2. Cek daftar Space dari komputer.
+   **LULUS** bila: slot 9 namanya "YT Studio", slot 10 namanya
+   "YT Studio 2", URL keduanya https://studio.youtube.com; slot 8
+   tetap "Transkrip"; slot 1-7 tidak berubah namanya.
+   **GAGAL** bila: slot 9/10 tidak ada, namanya beda, atau slot 8
+   berubah.
+3. Buka slot 9 dari komputer, tunggu, lalu baca halamannya.
+   **LULUS** bila: URL-nya studio.youtube.com (boleh ke-redirect ke
+   halaman login Google — itu WAJAR, karena Sendy belum login di
+   Space ini).
+   **GAGAL** bila: URL-nya situs lain / halaman error.
+4. Ulangi langkah 3 buat slot 10.
+5. LOGIN ADALAH TUGAS SENDY SENDIRI — JANGAN coba login di tes ini.
+   Sendy yang buka tiap Space YT Studio lalu login pakai akun
+   Google-nya masing-masing.
+6. JANGAN kirim prompt/resume apa pun selama tes ini — resume Gigi +
+   Paper Cut jam 12:01 itu urusan monitor, bukan tes ini.
+
 ## Tes autostart API v0.1.57 di HP (bahasa bayi)
 
 "Autostart" = API jalan sendiri sesudah app di-update, tanpa buka app
