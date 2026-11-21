@@ -849,6 +849,13 @@ abstract class BrowserActivity : AppCompatActivity() {
             WebView.setWebContentsDebuggingEnabled(true)
         }
         super.onCreate(savedInstanceState)
+        // v0.1.71: buka Space langsung (tanpa Beranda) tetap memastikan
+        // API hidup + watchdog terdaftar. ApiService jalan di proses
+        // utama; startService aman bila service sudah jalan.
+        if (ApiToken.isEnabled(this)) {
+            ApiService.start(this)
+            WatchdogWorker.enqueue(this)
+        }
         // v0.1.31: ikuti sensor putar HP (berlaku walau auto-rotate
         // sistem mati) — app sebelumnya tidak bisa horizontal.
         // v0.1.33: rotasi MENGIKUTI setelan sistem (auto-rotate HP) —

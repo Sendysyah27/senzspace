@@ -13,13 +13,19 @@ import android.content.Intent
  *  app di-update/di-install ulang, tanpa buka app sekali. Aksi ini
  *  hanya dikirim sistem ke app sendiri, tanpa izin baru. Pola start
  *  sama persis seperti BOOT_COMPLETED (ApiService.start, yang sudah
- *  menangani cabang izin notifikasi sendiri). */
+ *  menangani cabang izin notifikasi sendiri).
+ *  v0.1.71: daftarkan juga watchdog API (WorkManager 15 mnt) di
+ *  kedua aksi — watchdog yang menghidupkan lagi ApiService bila
+ *  proses utama mati di luar reboot/update. */
 class BootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action == Intent.ACTION_BOOT_COMPLETED ||
             intent.action == Intent.ACTION_MY_PACKAGE_REPLACED
         ) {
-            if (ApiToken.isEnabled(context)) ApiService.start(context)
+            if (ApiToken.isEnabled(context)) {
+                ApiService.start(context)
+                WatchdogWorker.enqueue(context)
+            }
         }
     }
 }

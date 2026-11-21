@@ -271,6 +271,9 @@ class MainActivity : AppCompatActivity() {
         // v0.1.36: nyalakan server API lokal bila
         // saklarnya hidup (default hidup).
         if (ApiToken.isEnabled(this)) ApiService.start(this)
+        // v0.1.71: daftarkan watchdog API (WorkManager 15 mnt,
+        // idempotent — KEEP bila sudah terdaftar).
+        if (ApiToken.isEnabled(this)) WatchdogWorker.enqueue(this)
         spaceList = findViewById(R.id.spaceList)
         liveGrid = findViewById(R.id.liveGrid)
         toggleLive = findViewById(R.id.toggleLive)

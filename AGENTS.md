@@ -856,3 +856,47 @@ Jangan cuma diagnosa dari kodenya.
   project sendiri; URL project tidak pernah di-hardcode.
   Tanpa ubah perilaku: eksekutor TTS, Studio, snapshot/thumbnail,
   runPromptFill/runPromptSend, budget waitPromptChooser, fill guard.
+- API 71 (22 Nov, v0.1.71): WATCHDOG API (WORKMANAGER).
+  (a) ApiService hanya di-start dari MainActivity, BootReceiver,
+  dan toggle Pengaturan — bila proses utama mati sementara Space
+  selamat, atau activity Space dibuka langsung tanpa Beranda, API
+  mati dan tidak ada yang menyalakan lagi; START_STICKY tidak
+  me-restart service di bawah tekanan memori. WatchdogWorker
+  (WorkManager periodik 15 mnt, minimum sistem) mengecek ApiServer
+  lewat ping /ping tiap 15 mnt dan menyalakan ApiService bila tidak
+  menjawab. Ping memakai Socket mentah (tanpa proxy, tidak kena
+  larangan cleartext). Enqueue idempotent
+  (ExistingPeriodicWorkPolicy.KEEP) dari MainActivity.onCreate,
+  BootReceiver (BOOT_COMPLETED + MY_PACKAGE_REPLACED), dan
+  BrowserActivity.onCreate; enqueue tidak pernah throw (aman dari
+  proses Space — WorkManager utamanya hidup di proses utama).
+  Worker menghormati saklar API Kontrol (ApiToken.isEnabled dicek
+  tiap jalan).
+  (b) BrowserActivity.onCreate juga memanggil ApiService.start
+  (setiap buka Space memastikan API hidup; startService aman bila
+  service sudah jalan).
+  (c) Foreground service: worker memakai expedited work +
+  setForegroundAsync (tunggu promosi selesai sebelum start) supaya
+  startForegroundService legal dari background (Android 12+).
+  Notifikasi foreground worker: channel "senzspace_watchdog",
+  LOW, tipe dataSync.
+  (d) Dependensi baru: androidx.work:work-runtime-ktx:2.9.0
+  (cocok AGP 8.5.2, compileSdk 34). Izin manifest baru:
+  FOREGROUND_SERVICE_DATA_SYNC (izin normal, tanpa prompt
+  runtime) — wajib untuk foreground service internal WorkManager
+  bertipe dataSync di target SDK 34.
+  (e) Revive dari VM: ReviveReceiver (exported, aksi tetap
+  id.senzspace.debug.action.REVIVE_API) — onReceive hanya
+  menyalakan ApiService milik app sendiri + mendaftarkan watchdog
+  (bila saklar API Kontrol hidup); tidak membaca extra apa pun
+  dari broadcast, tidak membuka activity, tidak mengubah layar.
+  Start langsung dari receiver di background bisa ditolak sistem,
+  jadi receiver juga mengantre one-time expedited work
+  (WatchdogWorker.enqueueNow) — worker setForeground dulu baru
+  start. Tool VM: `senz.py revive` (kirim broadcast, poll /ping
+  ~30 dtk; HIDUP hanya bila /ping menjawab). Bila kelak tidak
+  dibutuhkan, hapus receiver + perintah revive sekaligus.
+  ApiService tetap exported=false.
+  Tanpa ubah perilaku: eksekutor prompt/TTS/Studio,
+  snapshot/thumbnail, limit detection, FileManager, KeepAlive
+  per-Space, BootReceiver yang sudah ada (hanya tambah enqueue).
