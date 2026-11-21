@@ -230,6 +230,27 @@ Jangan cuma diagnosa dari kodenya.
   dan halaman mungkin belum lengkap. Tanpa ubah perilaku:
   eksekutor TTS, FM picker, BootReceiver, SpaceRegistry, dan rute
   lain tidak disentuh.
+- API 62 (21 Nov, v0.1.62): SINGKIRKAN INTERSTITIAL STUDIO.
+  Sesudah install, WebView Studio memuat halaman "Try out the
+  YouTube Studio app" (teks "CONTINUE TO STUDIO") di root maupun
+  halaman Content — dasbor tidak tampil, tombol Create tidak ada,
+  dan diagnose menemukan daftar tombol KOSONG (elemennya bukan
+  <button>). Fix: (a) runStudioDismissInterstitial berjalan
+  SEBELUM alur upload, dashboard, dan videos — probe JS deteksi
+  interstitial dari teks halaman ("try out the youtube studio
+  app" / "continue to studio" / "lanjutkan ke studio" / "coba
+  aplikasi youtube studio"); (b) klik elemen berteks persis
+  "CONTINUE TO STUDIO" / "LANJUTKAN KE STUDIO" (cari di
+  button/a/div/span/[role]/[onclick], pilih yang paling dalam;
+  "GET THE APP" tidak pernah diklik); (c) poll ~10 dtk sampai
+  dasbor muncul (tombol Create ada ATAU teks "Channel dashboard" /
+  "Dasbor channel" ada); (d) gagal jujur dengan bukti bila
+  interstitial tetap ada — 300 karakter pertama teks halaman +
+  dump kontrol (helper failStudioWithEvidence, pola
+  runStudioWaitDialog). Tanpa interstitial, probe balik 'clean'
+  dan alur lanjut tanpa jeda. Tanpa ubah perilaku: rantai upload
+  (tunggu dialog 30 dtk, verifikasi Content), parse dasbor,
+  eksekutor prompt/TTS, dan rute lain tidak disentuh.
 - API 57 (21 Nov, v0.1.57): AUTOSTART SESUDAH INSTALL/UPDATE.
   BootReceiver kini menangani MY_PACKAGE_REPLACED di samping
   BOOT_COMPLETED — cabang yang sama persis (ApiToken.isEnabled →

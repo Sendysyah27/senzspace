@@ -2471,16 +2471,25 @@ abstract class BrowserActivity : AppCompatActivity() {
         studioRunning = true
         when (action) {
             "dashboard" -> {
-                writeStudioStatus("running", "membaca dasbor channel")
-                runStudioDashboard(2)
+                writeStudioStatus("running", "memeriksa interstitial Studio")
+                runStudioDismissInterstitial({
+                    writeStudioStatus("running", "membaca dasbor channel")
+                    runStudioDashboard(2)
+                })
             }
             "videos" -> {
-                writeStudioStatus("running", "membuka halaman Content")
-                runStudioGoContent({ runStudioVideos(5) })
+                writeStudioStatus("running", "memeriksa interstitial Studio")
+                runStudioDismissInterstitial({
+                    writeStudioStatus("running", "membuka halaman Content")
+                    runStudioGoContent({ runStudioVideos(5) })
+                })
             }
             "upload" -> {
-                writeStudioStatus("running", "mencari tombol Create di Studio")
-                runStudioUploadDiagnose(5)
+                writeStudioStatus("running", "memeriksa interstitial Studio")
+                runStudioDismissInterstitial({
+                    writeStudioStatus("running", "mencari tombol Create di Studio")
+                    runStudioUploadDiagnose(5)
+                })
             }
         }
     }
@@ -2624,6 +2633,62 @@ abstract class BrowserActivity : AppCompatActivity() {
      *  urai tanpa tunggu = semua field kosong. */
     private fun studioDashboardReadyJs(): String {
         return """(function(){var t=document.body?document.body.innerText:'';var hasSubs=t.indexOf('Current subscribers')>=0||t.indexOf('Subscriber saat ini')>=0;var hasDash=t.indexOf('Channel dashboard')>=0||t.indexOf('Dasbor channel')>=0;var hasNum=/\d/.test(t);return ((hasSubs||hasDash)&&hasNum)?'1':'0';})()"""
+    }
+
+    /** JS interstitial Studio (v0.1.62): halaman "Try out the YouTube
+     *  Studio app" muncul sesudah install — dasbor tidak tampil,
+     *  tombol Create tidak ada. Balik 'clean' (tidak ada interstitial),
+     *  'clicked' (elemen "CONTINUE TO STUDIO" diklik), atau 'notfound'
+     *  (teks interstitial ada tapi elemen kliknya tidak ketemu).
+     *  Elemen dicari di button/a/div/span/[role]/[onclick] — bukan
+     *  cuma <button> (diagnose menemukan daftar tombol KOSONG di
+     *  halaman ini, jadi elemennya bukan <button>). Cocok teks
+     *  persis (tanpa peduli huruf) dan pilih yang paling dalam,
+     *  supaya tidak kena wadah yang teksnya cuma mengandung label
+     *  itu. "GET THE APP" tidak pernah diklik (membuka Play Store). */
+    private fun studioInterstitialJs(): String {
+        return """(function(){var t=(document.body?document.body.innerText:'')||'';var low=t.toLowerCase();var inter=low.indexOf('try out the youtube studio app')>=0||low.indexOf('continue to studio')>=0||low.indexOf('lanjutkan ke studio')>=0||low.indexOf('coba aplikasi youtube studio')>=0;if(!inter)return 'clean';var labels=['continue to studio','lanjutkan ke studio'];var els=[...document.querySelectorAll('button,a,div,span,[role="button"],[role="link"],[onclick]')].filter(function(e){return e.offsetParent!==null;});for(var k=0;k<labels.length;k++){var best=null,bestDepth=-1;for(var i=0;i<els.length;i++){var tx=(els[i].textContent||'').trim().toLowerCase();if(tx===labels[k]){var d=0,p=els[i].parentElement;while(p){d++;p=p.parentElement;}if(d>bestDepth){bestDepth=d;best=els[i];}}}if(best){best.click();return 'clicked';}}return 'notfound';})()"""
+    }
+
+    /** JS dasbor muncul (v0.1.62): tombol Create ada ATAU teks khas
+     *  dasbor ada. Balik '1'/'0'. Dipakai poll sesudah klik
+     *  "CONTINUE TO STUDIO" — halaman interstitial tidak punya
+     *  keduanya, jadi '1' berarti interstitial sudah pergi. */
+    private fun studioDashboardAppearedJs(): String {
+        return """(function(){var t=(document.body?document.body.innerText:'')||'';if(t.indexOf('Channel dashboard')>=0||t.indexOf('Dasbor channel')>=0)return '1';var bs=[...document.querySelectorAll('button')].filter(function(b){return b.offsetParent!==null;});for(var i=0;i<bs.length;i++){var l=(bs[i].getAttribute('aria-label')||'').trim().toLowerCase();var tx=(bs[i].textContent||'').trim().toLowerCase();if(l==='create'||l==='buat'||tx==='create'||tx==='buat')return '1';}return '0';})()"""
+    }
+
+    /** Gagal jujur dengan bukti (v0.1.62): 300 karakter pertama teks
+     *  halaman + dump kontrol — pola runStudioWaitDialog. */
+    private fun failStudioWithEvidence(prefix: String) {
+        val diagJs = """(function(){var t=(document.body?document.body.innerText:'')||'';return t.replace(/\s+/g,' ').trim().slice(0,300);})()"""
+        webView.evaluateJavascript(diagJs) { rawDiag ->
+            val diag = (rawDiag?.trim()?.removeSurrounding("\"") ?: "").take(300)
+            webView.evaluateJavascript(studioDumpJs()) { rawDump ->
+                val dump = (rawDump?.trim()?.removeSurrounding("\"") ?: "").take(300)
+                failStudio("$prefix (teks halaman: $diag; $dump)")
+            }
+        }
+    }
+
+    /** Singkirkan interstitial Studio sebelum alur apa pun (v0.1.62).
+     *  Tanpa interstitial -> onOk langsung. Sesudah klik
+     *  "CONTINUE TO STUDIO", poll ~10 dtk sampai dasbor muncul;
+     *  bila interstitial tetap ada, gagal jujur dengan bukti teks
+     *  halaman. Dipakai upload + dashboard + videos — ketiganya
+     *  mentok di langkah pertama bila interstitial muncul. */
+    private fun runStudioDismissInterstitial(onOk: () -> Unit) {
+        if (pendingStudioAction == null) return
+        webView.evaluateJavascript(studioInterstitialJs()) { raw ->
+            val res = (raw?.trim()?.removeSurrounding("\"") ?: "")
+            when (res) {
+                "clean" -> onOk()
+                "notfound" -> failStudioWithEvidence("interstitial Studio tidak bisa disingkirkan — elemen 'CONTINUE TO STUDIO' tidak ketemu")
+                else -> studioVerifyLoop(studioDashboardAppearedJs(), 10, onOk, {
+                    failStudioWithEvidence("interstitial Studio masih ada sesudah klik 'CONTINUE TO STUDIO'")
+                })
+            }
+        }
     }
 
     /** Aksi dashboard: baca ringkasan channel dari dasbor Studio.
