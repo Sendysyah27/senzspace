@@ -44,10 +44,12 @@ class WatchdogWorker(appContext: Context, params: WorkerParameters) :
         // Idempotent: KEEP bila sudah terdaftar. Tidak pernah throw —
         // pemanggil dari proses Space (:spaceN) tidak boleh mati
         // karena WorkManager utamanya hidup di proses utama.
+        // v0.1.74: TANPA setExpedited — periodic work TIDAK BOLEH
+        // expedited di perangkat ini ("PeriodicWorkRequests cannot
+        // be expedited", logcat 06:38 v0.1.73) dan enqueue gagal total.
         fun enqueue(context: Context) {
             try {
                 val req = PeriodicWorkRequestBuilder<WatchdogWorker>(15, TimeUnit.MINUTES)
-                    .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
                     .build()
                 WorkManager.getInstance(context).enqueueUniquePeriodicWork(
                     UNIQUE_NAME,
@@ -116,13 +118,13 @@ class WatchdogWorker(appContext: Context, params: WorkerParameters) :
         // apa pun (enqueue juga dicek di pemanggil, tapi saklar bisa
         // berubah sesudah enqueue).
         if (!ApiToken.isEnabled(applicationContext)) return Result.success()
-        // Promosikan worker ke foreground service SEBELUM start
-        // ApiService: startForegroundService dari background ditolak
-        // Android 12+ (ForegroundServiceStartNotAllowedException).
-        // Expedited saja tidak cukup — worker wajib setForeground.
-        // Tunggu promosi selesai supaya start di bawah legal; bila
-        // promosi gagal, tetap lanjut (ApiService.start mengembalikan
-        // Boolean + mencatat kegagalan, tidak pernah throw).
+        // Promosikan worker ke foreground service SEBELUM memeriksa:
+        // promosi menjaga worker sendiri tetap hidup selama doWork
+        // berjalan. (v0.1.74: promosi ini TIDAK LAGI syarat untuk
+        // menyalakan ApiService — ApiService.startPlain tidak butuh
+        // foreground; startForegroundService dari background justru
+        // yang membunuh service lewat timeout FGS. Bila promosi gagal,
+        // tetap lanjut.)
         try {
             setForegroundAsync(createForegroundInfo())
                 .get(10, TimeUnit.SECONDS)
@@ -131,8 +133,8 @@ class WatchdogWorker(appContext: Context, params: WorkerParameters) :
         }
         if (!isApiAlive()) {
             Log.w(TAG, "doWork: /ping tidak menjawab — menyalakan ApiService")
-            val started = ApiService.start(applicationContext)
-            Log.i(TAG, "doWork: ApiService.start=$started")
+            val started = ApiService.startPlain(applicationContext)
+            Log.i(TAG, "doWork: ApiService.startPlain=$started")
         } else {
             Log.d(TAG, "doWork: /ping menjawab — API hidup")
         }

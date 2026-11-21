@@ -20,9 +20,9 @@ import androidx.core.app.NotificationCompat
 // HP ini: start foreground service dari background ditolak sistem
 // (receiver/worker tidak dikecualikan), WorkManager tidak pernah
 // terjadwal, dan semua lapis menelan kegagalan diam-diam — revive
-// dari VM tidak pernah menyalakan API. Guardian di-start HANYA dari
-// konteks foreground (MainActivity, BootReceiver, BrowserActivity —
-// di samping ApiService.start yang sudah ada). Sekali jalan,
+// dari VM tidak pernah menyalakan API. Guardian di-start dari
+// MainActivity/BrowserActivity (foreground, start()) atau
+// BootReceiver (background, startPlain — v0.1.74). Sekali jalan,
 // guardian hidup di prosesnya sendiri: foreground service
 // (notifikasi LOW) → uid-nya foreground → boleh memanggil
 // ApiService.startPlain() bila /ping tidak menjawab. Guardian selamat
@@ -45,6 +45,8 @@ class WatchdogGuardService : Service() {
         // jalan (onStartCommand dipanggil ulang, loop tidak digandakan
         // — lihat onStartCommand). Tidak pernah throw: start yang
         // ditolak sistem dicatat + dilaporkan false.
+        // HANYA untuk pemanggil foreground (MainActivity,
+        // BrowserActivity) — dari background pakai startPlain.
         fun start(ctx: Context): Boolean {
             val intent = Intent(ctx, WatchdogGuardService::class.java)
             val canForeground = Build.VERSION.SDK_INT < 33 ||
@@ -59,6 +61,21 @@ class WatchdogGuardService : Service() {
                 true
             } catch (e: Exception) {
                 Log.e(TAG, "start: gagal menyalakan guardian: ${e.message}", e)
+                false
+            }
+        }
+
+        // v0.1.74: start biasa (bukan startForegroundService) — tanpa
+        // timeout FGS. Dipakai BootReceiver (background): guardian
+        // jalan sebagai background service sampai app foreground, lalu
+        // mempromosikan diri lewat startForeground di onCreate bila
+        // isAppVisible. Pola sama seperti ApiService.startPlain.
+        fun startPlain(ctx: Context): Boolean {
+            return try {
+                ctx.startService(Intent(ctx, WatchdogGuardService::class.java))
+                true
+            } catch (e: Exception) {
+                Log.e(TAG, "startPlain: gagal menyalakan guardian: ${e.message}", e)
                 false
             }
         }
@@ -87,9 +104,14 @@ class WatchdogGuardService : Service() {
 
     override fun onCreate() {
         // v0.1.73: startForeground PERTAMA — notifikasi minimal dulu,
-        // langsung, tanpa try/catch yang menelan (bila throw, biarkan
-        // tercatat sebagai crash dengan stack jelas). PendingIntent +
-        // teks panjang menyusul SESUDAH foreground.
+        // langsung. PendingIntent + teks panjang menyusul SESUDAH
+        // foreground.
+        // v0.1.74: startForeground HANYA bila app sedang foreground
+        // (ApiService.isAppVisible); bila di background, panggilan itu
+        // DITOLAK sistem — lewati sama sekali dan jalan terus sebagai
+        // background service (loop tick tetap memeriksa /ping).
+        // try/catch + Log.w sebagai jaring pengaman bila ROM melempar
+        // alih-alih sekadar menolak.
         Log.i(TAG, "onCreate: masuk")
         super.onCreate()
         val canForeground = Build.VERSION.SDK_INT < 33 ||
@@ -123,8 +145,16 @@ class WatchdogGuardService : Service() {
                 .setOngoing(true)
                 .build()
             Log.i(TAG, "onCreate: startForeground")
-            startForeground(NOTIF_ID, notif)
-            Log.i(TAG, "onCreate: foreground jalan")
+            if (ApiService.isAppVisible(this)) {
+                try {
+                    startForeground(NOTIF_ID, notif)
+                    Log.i(TAG, "onCreate: foreground jalan")
+                } catch (e: Exception) {
+                    Log.w(TAG, "onCreate: startForeground ditolak — jalan sebagai background service: ${e.message}")
+                }
+            } else {
+                Log.i(TAG, "onCreate: app di background — lewati startForeground, jalan sebagai background service")
+            }
             try {
                 val openIntent = Intent(this, MainActivity::class.java).apply {
                     flags = Intent.FLAG_ACTIVITY_NEW_TASK or

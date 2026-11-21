@@ -10,6 +10,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.IBinder
+import android.util.Log
 import androidx.core.app.NotificationCompat
 
 // Guard anti-kill Multi Live (S1): tiap proses :spaceN menjalankan
@@ -26,6 +27,7 @@ import androidx.core.app.NotificationCompat
 // — guard melemah tapi app tidak crash.
 open class KeepAliveService : Service() {
     companion object {
+        private const val TAG = "SenzWatchdog"
         const val CHANNEL_ID = "senzspace_keepalive"
         const val GROUP_KEY = "senzspace_live"
         const val SUMMARY_ID = 1000
@@ -132,9 +134,13 @@ open class KeepAliveService : Service() {
             else -> 1100
         }
         // v0.1.73: startForeground PERTAMA — notifikasi minimal dulu
-        // (icon + judul saja), langsung, tanpa try/catch yang menelan.
-        // PendingIntent (perlu baca registry) + teks menyusul sesudah
-        // foreground lewat notify.
+        // (icon + judul saja), langsung. PendingIntent (perlu baca
+        // registry) + teks menyusul sesudah foreground lewat notify.
+        // v0.1.74: startForeground HANYA bila app sedang foreground
+        // (ApiService.isAppVisible); bila di background, panggilan itu
+        // DITOLAK sistem — lewati sama sekali dan jalan terus sebagai
+        // background service. try/catch + Log.w sebagai jaring
+        // pengaman bila ROM melempar alih-alih sekadar menolak.
         if (Build.VERSION.SDK_INT < 33 ||
             checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) ==
             PackageManager.PERMISSION_GRANTED
@@ -146,7 +152,15 @@ open class KeepAliveService : Service() {
                 .setGroup(GROUP_KEY)
                 .setOngoing(true)
                 .build()
-            startForeground(notifId, minimal)
+            if (ApiService.isAppVisible(this)) {
+                try {
+                    startForeground(notifId, minimal)
+                } catch (e: Exception) {
+                    Log.w(TAG, "onStartCommand: startForeground ditolak — jalan sebagai background service: ${e.message}")
+                }
+            } else {
+                Log.i(TAG, "onStartCommand: app di background — lewati startForeground, jalan sebagai background service")
+            }
         }
         try {
             // v0.1.31: tap notifikasi Space ini LANGSUNG membuka Space-nya

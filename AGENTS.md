@@ -968,3 +968,42 @@ Jangan cuma diagnosa dari kodenya.
   Tanpa ubah perilaku: eksekutor prompt/TTS/Studio,
   snapshot/thumbnail, limit detection, FileManager, KeepAlive
   per-Space, BootReceiver yang sudah ada.
+- API 74 (22 Nov, v0.1.74): JANGAN PERNAH STARTFOREGROUNDSERVICE
+  DARI BACKGROUND.
+  (a) Latar: v0.1.73 crash dua proses sekaligus lagi —
+  ForegroundServiceDidNotStartInTimeException untuk ApiService
+  dan WatchdogGuardService. Logcat: 06:36:20 sistem MENOLAK
+  startForeground() mentah-mentah ("not allowed due to bg
+  restriction") karena HP tidur — BUKAN karena onCreate lambat.
+  Service jalan sebagai background service (API menjawab poll)
+  tapi ServiceRecord dari startForegroundService tetap menunggu
+  startForeground → dibunuh ~2,5 mnt kemudian. Guardian
+  startPlain=true 2x tidak bisa membatalkan timeout FGS yang
+  sudah menunggu dari panggilan startForegroundService
+  sebelumnya. WorkManager periodic: "PeriodicWorkRequests cannot
+  be expedited".
+  (b) Semua pemanggil background pakai startService biasa:
+  BootReceiver (BOOT_COMPLETED + MY_PACKAGE_REPLACED) pakai
+  ApiService.startPlain() + WatchdogGuardService.startPlain()
+  (baru, pola sama: startService + try/catch + Log.e + Boolean);
+  ReviveReceiver pakai startPlain; WatchdogWorker.doWork pakai
+  startPlain; guardian tick sudah startPlain sejak v0.1.73.
+  ApiService.start() / WatchdogGuardService.start() (FGS) tetap
+  HANYA untuk pemanggil foreground (MainActivity,
+  BrowserActivity, SettingsActivity).
+  (c) onCreate ApiService/WatchdogGuardService +
+  KeepAliveService.onStartCommand: startForeground() HANYA bila
+  app sedang foreground — probe murah ApiService.isAppVisible()
+  (ActivityManager.runningAppProcesses, ambang IMPORTANCE_
+  FOREGROUND / IMPORTANCE_VISIBLE saja; lintas proses, tanpa
+  static antar-proses); bila background, lewati panggilan dan
+  jalan terus sebagai background service; try/catch + Log.w
+  sebagai jaring pengaman bila ROM melempar. Notifikasi minimal
+  + Log.i masuk/sebelum/sesudah dari v0.1.73 dipertahankan.
+  (d) WorkManager.enqueue() periodik: hapus setExpedited
+  (periodic tidak boleh expedited); enqueueNow() one-time BOLEH
+  tetap expedited; kegagalan enqueue tetap dicatat Log.w.
+  (e) Tanpa izin baru; jalur v0.1.71–v0.1.73 dipertahankan.
+  Tanpa ubah perilaku: eksekutor prompt/TTS/Studio,
+  snapshot/thumbnail, limit detection, FileManager, KeepAlive
+  per-Space.

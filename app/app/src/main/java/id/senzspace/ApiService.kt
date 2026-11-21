@@ -1,5 +1,6 @@
 package id.senzspace
 
+import android.app.ActivityManager
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -61,6 +62,12 @@ class ApiService : Service() {
         // untuk menyalakan ApiService yang lambat start tanpa dibunuh
         // sistem; ApiService mempromosikan diri ke foreground lewat
         // startForeground pertama di onCreate-nya sendiri.
+        // v0.1.74: dipakai JUGA semua pemanggil dari background
+        // (BootReceiver, ReviveReceiver, WatchdogWorker.doWork) —
+        // startForegroundService dari background membuat ServiceRecord
+        // menunggu startForeground yang sistem TOLAK mentah-mentah
+        // ("not allowed due to bg restriction") lalu membunuh service
+        // lewat timeout; startService biasa tidak punya penantian itu.
         fun startPlain(ctx: Context): Boolean {
             return try {
                 ctx.startService(Intent(ctx, ApiService::class.java))
@@ -68,6 +75,37 @@ class ApiService : Service() {
             } catch (e: Exception) {
                 Log.e(TAG, "startPlain: start gagal: ${e.message}", e)
                 false
+            }
+        }
+
+        // v0.1.74: probe murah apakah app sedang foreground (ada
+        // activity yang terlihat). Dipakai onCreate/onStartCommand
+        // sebelum startForeground(): bila app di background, panggilan
+        // itu DITOLAK sistem dan — bila service di-start lewat
+        // startForegroundService — ServiceRecord menunggu sampai
+        // dibunuh timeout. Ambang FOREGROUND (100) / VISIBLE (200)
+        // saja: TOP_SLEEPING (150, layar mati) dan FOREGROUND_SERVICE
+        // (125, service lain yang sudah foreground) TIDAK dihitung —
+        // keduanya bukan activity yang terlihat. Probe baca proses app
+        // sendiri lewat ActivityManager — lintas proses, tanpa static
+        // antar-proses (UX 31: static hidup per-proses). Bila probe
+        // gagal, kembalikan true supaya perilaku lama (coba
+        // startForeground + try/catch) yang berlaku.
+        fun isAppVisible(ctx: Context): Boolean {
+            return try {
+                val am = ctx.getSystemService(Context.ACTIVITY_SERVICE)
+                    as ActivityManager
+                val procs = am.runningAppProcesses ?: return true
+                procs.any {
+                    it.processName.startsWith(ctx.packageName) &&
+                        (it.importance ==
+                            ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND ||
+                            it.importance ==
+                            ActivityManager.RunningAppProcessInfo.IMPORTANCE_VISIBLE)
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "isAppVisible: probe gagal — anggap foreground: ${e.message}")
+                true
             }
         }
 
@@ -80,9 +118,14 @@ class ApiService : Service() {
 
     override fun onCreate() {
         // v0.1.73: startForeground PERTAMA — notifikasi minimal dulu,
-        // langsung, tanpa try/catch yang menelan (bila throw, biarkan
-        // tercatat sebagai crash dengan stack jelas). Channel +
-        // PendingIntent + teks panjang menyusul SESUDAH foreground.
+        // langsung. Channel + PendingIntent + teks panjang menyusul
+        // SESUDAH foreground.
+        // v0.1.74: startForeground HANYA bila app sedang foreground
+        // (isAppVisible); bila di background, panggilan itu DITOLAK
+        // sistem — lewati sama sekali dan jalan terus sebagai
+        // background service (API tetap menjawab poll begitu,
+        // 06:36–06:38 v0.1.73). try/catch + Log.w sebagai jaring
+        // pengaman bila ROM melempar alih-alih sekadar menolak.
         Log.i(TAG, "onCreate: masuk")
         super.onCreate()
         if (Build.VERSION.SDK_INT >= 33 &&
@@ -113,8 +156,16 @@ class ApiService : Service() {
             .setOngoing(true)
             .build()
         Log.i(TAG, "onCreate: startForeground")
-        startForeground(NOTIF_ID, notif)
-        Log.i(TAG, "onCreate: foreground jalan")
+        if (isAppVisible(this)) {
+            try {
+                startForeground(NOTIF_ID, notif)
+                Log.i(TAG, "onCreate: foreground jalan")
+            } catch (e: Exception) {
+                Log.w(TAG, "onCreate: startForeground ditolak — jalan sebagai background service: ${e.message}")
+            }
+        } else {
+            Log.i(TAG, "onCreate: app di background — lewati startForeground, jalan sebagai background service")
+        }
         try {
             val openIntent = Intent(this, MainActivity::class.java).apply {
                 flags = Intent.FLAG_ACTIVITY_NEW_TASK or

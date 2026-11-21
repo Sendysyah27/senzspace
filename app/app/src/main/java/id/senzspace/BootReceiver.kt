@@ -20,7 +20,14 @@ import android.util.Log
  *  proses utama mati di luar reboot/update.
  *  v0.1.72: nyalakan juga guardian watchdog (:watchdog) di kedua
  *  aksi — proses sendiri yang memeriksa /ping tiap 60 dtk dan
- *  menyalakan ApiService bila tidak menjawab. */
+ *  menyalakan ApiService bila tidak menjawab.
+ *  v0.1.74: dari receiver (background) JANGAN PERNAH pakai
+ *  startForegroundService — sistem menolak startForeground saat HP
+ *  tidur ("not allowed due to bg restriction") lalu membunuh kedua
+ *  service lewat timeout FGS. Pakai startPlain (startService biasa):
+ *  service jalan sebagai background service (API tetap menjawab
+ *  poll begitu) dan mempromosikan diri ke foreground sendiri bila
+ *  app foreground (isAppVisible di onCreate). */
 class BootReceiver : BroadcastReceiver() {
     companion object {
         private const val TAG = "SenzWatchdog"
@@ -31,12 +38,12 @@ class BootReceiver : BroadcastReceiver() {
             intent.action == Intent.ACTION_MY_PACKAGE_REPLACED
         ) {
             if (ApiToken.isEnabled(context)) {
-                val apiStarted = ApiService.start(context)
-                val guardStarted = WatchdogGuardService.start(context)
+                val apiStarted = ApiService.startPlain(context)
+                val guardStarted = WatchdogGuardService.startPlain(context)
                 Log.i(
                     TAG,
                     "onReceive ${intent.action}: " +
-                        "ApiService.start=$apiStarted guard=$guardStarted"
+                        "ApiService.startPlain=$apiStarted guardPlain=$guardStarted"
                 )
                 WatchdogWorker.enqueue(context)
             } else {

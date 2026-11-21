@@ -36,10 +36,14 @@ class ReviveReceiver : BroadcastReceiver() {
             return
         }
         // Coba langsung dulu (gratis bila ada exemption — mis. app
-        // baru saja di foreground); ApiService.start mengembalikan
-        // Boolean + mencatat throw sendiri (v0.1.72).
-        val started = ApiService.start(context)
-        Log.i(TAG, "onReceive: ApiService.start=$started")
+        // baru saja di foreground). v0.1.74: startPlain, BUKAN start()
+        // — startForegroundService dari receiver (background) membuat
+        // ServiceRecord menunggu startForeground yang sistem tolak
+        // lalu membunuh service lewat timeout; startService biasa
+        // tidak punya penantian itu. startPlain mengembalikan Boolean
+        // + mencatat throw sendiri.
+        val started = ApiService.startPlain(context)
+        Log.i(TAG, "onReceive: ApiService.startPlain=$started")
         // Jalur andalan: expedited one-time work.
         WatchdogWorker.enqueueNow(context)
         // Pastikan watchdog periodik juga terdaftar.
