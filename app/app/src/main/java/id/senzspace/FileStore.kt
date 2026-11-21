@@ -62,6 +62,15 @@ object FileStore {
     fun liveStatusFile(ctx: Context, suffix: String): File =
         File(liveDir(ctx), "$suffix-status.txt")
 
+    /** Penanda snapshot macet (v0.1.68, OPT-15): berisi epoch-ms
+     *  terakhir latch snapshot direset paksa karena callback
+     *  evaluateJavascript tidak menyala dalam 10 dtk (renderer hang).
+     *  File terpisah (bukan kolom ke-4 status live) supaya parser
+     *  Beranda yang mensyaratkan tepat 3 kolom tidak rusak. Dibaca
+     *  ApiServer untuk field `snapshot_stuck_ms` di /spaces. */
+    fun snapStuckFile(ctx: Context, suffix: String): File =
+        File(liveDir(ctx), "$suffix-snapstuck.txt")
+
     fun folderDir(ctx: Context, key: String): File {
         return File(rootDir(ctx), key)
     }

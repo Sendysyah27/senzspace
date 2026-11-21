@@ -774,3 +774,34 @@ Jangan cuma diagnosa dari kodenya.
   verifikasi lolos. Tanpa ubah perilaku: eksekutor TTS, Studio,
   FM picker, BootReceiver, SpaceRegistry, dan rute lain tidak
   disentuh.
+- API 68 (21 Nov, v0.1.68): SINYAL MONITOR JUJUR (OPT-8 + OPT-15 +
+  OPT-16 + OPT-17).
+  (a) Snapshot wall-clock (OPT-17): snapshot halaman tidak lagi
+  ikut tick live — timer terpisah (snapshotRunnable) tiap 20 dtk.
+  Dulu tiap 10 tick = ~100 dtk pada live interval 10 dtk, nyaris
+  menyentuh ambang basi 120 dtk. Ambang basi + field ageSec/stale
+  + isi snapshot tidak berubah; live interval kini hanya mengatur
+  frekuensi thumbnail.
+  (b) Thumbnail jujur (OPT-8): file thumbnail HANYA ditulis bila
+  piksel berubah (sameAs) — mtime + thumb_age_sec kini jujur
+  mencerminkan perubahan piksel terakhir. /spaces mengekspos
+  last_pixel_ms (+ last_dom_ms, last_alive_ms) dari file status
+  live supaya konsumen bisa membedakan renderer throttling
+  (proses hidup, DOM berubah, piksel beku) dari Space mati.
+  (c) Interval adaptif + tulis latar (OPT-16): saat Claude
+  streaming (DOM bermutasi <15 dtk terakhir atau snapshot
+  terakhir bilang generating), tangkapan dibatasi 1×/5 dtk,
+  bukan ~1×/dtk; saat tenang batas lama 1 dtk. Kompresi JPEG +
+  tulis file pindah ke single-thread executor latar (draw WebView
+  tetap di UI thread); thread latar tidak pernah menyentuh
+  lastThumbBmp (tetap milik UI thread).
+  (d) Latch snapshot ber-timeout (OPT-15): pageSnapRunning
+  direset paksa sesudah 10 dtk bila callback evaluateJavascript
+  tidak menyala (renderer hang), dijaga nomor urut supaya reset
+  tidak membersihkan latch tangkapan baru; kejadian ditulis ke
+  file marker _live/<suffix>-snapstuck.txt (file terpisah — parser
+  Beranda mensyaratkan status live tepat 3 kolom) dan diekspos
+  /spaces sebagai snapshot_stuck_ms (0 = tidak pernah macet).
+  Tanpa ubah perilaku: eksekutor prompt (OPT-1/OPT-2), TTS,
+  Studio, FM picker, BootReceiver, SpaceRegistry, dan rute lain
+  tidak disentuh.

@@ -1097,6 +1097,30 @@ class ApiServer(private val ctx: Context) {
             val suffix = SpaceRegistry.suffixForSlot(entry.slot)
             val thumb = FileStore.liveThumbFile(ctx, suffix)
             val thumbAgeSec = if (thumb.exists()) (now - thumb.lastModified()) / 1000 else -1
+            // v0.1.68 (OPT-8): status live "_live/<suffix>-status.txt"
+            // ("alive|dom|pixels", epoch-ms) — lastPixelMs diekspos
+            // supaya konsumen bisa membedakan "proses hidup, DOM
+            // berubah, piksel beku" (renderer throttling) dari "semua
+            // mati". File thumbnail kini hanya ditulis bila piksel
+            // berubah, jadi thumb_age_sec juga sudah jujur.
+            // v0.1.68 (OPT-15): marker snapshot macet
+            // ("<suffix>-snapstuck.txt", epoch-ms terakhir latch
+            // snapshot direset paksa; 0 = tidak pernah macet).
+            val liveParts = try {
+                val f = FileStore.liveStatusFile(ctx, suffix)
+                if (!f.exists()) null else f.readText().trim().split("|")
+            } catch (_: Exception) {
+                null
+            }
+            val lastAliveMs = liveParts?.getOrNull(0)?.toLongOrNull() ?: 0L
+            val lastDomMs = liveParts?.getOrNull(1)?.toLongOrNull() ?: 0L
+            val lastPixelMs = liveParts?.getOrNull(2)?.toLongOrNull() ?: 0L
+            val snapStuckMs = try {
+                val f = FileStore.snapStuckFile(ctx, suffix)
+                if (!f.exists()) 0L else f.readText().trim().toLongOrNull() ?: 0L
+            } catch (_: Exception) {
+                0L
+            }
             JSONObject().apply {
                 put("slot", entry.slot)
                 put("name", entry.name)
@@ -1109,6 +1133,10 @@ class ApiServer(private val ctx: Context) {
                 put("process_alive", procs.contains("id.senzspace.debug:$suffix"))
                 put("files", FileStore.count(ctx, suffix))
                 put("thumb_age_sec", thumbAgeSec)
+                put("last_alive_ms", lastAliveMs)
+                put("last_dom_ms", lastDomMs)
+                put("last_pixel_ms", lastPixelMs)
+                put("snapshot_stuck_ms", snapStuckMs)
                 val newest = FileStore.listFiles(ctx, suffix)
                     .maxByOrNull { it.lastModified() }
                 if (newest != null) {

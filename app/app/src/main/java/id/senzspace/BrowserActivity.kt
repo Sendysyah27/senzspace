@@ -212,10 +212,13 @@ abstract class BrowserActivity : AppCompatActivity() {
     private var studioUiLang: String = "en"
     private val studioHandler = Handler(Looper.getMainLooper())
 
-    // v0.1.52 - snapshot halaman (API bridge, GET /page): penghitung
-    // tick live (tiap ~10 tick = ~20 dtk) + pengaman jalan ganda.
-    private var pageSnapTicks: Int = 0
+    // v0.1.52 - snapshot halaman (API bridge, GET /page): pengaman
+    // jalan ganda (OPT-15: latch + nomor urut untuk reset darurat
+    // bila callback tidak pernah menyala). v0.1.68: cadence snapshot
+    // TIDAK LAGI ikut tick live (OPT-17) — timer wall-clock sendiri
+    // tiap 20 dtk (snapshotRunnable di bawah).
     private var pageSnapRunning: Boolean = false
+    private var pageSnapSeq: Int = 0
 
     /** Callback unduhan file-chooser yang sedang menunggu pilihan user.
      *  WAJIB dipanggil tepat sekali (dengan array URI atau null). */
@@ -285,6 +288,14 @@ abstract class BrowserActivity : AppCompatActivity() {
     // lain ditempel langsung di Beranda — jadi "live" di sini = gambar
     // langsung dari WebView yang sedang jalan, bukan WebView-nya sendiri.
     private val liveHandler = Handler(Looper.getMainLooper())
+    // v0.1.68: SNAPSHOT_INTERVAL_MS (OPT-17) — snapshot wall-clock
+    // tiap 20 dtk, lepas dari live interval user (1–10 dtk).
+    // PAGE_SNAP_TIMEOUT_MS (OPT-15) — bila callback
+    // evaluateJavascript snapshot tidak menyala dalam 10 dtk,
+    // latch pageSnapRunning direset paksa (renderer hang) + ditandai
+    // file supaya monitor bisa melihatnya.
+    private val SNAPSHOT_INTERVAL_MS: Long = 20_000L
+    private val PAGE_SNAP_TIMEOUT_MS: Long = 10_000L
     private var liveRunning = false
     private var isForeground = false
     private var lastCaptureMs = 0L
@@ -297,6 +308,15 @@ abstract class BrowserActivity : AppCompatActivity() {
     private var lastPixelMs = 0L
     private var lastStatusWriteMs = 0L
     private var lastThumbBmp: android.graphics.Bitmap? = null
+    // v0.1.68 (OPT-16): hasil snapshot terakhir — Claude sedang
+    // generating atau tidak. Dipakai interval adaptif tangkapan
+    // (bersama lastDomMs): saat streaming, tangkap paling 1×/5 dtk.
+    private var lastSnapGenerating: Boolean = false
+    // v0.1.68 (OPT-16): kompresi JPEG + tulis file thumbnail jalan
+    // di thread ini (satu antrean, berurutan) — draw WebView tetap
+    // di UI thread, itu keharusan API. Tidak pernah menyentuh
+    // lastThumbBmp (itu tetap milik UI thread).
+    private val thumbBg = java.util.concurrent.Executors.newSingleThreadExecutor()
 
     /** Interval tangkap live (Pengaturan → "Refresh Multi Live",
      *  default 2 detik). Dibaca segar tiap tick supaya ganti pengaturan
@@ -318,11 +338,23 @@ abstract class BrowserActivity : AppCompatActivity() {
             lastAliveMs = System.currentTimeMillis()
             writeLiveStatus()
             if (!isForeground) captureLiveThumbnail()
-            // v0.1.52: tiap ~10 tick (~20 dtk) baca keadaan halaman
-            // untuk GET /page — tanpa narik layar HP.
-            pageSnapTicks++
-            if (pageSnapTicks % 10 == 0) capturePageSnapshot()
             liveHandler.postDelayed(this, liveIntervalMs())
+        }
+    }
+
+    // v0.1.68 (OPT-17): snapshot halaman jalan di WALL-CLOCK tiap
+    // 20 dtk (timer terpisah), TIDAK ikut tick live. Dulu snapshot
+    // diambil tiap 10 tick — pada live interval 10 dtk itu berarti
+    // ~100 dtk, nyaris menyentuh ambang basi monitor (120 dtk); satu
+    // tick terlewat (throttling) langsung membuat Space tampak
+    // UNKNOWN. Live interval tetap mengatur frekuensi thumbnail saja.
+    // Ambang basi 120 dtk + field ageSec/stale di API tidak berubah;
+    // isi snapshot juga tidak berubah, hanya seberapa sering ditulis.
+    private val snapshotRunnable = object : Runnable {
+        override fun run() {
+            if (!liveRunning) return
+            capturePageSnapshot()
+            liveHandler.postDelayed(this, SNAPSHOT_INTERVAL_MS)
         }
     }
 
@@ -330,11 +362,13 @@ abstract class BrowserActivity : AppCompatActivity() {
         if (liveRunning) return
         liveRunning = true
         liveHandler.postDelayed(liveRunnable, liveIntervalMs())
+        liveHandler.postDelayed(snapshotRunnable, SNAPSHOT_INTERVAL_MS)
     }
 
     private fun stopLiveCapture() {
         liveRunning = false
         liveHandler.removeCallbacks(liveRunnable)
+        liveHandler.removeCallbacks(snapshotRunnable)
         lastThumbBmp?.recycle()
         lastThumbBmp = null
     }
@@ -362,7 +396,15 @@ abstract class BrowserActivity : AppCompatActivity() {
         // (timer 2 dtk, MutationObserver, onPageFinished).
         if (LiveFreeze.isFrozen(this, dataDirectorySuffix)) return
         val now = System.currentTimeMillis()
-        if (now - lastCaptureMs < 1000) return
+        // v0.1.68 (OPT-16): interval ADAPTIF. Saat Claude streaming
+        // (DOM bermutasi terus — lastDomMs baru — atau snapshot
+        // terakhir bilang generating), tangkapan dibatasi 1×/5 dtk,
+        // bukan ~1×/dtk: kurangi rebutan main thread tepat saat
+        // eksekutor paling butuh thread untuk polling verifikasi.
+        // Saat halaman tenang, batas lama 1 dtk tetap berlaku.
+        val streaming = lastSnapGenerating || (now - lastDomMs < 15_000L)
+        val minIntervalMs = if (streaming) 5_000L else 1_000L
+        if (now - lastCaptureMs < minIntervalMs) return
         lastCaptureMs = now
         try {
             val w = webView.width
@@ -401,17 +443,41 @@ abstract class BrowserActivity : AppCompatActivity() {
                 } catch (e: Exception) {
                     null
                 }
+                // v0.1.68 (OPT-8): file HANYA ditulis bila piksel
+                // berubah — mtime lalu jujur mencerminkan perubahan
+                // piksel terakhir, dan thumb_age_sec di /spaces
+                // menjadi sinyal kesegaran yang benar (dulu file
+                // ditulis ulang tiap capture walau piksel identik,
+                // jadi thumb_age_sec = 0 padahal frame beku berjam-jam).
+                // v0.1.68 (OPT-16): kompresi JPEG + tulis file jalan
+                // di thread background (satu antrean, berurutan) —
+                // draw WebView tetap di UI thread, itu keharusan API.
+                // Bitmap diserahkan ke thread itu dan didaur ulang
+                // di sana sesudah tulis; thread ini tidak pernah
+                // menyentuh lastThumbBmp.
+                val file = FileStore.liveThumbFile(this, dataDirectorySuffix)
+                thumbBg.execute {
+                    try {
+                        file.parentFile?.mkdirs()
+                        FileOutputStream(file).use { out ->
+                            bmp.compress(Bitmap.CompressFormat.JPEG, 80, out)
+                        }
+                        // Bersihkan file PNG lama (format v0.1.8) supaya
+                        // tidak menumpuk.
+                        val oldPng = java.io.File(file.parentFile, "$dataDirectorySuffix.png")
+                        if (oldPng.exists()) oldPng.delete()
+                    } catch (_: Exception) {
+                        // Thumbnail boleh gagal; jangan ganggu browsing.
+                    } finally {
+                        bmp.recycle()
+                    }
+                }
+            } else {
+                // Piksel sama: jangan tulis apa pun — file + mtime
+                // dibiarkan apa adanya (OPT-8). Bitmap dibuang di sini.
+                bmp.recycle()
             }
-            val file = FileStore.liveThumbFile(this, dataDirectorySuffix)
-            file.parentFile?.mkdirs()
-            FileOutputStream(file).use { out ->
-                bmp.compress(Bitmap.CompressFormat.JPEG, 80, out)
-            }
-            bmp.recycle()
             writeLiveStatus()
-            // Bersihkan file PNG lama (format v0.1.8) supaya tidak menumpuk.
-            val oldPng = java.io.File(file.parentFile, "$dataDirectorySuffix.png")
-            if (oldPng.exists()) oldPng.delete()
         } catch (e: Exception) {
             // Thumbnail boleh gagal; jangan ganggu browsing.
         }
@@ -489,7 +555,8 @@ abstract class BrowserActivity : AppCompatActivity() {
 
     /** v0.1.52 - tulis snapshot halaman ke api-page-<suffix>.json
      *  (filesDir internal, dibaca ApiServer untuk GET /page).
-     *  Dijalankan tiap halaman selesai + tiap ~20 dtk dari tick live.
+     *  Dijalankan tiap halaman selesai + tiap 20 dtk wall-clock
+     *  (timer terpisah, OPT-17 — dulu ikut tick live).
      *  Bila limit ketemu, tulis juga file limit SpaceStatus supaya
      *  field `limit` di /spaces jujur (sebelumnya null walau modal
      *  limit tampil — bukti 20 Nov 20:30). TIDAK PERNAH menghapus
@@ -502,6 +569,27 @@ abstract class BrowserActivity : AppCompatActivity() {
         if (!::webView.isInitialized) return
         if (pageSnapRunning) return
         pageSnapRunning = true
+        pageSnapSeq++
+        val seq = pageSnapSeq
+        // v0.1.68 (OPT-15): latch TANPA timeout = snapshot mati
+        // selamanya bila callback evaluateJavascript tidak pernah
+        // menyala (renderer hang) — tanpa log, tanpa pemulihan.
+        // Reset darurat: bila latch masih terkunci sesudah 10 dtk,
+        // bersihkan supaya tangkapan berikut dicoba lagi, dan tandai
+        // file marker supaya monitor bisa melihatnya. Nomor urut
+        // mencegah reset ini membersihkan latch tangkapan BARU yang
+        // dimulai sesudah callback normal menyala.
+        liveHandler.postDelayed({
+            if (pageSnapRunning && pageSnapSeq == seq) {
+                pageSnapRunning = false
+                try {
+                    val f = FileStore.snapStuckFile(this, dataDirectorySuffix)
+                    f.parentFile?.mkdirs()
+                    f.writeText(System.currentTimeMillis().toString())
+                } catch (_: Exception) {
+                }
+            }
+        }, PAGE_SNAP_TIMEOUT_MS)
         try {
             webView.evaluateJavascript(pageSnapshotJs()) { raw ->
                 pageSnapRunning = false
@@ -511,6 +599,9 @@ abstract class BrowserActivity : AppCompatActivity() {
                     if (p.size < 11) return@evaluateJavascript
                     val limited = p[3] == "1"
                     val reset = p[4]
+                    // v0.1.68 (OPT-16): catat hasil snapshot terakhir
+                    // untuk interval adaptif tangkapan thumbnail.
+                    lastSnapGenerating = p[2] == "1"
                     if (limited) {
                         SpaceStatus.writeLimit(this, dataDirectorySuffix, reset)
                     }
