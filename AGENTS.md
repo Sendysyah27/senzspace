@@ -149,6 +149,53 @@ Jangan cuma diagnosa dari kodenya.
   Tanpa ubah perilaku:
   token, izin overlay, channel notifikasi, dan alur watchPickup
   tidak berubah; tidak ada perubahan fungsional lain.
+- API 60 (21 Nov, v0.1.60): EKSEKUTOR YOUTUBE STUDIO. POST /studio
+  {slot, action, file?, title?, description?, schedule?} + GET
+  /studio-status?slot=. Aturan host: HANYA studio.youtube.com —
+  slot diterima bila entry.url Space itu berhost studio.youtube.com
+  (berbasis host, BUKAN nomor slot); host lain 400. Aksi: (a)
+  dashboard — ringkasan channel dari teks halaman (nama channel,
+  subscriber, views 28 hari, watch time 28 hari, 5 video teratas +
+  views; field yang tidak terurai = string kosong, bukan gagal);
+  (b) videos — daftar 10 video pertama halaman Content (judul,
+  URL edit, visibilitas, tanggal, views; baris dari link judul
+  a[href="/video/<id>/edit"], views = angka pertama sesudah
+  tanggal); (c) upload — file HARUS sudah di _inbox (stage via
+  /stage atau /upload), title wajib (maks 100 karakter),
+  description maks 5000, schedule "now" atau "YYYY-MM-DD HH:MM"
+  zona waktu akun Studio. Rantai upload: diagnose (tombol Create +
+  sudah login — halaman sign-in Google = gagal) -> klik Create ->
+  klik "Upload videos" -> chooser sodorkan file _inbox (cabang
+  onShowFileChooser yang sama seperti prompt; dialog kebuka tanpa
+  flag tersaji = gagal) -> isi judul (baca-balik: isi HARUS diawali
+  judul) + deskripsi -> audience "No, it's not made for kids" ->
+  tunggu pemrosesan selesai (maks 30 menit, progres tiap 1 menit)
+  -> Next x3 (Video elements -> Checks -> Visibility; tombol Next
+  nonaktif ditunggu sampai aktif, maks 3 menit untuk Checks) ->
+  Visibility: Public + Publish, atau Schedule + isi tanggal/jam
+  -> Schedule/Publish -> VERIFIKASI video muncul di daftar Content
+  (cocok judul persis) baru status done + videoUrl (klik tombol
+  saja bukan bukti). Status ke api-studio-<suffix>.json (filesDir
+  internal, dibaca /studio-status); watchPickup 60 dtk untuk
+  panggilan awal (pola prompt/TTS); upload jalan async. Helper
+  klik: studioClickThenVerify — klik JS -> tunggu 1200 ms ->
+  verifikasi keadaan berikut (poll 3x1 dtk) -> bila gagal dan
+  tombol satu-kali (Schedule/Publish saja), tap beneran sekali di
+  rect tombol (dispatchTouchEvent, pola v0.1.51) lalu verifikasi
+  lagi; tombol nonaktif dilewati (kliknya tidak berbuat apa-apa).
+  Pencarian tombol dialog-scope (ytcp-uploads-dialog) untuk tombol
+  di dalam dialog upload supaya tidak kena tombol halaman di
+  belakang modal. Selektor dwi-bahasa EN+ID (pola v0.1.55); format
+  tanggal mengikuti bahasa UI akun (EN MM/DD/YYYY, ID DD/MM/YYYY),
+  jam EN dicoba 24-jam dulu lalu 12-jam ("2:30 PM"). Verifikasi
+  langkah Next pakai isi khas langkah tujuan (daftar langkah di
+  sidebar menampilkan semua nama langkah, jadi nama langkah saja
+  bukan bukti). File: BrowserActivity.kt (eksekutor + status),
+  ApiServer.kt (rute /studio + /studio-status + watchPickup),
+  MainActivity.kt (EXTRA_API_STUDIO_*), SpaceLauncher.kt (intent
+  + extra studio), senz.py (studio + studio-status). Tanpa ubah
+  perilaku: eksekutor prompt/TTS, FM picker, BootReceiver,
+  SpaceRegistry, dan rute lain tidak disentuh.
 - API 57 (21 Nov, v0.1.57): AUTOSTART SESUDAH INSTALL/UPDATE.
   BootReceiver kini menangani MY_PACKAGE_REPLACED di samping
   BOOT_COMPLETED — cabang yang sama persis (ApiToken.isEnabled →

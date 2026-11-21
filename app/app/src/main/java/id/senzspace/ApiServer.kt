@@ -625,6 +625,127 @@ class ApiServer(private val ctx: Context) {
                     sendJson(client, 200, JSONObject().put("status", "unreadable"))
                 }
             }
+            method == "POST" && path == "/studio" -> {
+                // v0.1.60: eksekutor YouTube Studio — baca dasbor /
+                // daftar Content / upload + jadwalkan video. HANYA atas
+                // perintah eksplisit per tugas - tidak ada auto-upload.
+                // Aturan host: slot HARUS milik Space yang entry.url-nya
+                // berhost studio.youtube.com (berbasis host, BUKAN
+                // nomor slot). Payload lewat intent extra;
+                // BrowserActivity (proses Space) yang mengeksekusi di
+                // WebView-nya, lalu menulis status ke file
+                // api-studio-<suffix>.json (baca via /studio-status).
+                val req = try {
+                    JSONObject(body)
+                } catch (_: Exception) {
+                    sendJson(client, 400, JSONObject().put("error", "body bukan JSON"))
+                    return
+                }
+                val slot = req.optInt("slot", -1)
+                val entry = SpaceRegistry.load(ctx).firstOrNull { it.slot == slot }
+                if (entry == null) {
+                    sendJson(client, 404, JSONObject().put("error", "no Space on slot $slot"))
+                    return
+                }
+                val ownHost = try {
+                    android.net.Uri.parse(entry.url).host ?: ""
+                } catch (_: Exception) {
+                    ""
+                }
+                if (ownHost != "studio.youtube.com") {
+                    sendJson(client, 400, JSONObject().put("error", "Space ini bukan YouTube Studio"))
+                    return
+                }
+                val action = req.optString("action", "")
+                if (action != "dashboard" && action != "videos" && action != "upload") {
+                    sendJson(client, 400, JSONObject().put("error", "action harus dashboard / videos / upload"))
+                    return
+                }
+                var file: String? = null
+                var title = ""
+                var description = ""
+                var schedule = "now"
+                if (action == "upload") {
+                    file = req.optString("file", "")
+                    if (file.isNullOrBlank()) {
+                        sendJson(client, 400, JSONObject().put("error", "file wajib diisi (nama file di _inbox)"))
+                        return
+                    }
+                    val f = resolveFile("_inbox", file, mustBeDir = false)
+                    if (f == null || !f.isFile) {
+                        sendJson(client, 404, JSONObject().put("error", "file _inbox tidak ketemu: $file"))
+                        return
+                    }
+                    title = req.optString("title", "")
+                    if (title.isBlank() || title.length > 100) {
+                        sendJson(client, 400, JSONObject().put("error", "title wajib diisi (maks 100 karakter)"))
+                        return
+                    }
+                    description = req.optString("description", "")
+                    if (description.length > 5000) {
+                        sendJson(client, 400, JSONObject().put("error", "description terlalu panjang (maks 5000)"))
+                        return
+                    }
+                    schedule = req.optString("schedule", "now").ifBlank { "now" }
+                    if (schedule != "now" && !Regex("^\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}$").matches(schedule)) {
+                        sendJson(client, 400, JSONObject().put("error", "schedule harus 'now' atau 'YYYY-MM-DD HH:MM'"))
+                        return
+                    }
+                }
+                val suffix = SpaceRegistry.suffixForSlot(slot)
+                val queuedAt = writeStudioStatus(suffix, "queued", "menunggu Space tampil")
+                val visible = appHasVisibleWindow()
+                val overlay = Settings.canDrawOverlays(ctx)
+                SpaceLauncher.open(
+                    ctx, entry,
+                    studioAction = action, studioFile = file,
+                    studioTitle = if (action == "upload") title else null,
+                    studioDescription = if (action == "upload") description else null,
+                    studioSchedule = if (action == "upload") schedule else null
+                )
+                // v0.1.42: gagal-jujur 60 detik (lihat /prompt).
+                watchPickup(suffix, "studio", queuedAt, overlay)
+                if (visible || overlay) {
+                    sendJson(client, 202, JSONObject().apply {
+                        put("queued", entry.name)
+                        put("slot", entry.slot)
+                        put("action", action)
+                        put("visible", true)
+                        if (overlay && !visible) put("via", "overlay")
+                        put("status", "queued")
+                    })
+                } else {
+                    postOpenNotification(entry)
+                    sendJson(client, 202, JSONObject().apply {
+                        put("queued", entry.name)
+                        put("slot", entry.slot)
+                        put("action", action)
+                        put("visible", false)
+                        put("needs_tap", true)
+                        put("status", "queued")
+                        put("note", "Tugas sedang berjalan di background — hasilnya dilaporkan setelah selesai (ketuk notifikasi kalau mau lihat)")
+                    })
+                }
+            }
+            method == "GET" && path == "/studio-status" -> {
+                val slot = query["slot"]?.toIntOrNull() ?: -1
+                val entry = SpaceRegistry.load(ctx).firstOrNull { it.slot == slot }
+                if (entry == null) {
+                    sendJson(client, 404, JSONObject().put("error", "no Space on slot $slot"))
+                    return
+                }
+                val suffix = SpaceRegistry.suffixForSlot(slot)
+                val f = java.io.File(ctx.filesDir, "api-studio-$suffix.json")
+                if (!f.exists()) {
+                    sendJson(client, 200, JSONObject().put("status", "none"))
+                    return
+                }
+                try {
+                    sendJson(client, 200, JSONObject(f.readText()))
+                } catch (_: Exception) {
+                    sendJson(client, 200, JSONObject().put("status", "unreadable"))
+                }
+            }
             method == "GET" && path == "/page" -> {
                 // v0.1.52: baca keadaan halaman Space (ditulis
                 // BrowserActivity ke api-page-<suffix>.json tiap
@@ -793,7 +914,35 @@ class ApiServer(private val ctx: Context) {
         return now
     }
 
-    /** v0.1.42 - GAGAL-JUJUR: bila payload prompt/tts tidak diambil
+    /** Tulis status eksekutor Studio ke filesDir internal
+     *  (api-studio-<suffix>.json). File yang SAMA ditulis
+     *  BrowserActivity dari proses Space; main process hanya
+     *  membaca + menulis status awal "queued". Param data (bila
+     *  ada) digabung ke objek status — dipakai hasil terstruktur
+     *  (dasbor / daftar video / info video upload). */
+    private fun writeStudioStatus(suffix: String, status: String, detail: String, data: JSONObject? = null): Long {
+        val now = System.currentTimeMillis()
+        try {
+            val obj = JSONObject().apply {
+                put("status", status)
+                put("detail", detail)
+                put("updated", now)
+                if (data != null) {
+                    val keys = data.keys()
+                    while (keys.hasNext()) {
+                        val k = keys.next()
+                        put(k, data.get(k))
+                    }
+                }
+            }
+            java.io.File(ctx.filesDir, "api-studio-$suffix.json")
+                .writeText(obj.toString())
+        } catch (_: Exception) {
+        }
+        return now
+    }
+
+    /** v0.1.42 - GAGAL-JUJUR: bila payload prompt/tts/studio tidak diambil
      *  Space dalam 60 detik (file status masih "queued" dengan
      *  timestamp yang SAMA seperti saat ApiServer menulisnya —
      *  artinya BrowserActivity tidak pernah jalan / consume* tidak
@@ -809,7 +958,11 @@ class ApiServer(private val ctx: Context) {
             } catch (_: InterruptedException) {
                 return@Thread
             }
-            val fileName = if (kind == "prompt") "api-prompt-$suffix.json" else "api-tts-$suffix.json"
+            val fileName = when (kind) {
+                "prompt" -> "api-prompt-$suffix.json"
+                "tts" -> "api-tts-$suffix.json"
+                else -> "api-studio-$suffix.json"
+            }
             val file = java.io.File(ctx.filesDir, fileName)
             val cur = try {
                 JSONObject(file.readText())

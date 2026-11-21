@@ -65,6 +65,13 @@ class MainActivity : AppCompatActivity() {
         const val EXTRA_API_NAVIGATE_URL = "extra_api_navigate_url"
         // v0.1.40: nama Project Claude tujuan prompt (mis. "SSR CONTENT STUDIO").
         const val EXTRA_API_PROMPT_PROJECT = "extra_api_prompt_project"
+        // v0.1.60: payload eksekutor YouTube Studio - aksi + file _inbox +
+        // judul + deskripsi + jadwal ("YYYY-MM-DD HH:MM" atau "now").
+        const val EXTRA_API_STUDIO_ACTION = "extra_api_studio_action"
+        const val EXTRA_API_STUDIO_FILE = "extra_api_studio_file"
+        const val EXTRA_API_STUDIO_TITLE = "extra_api_studio_title"
+        const val EXTRA_API_STUDIO_DESCRIPTION = "extra_api_studio_description"
+        const val EXTRA_API_STUDIO_SCHEDULE = "extra_api_studio_schedule"
         const val EXTRA_SPACE_NAME = "extra_space_name"
         const val EXTRA_SPACE_COLOR = "extra_space_color"
         private const val PREFS_UI = "senzspace_ui"

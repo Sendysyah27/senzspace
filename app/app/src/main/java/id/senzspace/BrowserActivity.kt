@@ -183,6 +183,24 @@ abstract class BrowserActivity : AppCompatActivity() {
     private var ttsStyleAttempt: Int = 0
     private var ttsDownloadRetried: Boolean = false
     private val ttsHandler = Handler(Looper.getMainLooper())
+    /** v0.1.60 - payload eksekutor YouTube Studio (POST /studio).
+     *  Aksi: dashboard (ringkasan channel), videos (daftar Content),
+     *  upload (file _inbox + judul + deskripsi + jadwal). Aturan host:
+     *  hanya studio.youtube.com (dicek ApiServer + maybeRunApiStudio).
+     *  pendingStudioFile = file _inbox yang disodorkan ke chooser
+     *  saat JS mengklik "Upload videos"; studioChooserServed =
+     *  chooser sudah dipanggil (dipakai tunggu upload). */
+    private var pendingStudioAction: String? = null
+    private var pendingStudioFile: java.io.File? = null
+    private var pendingStudioTitle: String? = null
+    private var pendingStudioDescription: String? = null
+    private var pendingStudioSchedule: String? = null
+    private var studioRunning: Boolean = false
+    private var studioChooserServed: Boolean = false
+    private var studioVideoId: String? = null
+    private var studioChannelId: String? = null
+    private var studioUiLang: String = "en"
+    private val studioHandler = Handler(Looper.getMainLooper())
 
     // v0.1.52 - snapshot halaman (API bridge, GET /page): penghitung
     // tick live (tiap ~10 tick = ~20 dtk) + pengaman jalan ganda.
@@ -903,6 +921,8 @@ abstract class BrowserActivity : AppCompatActivity() {
                     maybeRunApiPrompt()
                     // v0.1.39: sama untuk TTS API.
                     maybeRunApiTts()
+                    // v0.1.60: sama untuk eksekutor Studio.
+                    maybeRunApiStudio()
                     // v0.1.52: halaman selesai - baca keadaan halaman
                     // untuk GET /page.
                     capturePageSnapshot()
@@ -1059,6 +1079,30 @@ abstract class BrowserActivity : AppCompatActivity() {
                         }
                         return true
                     }
+                    // v0.1.60: eksekutor Studio sedang mengunggah video -
+                    // sodorkan file _inbox yang sama lewat FileProvider
+                    // (pola prompt API di atas). Sesudah disodorkan,
+                    // chooser berikutnya kembali ke FM (field dikosongkan).
+                    if (pendingStudioFile != null) {
+                        val staged = pendingStudioFile
+                        pendingStudioFile = null
+                        try {
+                            val uri = androidx.core.content.FileProvider
+                                .getUriForFile(
+                                    this@BrowserActivity,
+                                    "${packageName}.fileprovider", staged!!
+                                )
+                            grantUriPermission(
+                                packageName, uri,
+                                Intent.FLAG_GRANT_READ_URI_PERMISSION
+                            )
+                            studioChooserServed = true
+                            filePathCallback.onReceiveValue(arrayOf(uri))
+                        } catch (e: Exception) {
+                            filePathCallback.onReceiveValue(null)
+                        }
+                        return true
+                    }
                     // Batalkan chooser sebelumnya bila ada (callback lama
                     // tidak boleh digantung — halaman menunggu jawabannya).
                     fileChooserCallback?.onReceiveValue(null)
@@ -1125,6 +1169,8 @@ abstract class BrowserActivity : AppCompatActivity() {
         consumeApiPrompt(intent)
         // v0.1.39: payload TTS API dari intent (bila ada).
         consumeApiTts(intent)
+        // v0.1.60: payload eksekutor Studio dari intent (bila ada).
+        consumeApiStudio(intent)
         // v0.1.52: URL navigasi API dari intent (bila ada).
         consumeApiNavigate(intent)
         // Guard anti-kill: service foreground di proses Space ini supaya
@@ -2232,6 +2278,814 @@ abstract class BrowserActivity : AppCompatActivity() {
     }
     // ================= AKHIR TTS API =================
 
+
+    // ================= STUDIO API (v0.1.60) =================
+    // Eksekutor YouTube Studio di WebView Space ini (POST /studio).
+    // Alur sama seperti PROMPT API: consumeApiStudio (intent extra)
+    // -> maybeRunApiStudio (dipanggil tiap onPageFinished) -> rantai
+    // langkah per aksi -> status ke api-studio-<suffix>.json (filesDir
+    // internal, dibaca ApiServer untuk /studio-status). Aturan host:
+    // hanya studio.youtube.com (dicek ApiServer + maybeRunApiStudio);
+    // Space yang belum login (halaman sign-in Google) gagal jujur.
+    // Aksi: dashboard (ringkasan channel), videos (daftar Content),
+    // upload (file _inbox + judul + deskripsi + jadwal "now" atau
+    // "YYYY-MM-DD HH:MM" zona waktu akun Studio). Upload: diagnose
+    // -> Create -> Upload videos -> chooser sodorkan file _inbox
+    // (cabang onShowFileChooser yang sama seperti prompt) -> isi judul
+    // + deskripsi -> audience -> tunggu pemrosesan -> Next x3 ->
+    // Visibility (Schedule/Public) -> Schedule/Publish -> VERIFIKASI
+    // video muncul di daftar Content (cocok judul persis) baru status
+    // done + videoUrl. Klik tombol saja BUKAN bukti (pelajaran "sent"
+    // palsu prompt API). Selektor dwi-bahasa EN+ID (pola v0.1.55).
+    // HANYA atas perintah eksplisit per tugas (POST /studio) - tidak
+    // ada auto-upload. JS di bawah TIDAK PERNAH diuji live dari VM —
+    // tiap langkah verifikasi keadaan berikut + gagal jujur dengan
+    // nama langkah + dump kontrol bila kontrol tidak ketemu.
+
+    private fun studioStatusFile(): java.io.File =
+        java.io.File(filesDir, "api-studio-$dataDirectorySuffix.json")
+
+    private fun writeStudioStatus(status: String, detail: String, data: org.json.JSONObject? = null) {
+        try {
+            val obj = org.json.JSONObject().apply {
+                put("status", status)
+                put("detail", detail)
+                put("updated", System.currentTimeMillis())
+                put("action", pendingStudioAction ?: "")
+                if (data != null) {
+                    val keys = data.keys()
+                    while (keys.hasNext()) {
+                        val k = keys.next()
+                        put(k, data.get(k))
+                    }
+                }
+            }
+            studioStatusFile().writeText(obj.toString())
+        } catch (_: Exception) {
+        }
+    }
+
+    private fun failStudio(detail: String) {
+        studioRunning = false
+        pendingStudioAction = null
+        pendingStudioFile = null
+        pendingStudioTitle = null
+        pendingStudioDescription = null
+        pendingStudioSchedule = null
+        writeStudioStatus("failed", detail)
+    }
+
+    private fun consumeApiStudio(intent: Intent) {
+        val action = intent.getStringExtra(MainActivity.EXTRA_API_STUDIO_ACTION)
+            ?: return
+        intent.removeExtra(MainActivity.EXTRA_API_STUDIO_ACTION)
+        val fileName = intent.getStringExtra(MainActivity.EXTRA_API_STUDIO_FILE)
+        intent.removeExtra(MainActivity.EXTRA_API_STUDIO_FILE)
+        val title = intent.getStringExtra(MainActivity.EXTRA_API_STUDIO_TITLE)
+        intent.removeExtra(MainActivity.EXTRA_API_STUDIO_TITLE)
+        val description = intent.getStringExtra(MainActivity.EXTRA_API_STUDIO_DESCRIPTION)
+        intent.removeExtra(MainActivity.EXTRA_API_STUDIO_DESCRIPTION)
+        val schedule = intent.getStringExtra(MainActivity.EXTRA_API_STUDIO_SCHEDULE)
+        intent.removeExtra(MainActivity.EXTRA_API_STUDIO_SCHEDULE)
+        if (action != "dashboard" && action != "videos" && action != "upload") {
+            writeStudioStatus("failed", "aksi tidak dikenal: $action")
+            return
+        }
+        // upload: file harus masih ada di _inbox (validasi ulang —
+        // pola v0.1.56); judul wajib (maks 100 karakter, dicek ApiServer).
+        var file: java.io.File? = null
+        if (action == "upload") {
+            if (fileName.isNullOrBlank()) {
+                writeStudioStatus("failed", "upload butuh nama file di _inbox")
+                return
+            }
+            val f = java.io.File(FileStore.folderDir(this, "_inbox"), fileName)
+            if (!f.isFile) {
+                writeStudioStatus("failed", "file upload tidak ketemu di _inbox: $fileName")
+                return
+            }
+            file = f
+            if (title.isNullOrBlank()) {
+                writeStudioStatus("failed", "upload butuh judul video")
+                return
+            }
+        }
+        pendingStudioAction = action
+        pendingStudioFile = file
+        pendingStudioTitle = title
+        pendingStudioDescription = description
+        pendingStudioSchedule = schedule ?: "now"
+        studioRunning = false
+        studioChooserServed = false
+        studioVideoId = null
+        studioChannelId = null
+        writeStudioStatus("queued", "payload Studio diterima Space $dataDirectorySuffix")
+        // dashboard/videos: mulai dari dasbor Studio; upload: pakai
+        // halaman Studio yang sedang dibuka (tombol Create ada di
+        // semua halaman Studio).
+        if (action != "upload") {
+            val home = "https://studio.youtube.com/"
+            if (::webView.isInitialized && currentUrl != home) webView.loadUrl(home)
+            else maybeRunApiStudio()
+        } else {
+            maybeRunApiStudio()
+        }
+    }
+
+    private fun maybeRunApiStudio() {
+        val action = pendingStudioAction ?: return
+        if (studioRunning) return
+        if (!::webView.isInitialized) return
+        val host = try {
+            android.net.Uri.parse(currentUrl).host
+        } catch (_: Exception) {
+            null
+        }
+        if (host == null) return
+        if (host != "studio.youtube.com") {
+            failStudio("bukan halaman YouTube Studio: $currentUrl (mungkin belum login di Space ini)")
+            return
+        }
+        studioRunning = true
+        when (action) {
+            "dashboard" -> {
+                writeStudioStatus("running", "membaca dasbor channel")
+                runStudioDashboard(5)
+            }
+            "videos" -> {
+                writeStudioStatus("running", "membuka halaman Content")
+                runStudioGoContent({ runStudioVideos(5) })
+            }
+            "upload" -> {
+                writeStudioStatus("running", "mencari tombol Create di Studio")
+                runStudioUploadDiagnose(5)
+            }
+        }
+    }
+
+    /** Tap beneran di koordinat WebView (pola ttsTapAt v0.1.48):
+     *  dispatchTouchEvent DOWN + UP (120 ms). Dipakai fallback klik
+     *  tombol Schedule/Publish bila JS .click() diam — hanya di sana
+     *  (tombol satu-kali; klik ganda menu/Next bisa menutup menu atau
+     *  melompati langkah). */
+    private fun studioTapAt(x: Float, y: Float) {
+        val now = android.os.SystemClock.uptimeMillis()
+        val down = android.view.MotionEvent.obtain(now, now, android.view.MotionEvent.ACTION_DOWN, x, y, 0)
+        webView.dispatchTouchEvent(down)
+        down.recycle()
+        studioHandler.postDelayed({
+            val up = android.view.MotionEvent.obtain(now, android.os.SystemClock.uptimeMillis(), android.view.MotionEvent.ACTION_UP, x, y, 0)
+            webView.dispatchTouchEvent(up)
+            up.recycle()
+        }, 120)
+    }
+
+    /** JS: cari tombol terlihat dari daftar label (aria-label persis
+     *  ATAU teks persis, tanpa peduli huruf besar-kecil — pola tiga
+     *  lapis v0.1.46). Mode "click": klik dan balik "1|label"; mode
+     *  "rect": balik "x|y|label" titik tengah (CSS px). Tombol yang
+     *  nonaktif dilewati (kliknya tidak berbuat apa-apa). Tidak
+     *  ketemu: "0|". dialogScope=true mencari di dalam dialog upload
+     *  (ytcp-uploads-dialog) supaya tidak kena tombol halaman di
+     *  belakang modal. */
+    private fun studioButtonJs(mode: String, labelsJson: String, dialogScope: Boolean): String {
+        val root = if (dialogScope) "var root=document.querySelector('ytcp-uploads-dialog')||document;" else "var root=document;"
+        return """(function(mode,labels){$root var bs=[...root.querySelectorAll('button,a,[role="button"],[role="menuitem"],[role="option"],[role="link"],li')].filter(function(b){return b.offsetParent!==null;});for(var k=0;k<labels.length;k++){for(var i=0;i<bs.length;i++){if(bs[i].disabled)continue;var l=(bs[i].getAttribute('aria-label')||'').trim().toLowerCase();var tx=(bs[i].textContent||'').trim().toLowerCase();if(l===labels[k]||tx===labels[k]){if(mode==='rect'){var r=bs[i].getBoundingClientRect();return (r.left+r.width/2)+'|'+(r.top+r.height/2)+'|'+labels[k];}bs[i].click();return '1|'+labels[k];}}}return '0|';})('$mode',$labelsJson)"""
+    }
+
+    /** JS: klik radio dari daftar label (teks baris mengandung label).
+     *  Cari [role=radio]/input[type=radio]/tp-yt-paper-radio-button
+     *  dulu, lalu baris label yang mengandung radio di dalamnya.
+     *  Balik "1|label" bila radio kini tercentang, "clicked|label"
+     *  bila diklik tapi status tidak bisa dibaca, "0|" bila tidak
+     *  ketemu. Dipakai audience + visibilitas (dialog upload). */
+    private fun studioRadioJs(labelsJson: String, dialogScope: Boolean): String {
+        val root = if (dialogScope) "var root=document.querySelector('ytcp-uploads-dialog')||document;" else "var root=document;"
+        return """(function(labels){$root var els=[...root.querySelectorAll('[role="radio"],input[type="radio"],tp-yt-paper-radio-button')];for(var k=0;k<labels.length;k++){for(var i=0;i<els.length;i++){var t=(els[i].textContent||'').toLowerCase();var al=(els[i].getAttribute('aria-label')||'').toLowerCase();if(t.indexOf(labels[k])>=0||al.indexOf(labels[k])>=0){els[i].click();var on=els[i].getAttribute('aria-checked')==='true'||els[i].checked===true;return (on?'1|':'clicked|')+labels[k];}}}var rows=[...root.querySelectorAll('label,div,span')].filter(function(e){return e.offsetParent!==null;});for(var k2=0;k2<labels.length;k2++){for(var j=0;j<rows.length;j++){var tx=(rows[j].textContent||'').trim().toLowerCase();if(tx===labels[k2]||tx.indexOf(labels[k2])===0){var r=rows[j].querySelector('[role="radio"],input[type="radio"],tp-yt-paper-radio-button');if(r){r.click();var on2=r.getAttribute('aria-checked')==='true'||r.checked===true;return (on2?'1|':'clicked|')+labels[k2];}rows[j].click();return 'clicked|'+labels[k2];}}}return '0|';})($labelsJson)"""
+    }
+
+    /** JS: isi kolom Studio dari peran (title/description/date/time).
+     *  Cari dari aria-label/placeholder (EN+ID), lalu isi: focus +
+     *  select-all + insertText, fallback setter + event input/change
+     *  (pola ttsFillJs). Balik "len|120 karakter pertama isi"
+     *  (baca-balik untuk verifikasi). */
+    private fun studioFillJs(role: String, text: String): String {
+        val quoted = org.json.JSONObject.quote(text)
+        return """(function(role,text){var fields=[...document.querySelectorAll('textarea,[contenteditable],input,[role="textbox"]')].filter(function(t){return t.offsetParent!==null;});function sig(t){return ((t.getAttribute('aria-label')||'')+' '+(t.getAttribute('placeholder')||'')+' '+(t.getAttribute('name')||'')).toLowerCase();}var pick=null;for(var i=0;i<fields.length;i++){var s=sig(fields[i]);if(role==='title'&&(s.indexOf('title')>=0||s.indexOf('judul')>=0)){pick=fields[i];break;}if(role==='description'&&(s.indexOf('description')>=0||s.indexOf('deskripsi')>=0||s.indexOf('tell viewers')>=0||s.indexOf('ceritakan tentang video')>=0)){pick=fields[i];break;}if(role==='date'&&(s.indexOf('date')>=0||s.indexOf('tanggal')>=0)){pick=fields[i];break;}if(role==='time'&&(s.indexOf('time')>=0||s.indexOf('waktu')>=0)){pick=fields[i];break;}}if(!pick)return '0|';pick.focus();try{pick.setSelectionRange(0,pick.value.length);}catch(e){}try{document.execCommand('selectAll',false,null);}catch(e2){}var ok=false;try{ok=document.execCommand('insertText',false,text);}catch(e3){}var cur=pick.value||pick.textContent||'';if(!ok||cur.length===0||cur.indexOf(text.slice(0,20))<0){if(pick.tagName==='TEXTAREA'){var st=Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype,'value').set;st.call(pick,text);}else if(pick.tagName==='INPUT'){var st2=Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype,'value').set;st2.call(pick,text);}else{pick.textContent=text;}try{pick.dispatchEvent(new InputEvent('input',{bubbles:true,cancelable:true,inputType:'insertText',data:text}));}catch(e4){}pick.dispatchEvent(new Event('input',{bubbles:true}));try{pick.dispatchEvent(new Event('change',{bubbles:true}));}catch(e5){}}var v=pick.value||pick.textContent||'';return String(v.length)+'|'+v.slice(0,120);})('$role',$quoted)"""
+    }
+
+    /** JS: dump kontrol terlihat (maks 15 tombol + 8 kolom isian)
+     *  untuk detail gagal — pola runTtsDumpButtons/runTtsDumpStyle. */
+    private fun studioDumpJs(): String {
+        return """(function(){var bs=[...document.querySelectorAll('button')].filter(function(b){return b.offsetParent!==null;}).slice(0,15);var bl=bs.map(function(b){return (b.getAttribute('aria-label')||(b.textContent||'').trim()).replace(/[|,]/g,' ').slice(0,40);});var fs=[...document.querySelectorAll('textarea,[contenteditable],input,[role="textbox"]')].filter(function(t){return t.offsetParent!==null;}).slice(0,8);var fl=fs.map(function(t){return (t.tagName+'|'+(t.getAttribute('aria-label')||t.getAttribute('placeholder')||'')).replace(/[|,]/g,' ').slice(0,50);});return 'tombol: '+bl.join(',')+' || kolom: '+fl.join(',');})()"""
+    }
+
+    /** Poll verifikasi keadaan (JS balik "1") — maks triesLeft kali,
+     *  1 detik sekali. Dipakai sesudah tiap klik (menu/dialog butuh
+     *  waktu animasi; jangan tembak sekali lalu gagal). */
+    private fun studioVerifyLoop(verifyJs: String, triesLeft: Int, onOk: () -> Unit, onFail: () -> Unit) {
+        webView.evaluateJavascript(verifyJs) { raw ->
+            val ok = (raw?.trim()?.removeSurrounding("\"") ?: "") == "1"
+            if (ok) {
+                onOk()
+            } else if (triesLeft > 1) {
+                studioHandler.postDelayed({ studioVerifyLoop(verifyJs, triesLeft - 1, onOk, onFail) }, 1000)
+            } else {
+                onFail()
+            }
+        }
+    }
+
+    /** Klik tombol dari daftar label lalu verifikasi keadaan berikut.
+     *  Urutan: klik JS -> tunggu 1200 ms -> verifikasi (3x, 1 dtk)
+     *  -> bila gagal dan allowTap: tap beneran sekali di rect tombol
+     *  lalu verifikasi lagi (2x); bila tombol sudah tidak ada
+     *  (aksi berhasil tapi verifikasi lambat), verifikasi sekali lagi
+     *  sebelum gagal. onFail membawa alasan: "noclick" (tombol tidak
+     *  ketemu), "noverify" (keadaan tidak berubah). */
+    private fun studioClickThenVerify(
+        labelsJson: String,
+        verifyJs: String,
+        dialogScope: Boolean,
+        allowTap: Boolean,
+        onOk: () -> Unit,
+        onFail: (String) -> Unit
+    ) {
+        webView.evaluateJavascript(studioButtonJs("click", labelsJson, dialogScope)) { raw ->
+            val clicked = (raw?.trim()?.removeSurrounding("\"") ?: "").split("|").getOrNull(0) == "1"
+            if (!clicked) {
+                onFail("noclick")
+                return@evaluateJavascript
+            }
+            studioHandler.postDelayed({
+                studioVerifyLoop(verifyJs, 3, onOk, {
+                    if (!allowTap) {
+                        onFail("noverify")
+                    } else {
+                        webView.evaluateJavascript(studioButtonJs("rect", labelsJson, dialogScope)) { raw3 ->
+                            val rp = (raw3?.trim()?.removeSurrounding("\"") ?: "").split("|")
+                            val rx = rp.getOrNull(0)?.toFloatOrNull()
+                            val ry = rp.getOrNull(1)?.toFloatOrNull()
+                            if (rx == null || ry == null) {
+                                // Tombol hilang — mungkin aksi berhasil
+                                // tapi verifikasi lambat: verifikasi lagi.
+                                studioVerifyLoop(verifyJs, 2, onOk, { onFail("noverify") })
+                                return@evaluateJavascript
+                            }
+                            val scale = webView.scale
+                            studioTapAt(rx * scale, ry * scale)
+                            studioHandler.postDelayed({
+                                studioVerifyLoop(verifyJs, 2, onOk, { onFail("noverify") })
+                            }, 1200)
+                        }
+                    }
+                })
+            }, 1200)
+        }
+    }
+
+    /** JS dasbor: urai ringkasan channel dari innerText. Bentuk teks
+     *  sudah dibuktikan snapshot live: "Your channel DInfokan",
+     *  "Current subscribers 68", "Summary Last 28 days Views 66.6K —
+     *  Watch time (hours) 324.2", seksi "Top content" (judul + views
+     *  per baris). Field yang tidak terurai = "" (bukan gagal) — teks
+     *  mentah tetap ada di snapshot /page. Balik '§'-delimited
+     *  (pola pageSnapshotJs): channel§subs§views28§watch28§top5
+     *  (top5 = judul^views, dipisah '~'). */
+    private fun studioDashboardJs(): String {
+        return """(function(){try{var txt=document.body?document.body.innerText:'';function clean(s){return (s||'').replace(/["\\§|^~]/g,' ').replace(/\s+/g,' ').trim();}var channel='',subs='',views='',watch='',top='';var m=txt.match(/Your channel\s*\n([^\n]+)/)||txt.match(/Channel Anda\s*\n([^\n]+)/);if(!m){var m2=txt.match(/Your channel\s+([^\\n]+?)(?:\s+Dashboard|\s+Dasbor|\s+Content|\s+Konten|$)/)||txt.match(/Channel Anda\s+([^\\n]+?)(?:\s+Dashboard|\s+Dasbor|\s+Content|\s+Konten|$)/);if(m2)channel=clean(m2[1]);}else channel=clean(m[1]);m=txt.match(/Current subscribers\s*\n?\s*([\d.,]+)/)||txt.match(/Subscriber saat ini\s*\n?\s*([\d.,]+)/);if(m)subs=m[1];m=txt.match(/Views\s+([\d.,]+[KM]?)\s*[—–-]\s*Watch time \(hours\)\s+([\d.,]+)/)||txt.match(/Penayangan\s+([\d.,]+[KM]?)\s*[—–-]\s*Waktu tonton \(jam\)\s+([\d.,]+)/);if(m){views=m[1];watch=m[2];}var i1=txt.indexOf('Top content');if(i1<0)i1=txt.indexOf('Konten teratas');var ends=['View realtime data','Lihat data realtime','Recent subscribers','Subscriber terbaru','Create your first post','Buat postingan pertama'];var i2=-1;for(var e=0;e<ends.length;e++){var j=txt.indexOf(ends[e],i1);if(j>=0&&(i2<0||j<i2))i2=j;}var sec=i1>=0?txt.substring(i1,i2>=0?i2:txt.length):'';var lines=sec.split('\n').map(function(s){return clean(s);}).filter(function(s){return s.length>0;});var items=[];var cur='';for(var i=0;i<lines.length;i++){var L=lines[i];if(/^(Top content|Konten teratas|Last 48 hours|48 jam terakhir|Views|Penayangan)$/.test(L))continue;var mm=L.match(/^(.*?)\s+([\d.,]+\s*[KM]?)$/);if(mm&&mm[1].length>0&&!/^(Views|Penayangan|Ranking|First|Go to|Lihat)/.test(mm[1])){items.push(clean(mm[1])+'^'+mm[2].trim());cur='';if(items.length>=5)break;}else if(/^[\d.,]+\s*[KM]?$/.test(L)){if(cur){items.push(cur+'^'+L);cur='';if(items.length>=5)break;}}else{cur=cur?cur+' '+L:L;}}top=items.join('~');return [channel,subs,views,watch,top].join('§');}catch(e){return '§§§§';}})()"""
+    }
+
+    /** Aksi dashboard: baca ringkasan channel dari dasbor Studio.
+     *  Field kosong = tidak terurai (bukan gagal); jumlah video
+     *  teratas dilaporkan jujur di detail. */
+    private fun runStudioDashboard(triesLeft: Int) {
+        if (pendingStudioAction == null) return
+        webView.evaluateJavascript(studioDashboardJs()) { raw ->
+            val clean = raw?.trim()?.removeSurrounding("\"") ?: ""
+            val parts = clean.split("§")
+            if (parts.size < 5) {
+                if (triesLeft > 1) {
+                    studioHandler.postDelayed({ runStudioDashboard(triesLeft - 1) }, 2000)
+                } else {
+                    failStudio("dasbor Studio tidak terbaca")
+                }
+                return@evaluateJavascript
+            }
+            val topArr = org.json.JSONArray()
+            val topRaw = parts[4]
+            if (topRaw.isNotBlank()) {
+                for (row in topRaw.split("~")) {
+                    val p = row.split("^")
+                    if (p.size == 2) {
+                        topArr.put(org.json.JSONObject().apply {
+                            put("title", p[0])
+                            put("views", p[1])
+                        })
+                    }
+                }
+            }
+            val data = org.json.JSONObject().apply {
+                put("channel", parts[0])
+                put("subscribers", parts[1])
+                put("views28d", parts[2])
+                put("watchHours28d", parts[3])
+                put("topVideos", topArr)
+            }
+            val n = topArr.length()
+            studioRunning = false
+            pendingStudioAction = null
+            writeStudioStatus("done", "dasbor dibaca (channel: ${parts[0].ifBlank { "?" }}, subscriber: ${parts[1].ifBlank { "?" }}, $n video teratas)", data)
+        }
+    }
+
+    /** Buka halaman Content (SPA — klik nav, bukan loadUrl penuh).
+     *  Jalur pertama: klik link a[href*="/videos"] (paling andal —
+     *  nav Studio pakai anchor). Jalur kedua: label nav "Content" /
+     *  "Konten". Verifikasi: pathname mengandung /videos. */
+    private fun runStudioGoContent(onOk: () -> Unit) {
+        if (pendingStudioAction == null) return
+        if (currentUrl.contains("/videos")) {
+            onOk()
+            return
+        }
+        val hrefJs = """(function(){var as=[...document.querySelectorAll('a[href*="/videos"]')].filter(function(a){return a.offsetParent!==null;});if(as.length>0){as[0].click();return '1';}return '0';})()"""
+        val verifyJs = """(function(){return (location.pathname.indexOf('/videos')>=0)?'1':'0';})()"""
+        webView.evaluateJavascript(hrefJs) { raw ->
+            val ok = (raw?.trim()?.removeSurrounding("\"") ?: "") == "1"
+            if (ok) {
+                studioVerifyLoop(verifyJs, 5, onOk, {
+                    runStudioGoContentByLabel(onOk)
+                })
+            } else {
+                runStudioGoContentByLabel(onOk)
+            }
+        }
+    }
+
+    private fun runStudioGoContentByLabel(onOk: () -> Unit) {
+        val labels = org.json.JSONArray(listOf("content", "konten")).toString()
+        val verifyJs = """(function(){return (location.pathname.indexOf('/videos')>=0)?'1':'0';})()"""
+        studioClickThenVerify(labels, verifyJs, false, false, onOk, {
+            failStudio("menu Content tidak ketemu di dasbor Studio")
+        })
+    }
+
+    /** JS daftar Content: baris video dari link judul
+     *  a[href="/video/<id>/edit"] (maks 10, unik per id). Per baris:
+     *  judul^url-edit^visibilitas^tanggal^views (dipisah '~').
+     *  Visibilitas dari teks baris (Scheduled/Public/Private/
+     *  Unlisted + padanan ID). Tanggal dari pola "Nov 22, 2026"
+     *  atau "22 Nov 2026". Views = angka pertama sesudah tanggal
+     *  (kolom urutan: visibilitas, tanggal, views, komentar, suka). */
+    private fun studioVideosJs(): String {
+        return """(function(){try{var rows=[];var seen={};var links=[...document.querySelectorAll('a[href*="/video/"]')].filter(function(a){return a.offsetParent!==null;});for(var i=0;i<links.length&&rows.length<10;i++){var h=links[i].getAttribute('href')||'';if(h.indexOf('/edit')<0)continue;var mm=h.match(/\/video\/([A-Za-z0-9_-]{11})/);if(!mm)continue;if(seen[mm[1]])continue;seen[mm[1]]=1;var t=(links[i].textContent||'').replace(/["\\§|^~]/g,' ').replace(/\s+/g,' ').trim();if(!t||t.length<2)continue;var row=links[i];for(var d=0;d<5&&row.parentElement;d++){row=row.parentElement;if((row.innerText||'').length>80)break;}var rt=(row.innerText||'').replace(/\s+/g,' ');var vis='';if(/Scheduled|Dijadwalkan/i.test(rt))vis='scheduled';else if(/Public|Publik/i.test(rt))vis='public';else if(/Private|Pribadi/i.test(rt))vis='private';else if(/Unlisted|Tidak publik/i.test(rt))vis='unlisted';var dm=rt.match(/(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{1,2},\s+\d{4}/)||rt.match(/(\d{1,2})\s+(Jan|Feb|Mar|Apr|Mei|Jun|Jul|Agu|Sep|Okt|Nov|Des)\s+(\d{4})/);var date=dm?dm[0]:'';var after=dm?rt.substring(rt.indexOf(dm[0])+dm[0].length):rt;var vm=after.match(/([\d.,]+[KM]?)/);var views=vm?vm[1].trim():'';rows.push(t+'^'+location.origin+'/video/'+mm[1]+'/edit'+'^'+vis+'^'+date+'^'+views);}return rows.join('~');}catch(e){return '';}})()"""
+    }
+
+    /** Aksi videos: daftar 10 video pertama halaman Content. */
+    private fun runStudioVideos(triesLeft: Int) {
+        if (pendingStudioAction == null) return
+        webView.evaluateJavascript(studioVideosJs()) { raw ->
+            val clean = raw?.trim()?.removeSurrounding("\"") ?: ""
+            if (clean.isBlank()) {
+                if (triesLeft > 1) {
+                    studioHandler.postDelayed({ runStudioVideos(triesLeft - 1) }, 2000)
+                } else {
+                    failStudio("daftar video Content kosong/tidak terbaca")
+                }
+                return@evaluateJavascript
+            }
+            val arr = org.json.JSONArray()
+            for (row in clean.split("~")) {
+                val p = row.split("^")
+                if (p.size >= 5) {
+                    arr.put(org.json.JSONObject().apply {
+                        put("title", p[0])
+                        put("url", p[1])
+                        put("visibility", p[2])
+                        put("date", p[3])
+                        put("views", p[4])
+                    })
+                }
+            }
+            val data = org.json.JSONObject().apply { put("videos", arr) }
+            val n = arr.length()
+            studioRunning = false
+            pendingStudioAction = null
+            writeStudioStatus("done", "daftar Content dibaca: $n video", data)
+        }
+    }
+
+    /** Langkah 1 upload: diagnose halaman Studio. Gagal jujur bila
+     *  belum login (halaman sign-in Google) atau tombol Create tidak
+     *  ketemu sesudah 5x2 dtk (bawa dump kontrol). Sambil jalan,
+     *  tangkap channel id dari URL dasbor (dipakai URL Content saat
+     *  verifikasi akhir) + bahasa UI halaman (format tanggal). */
+    private fun runStudioUploadDiagnose(triesLeft: Int) {
+        if (pendingStudioAction == null) return
+        val js = """(function(){var bs=[...document.querySelectorAll('button')].filter(function(b){return b.offsetParent!==null;});var create=0;for(var i=0;i<bs.length;i++){var l=(bs[i].getAttribute('aria-label')||'').trim().toLowerCase();var tx=(bs[i].textContent||'').trim().toLowerCase();if(l==='create'||l==='buat'||tx==='create'||tx==='buat'){create=1;break;}}var t=document.body?document.body.innerText||'':'';var signedin=t.indexOf('Sign in to continue to YouTube')<0&&t.indexOf('Login untuk melanjutkan ke YouTube')<0;var id=(t.indexOf('Dasbor channel')>=0||t.indexOf('Konten channel')>=0||t.indexOf('Jadwalkan')>=0)?'id':'en';return create+'|'+(signedin?'1':'0')+'|'+id;})()"""
+        webView.evaluateJavascript(js) { raw ->
+            val parts = (raw?.trim()?.removeSurrounding("\"") ?: "").split("|")
+            val create = parts.getOrNull(0) == "1"
+            val signedIn = parts.getOrNull(1) == "1"
+            studioUiLang = parts.getOrNull(2) ?: "en"
+            if (!signedIn) {
+                failStudio("belum login di Space ini — masih di halaman sign-in Google")
+                return@evaluateJavascript
+            }
+            if (!create) {
+                if (triesLeft > 1) {
+                    studioHandler.postDelayed({ runStudioUploadDiagnose(triesLeft - 1) }, 2000)
+                } else {
+                    webView.evaluateJavascript(studioDumpJs()) { rawDump ->
+                        val dump = (rawDump?.trim()?.removeSurrounding("\"") ?: "").take(300)
+                        failStudio("tombol Create tidak ketemu di Studio ($dump)")
+                    }
+                }
+                return@evaluateJavascript
+            }
+            val m = Regex("/channel/(UC[A-Za-z0-9_-]+)").find(currentUrl)
+            if (m != null) studioChannelId = m.groupValues[1]
+            writeStudioStatus("running", "tombol Create ketemu — membuka menu upload")
+            val labels = org.json.JSONArray(listOf("create", "buat")).toString()
+            val verifyJs = """(function(){var t=document.body?document.body.innerText||'':'';return (t.indexOf('Upload videos')>=0||t.indexOf('Upload video')>=0||t.indexOf('Unggah video')>=0)?'1':'0';})()"""
+            studioClickThenVerify(labels, verifyJs, false, false, { runStudioClickUploadMenu() }, {
+                failStudio("menu Create tidak kebuka sesudah klik tombol Create")
+            })
+        }
+    }
+
+    /** Langkah 2 upload: klik "Upload videos" di menu Create. Tanpa
+     *  tap ulang (klik ganda membuka chooser 2x — file _inbox sudah
+     *  terpakai, chooser kedua jatuh ke pemilih file di layar).
+     *  Verifikasi: menu ketutup (item "Upload videos" hilang). */
+    private fun runStudioClickUploadMenu() {
+        if (pendingStudioAction == null) return
+        val labels = org.json.JSONArray(listOf("upload videos", "upload video", "unggah video")).toString()
+        val verifyJs = """(function(){var els=[...document.querySelectorAll('button,a,[role="menuitem"]')].filter(function(e){return e.offsetParent!==null;});for(var i=0;i<els.length;i++){var t=(els[i].textContent||'').trim().toLowerCase();if(t==='upload videos'||t==='upload video'||t==='unggah video')return '0';}return '1';})()"""
+        studioClickThenVerify(labels, verifyJs, false, false, { runStudioWaitDialog(15) }, {
+            failStudio("menu 'Upload videos' tidak ketemu sesudah menu Create kebuka")
+        })
+    }
+
+    /** Langkah 3 upload: tunggu dialog upload kebuka (kolom judul
+     *  muncul) + file benar tersaji ke chooser (flag
+     *  studioChooserServed dari cabang onShowFileChooser). Dialog
+     *  kebuka TANPA flag = dialog sisa sesi sebelumnya — gagal
+     *  jujur, jangan isi kolom orang lain. */
+    private fun runStudioWaitDialog(triesLeft: Int) {
+        if (pendingStudioAction == null) return
+        val js = """(function(){var tas=[...document.querySelectorAll('textarea,[contenteditable],input,[role="textbox"]')].filter(function(t){return t.offsetParent!==null;});for(var i=0;i<tas.length;i++){var s=((tas[i].getAttribute('aria-label')||'')+' '+(tas[i].getAttribute('placeholder')||'')).toLowerCase();if(s.indexOf('title')>=0||s.indexOf('judul')>=0)return '1';}return '0';})()"""
+        webView.evaluateJavascript(js) { raw ->
+            val ok = (raw?.trim()?.removeSurrounding("\"") ?: "") == "1"
+            if (ok) {
+                if (!studioChooserServed) {
+                    failStudio("dialog upload sudah kebuka dari sesi sebelumnya — file tidak tersaji ke chooser")
+                    return@evaluateJavascript
+                }
+                writeStudioStatus("running", "dialog upload kebuka — mengisi judul")
+                runStudioFillTitle()
+            } else if (triesLeft <= 0) {
+                failStudio("dialog upload tidak kebuka sesudah file dipilih")
+            } else {
+                studioHandler.postDelayed({ runStudioWaitDialog(triesLeft - 1) }, 1000)
+            }
+        }
+    }
+
+    /** Langkah 4 upload: isi kolom judul (wajib). Kolom sudah terisi
+     *  nama file — select-all + insertText menggantinya. Verifikasi
+     *  baca-balik: isi HARUS diawali judul (bila menempel di belakang
+     *  nama file, gagal — jangan kirim judul salah). */
+    private fun runStudioFillTitle() {
+        val title = pendingStudioTitle ?: return
+        webView.evaluateJavascript(studioFillJs("title", title)) { raw ->
+            val parts = (raw?.trim()?.removeSurrounding("\"") ?: "").split("|")
+            val len = parts.getOrNull(0)?.toIntOrNull() ?: 0
+            val head = parts.getOrNull(1) ?: ""
+            if (len <= 0 || !head.startsWith(title)) {
+                failStudio("judul tidak terisi (terbaca: ${head.take(60)})")
+                return@evaluateJavascript
+            }
+            val desc = pendingStudioDescription
+            if (!desc.isNullOrBlank()) {
+                writeStudioStatus("running", "judul terisi — mengisi deskripsi")
+                runStudioFillDescription()
+            } else {
+                writeStudioStatus("running", "judul terisi — memilih audience")
+                runStudioPickAudience()
+            }
+        }
+    }
+
+    /** Langkah 5 upload: isi kolom deskripsi (opsional — dilewati
+     *  bila kosong). Verifikasi baca-balik: isi diawali 40 karakter
+     *  pertama deskripsi. */
+    private fun runStudioFillDescription() {
+        val desc = pendingStudioDescription ?: return
+        webView.evaluateJavascript(studioFillJs("description", desc)) { raw ->
+            val parts = (raw?.trim()?.removeSurrounding("\"") ?: "").split("|")
+            val len = parts.getOrNull(0)?.toIntOrNull() ?: 0
+            val head = parts.getOrNull(1) ?: ""
+            if (len <= 0 || !head.startsWith(desc.take(40))) {
+                failStudio("deskripsi tidak terisi (terbaca: ${head.take(60)})")
+                return@evaluateJavascript
+            }
+            writeStudioStatus("running", "deskripsi terisi — memilih audience")
+            runStudioPickAudience()
+        }
+    }
+
+    /** Langkah 6 upload: audience "No, it's not made for kids"
+     *  (wajib — tanpa ini tombol Next tidak aktif). */
+    private fun runStudioPickAudience() {
+        if (pendingStudioAction == null) return
+        val labels = org.json.JSONArray(listOf("no, it's not made for kids", "tidak, video ini tidak dibuat untuk anak-anak")).toString()
+        webView.evaluateJavascript(studioRadioJs(labels, true)) { raw ->
+            val parts = (raw?.trim()?.removeSurrounding("\"") ?: "").split("|")
+            if (parts.getOrNull(0) == "1" || parts.getOrNull(0) == "clicked") {
+                writeStudioStatus("running", "audience dipilih — menunggu video selesai diproses")
+                waitStudioProcessing(180)
+            } else {
+                failStudio("pilihan audience 'not made for kids' tidak ketemu")
+            }
+        }
+    }
+
+    /** Langkah 7 upload: tunggu pemrosesan video selesai (maks 30
+     *  menit: 180x10 dtk). Status progres ditulis tiap 1 menit.
+     *  Teks dibaca dari dialog upload saja (bukan seluruh halaman)
+     *  supaya angka % tidak ketukar statistik dasbor di belakang. */
+    private fun waitStudioProcessing(triesLeft: Int) {
+        if (pendingStudioAction == null) return
+        val js = """(function(){var dlg=document.querySelector('ytcp-uploads-dialog')||document.body;var t=dlg.innerText||'';var done=/processing complete|pemrosesan selesai/i.test(t)||(/upload complete|upload selesai/i.test(t)&&!/processing|memproses/i.test(t));var pct=(t.match(/(\d+)%/)||[])[1]||'';return (done?'1':'0')+'|'+pct;})()"""
+        webView.evaluateJavascript(js) { raw ->
+            val parts = (raw?.trim()?.removeSurrounding("\"") ?: "").split("|")
+            if (parts.getOrNull(0) == "1") {
+                writeStudioStatus("running", "video selesai diproses — lanjut ke Video elements")
+                runStudioNext("elements")
+            } else if (triesLeft <= 0) {
+                failStudio("video belum selesai diproses sesudah 30 menit")
+            } else {
+                if (triesLeft % 6 == 0) {
+                    val pct = parts.getOrNull(1) ?: ""
+                    writeStudioStatus("running", "video sedang diproses${if (pct.isNotBlank()) " ($pct%)" else ""} — menunggu")
+                }
+                studioHandler.postDelayed({ waitStudioProcessing(triesLeft - 1) }, 10000)
+            }
+        }
+    }
+
+    /** Langkah 8 upload: klik Next masuk ke langkah berikut.
+     *  Verifikasi pakai isi KHAS langkah tujuan (daftar langkah di
+     *  sidebar menampilkan semua nama langkah, jadi nama langkah
+     *  saja bukan bukti): elements = tombol "Add an end screen" /
+     *  "Add cards"; checks = teks copyright / "No issues found";
+     *  visibility = radio/button "Schedule". Tombol Next yang
+     *  nonaktif (langkah Checks menunggu pemeriksaan) ditunggu
+     *  sampai aktif (maks 3 menit untuk checks, 30 dtk lainnya). */
+    private fun runStudioNext(step: String) {
+        if (pendingStudioAction == null) return
+        val verifyJs = when (step) {
+            "elements" -> """(function(){var d=document.querySelector('ytcp-uploads-dialog')||document;var t=d.innerText||'';return (t.indexOf('Add an end screen')>=0||t.indexOf('Tambah layar akhir')>=0||t.indexOf('Add cards')>=0||t.indexOf('Tambah kartu')>=0)?'1':'0';})()"""
+            "checks" -> """(function(){var d=document.querySelector('ytcp-uploads-dialog')||document;var t=d.innerText||'';return (/copyright|hak cipta/i.test(t)||t.indexOf('No issues found')>=0||t.indexOf('Tidak ada masalah')>=0)?'1':'0';})()"""
+            else -> """(function(){var d=document.querySelector('ytcp-uploads-dialog')||document;var t=d.innerText||'';return (t.indexOf('Schedule')>=0||t.indexOf('Jadwalkan')>=0)?'1':'0';})()"""
+        }
+        val maxWait = if (step == "checks") 90 else 15
+        waitStudioNextEnabled(step, verifyJs, maxWait)
+    }
+
+    private fun waitStudioNextEnabled(step: String, verifyJs: String, triesLeft: Int) {
+        if (pendingStudioAction == null) return
+        val js = """(function(){var root=document.querySelector('ytcp-uploads-dialog')||document;var bs=[...root.querySelectorAll('button')].filter(function(b){return b.offsetParent!==null;});for(var i=0;i<bs.length;i++){var l=(bs[i].getAttribute('aria-label')||'').trim().toLowerCase();var tx=(bs[i].textContent||'').trim().toLowerCase();if(l==='next'||l==='berikutnya'||tx==='next'||tx==='berikutnya'){return bs[i].disabled?'disabled':'1';}}return '0';})()"""
+        webView.evaluateJavascript(js) { raw ->
+            val clean = raw?.trim()?.removeSurrounding("\"") ?: ""
+            when (clean) {
+                "1" -> {
+                    val labels = org.json.JSONArray(listOf("next", "berikutnya")).toString()
+                    studioClickThenVerify(labels, verifyJs, true, false, {
+                        writeStudioStatus("running", "masuk langkah $step")
+                        when (step) {
+                            "elements" -> runStudioNext("checks")
+                            "checks" -> runStudioNext("visibility")
+                            else -> runStudioVisibility()
+                        }
+                    }, {
+                        failStudio("tombol Next tidak membawa ke langkah $step")
+                    })
+                }
+                "disabled" -> {
+                    if (triesLeft <= 0) {
+                        failStudio("tombol Next tetap nonaktif di langkah $step")
+                    } else {
+                        studioHandler.postDelayed({ waitStudioNextEnabled(step, verifyJs, triesLeft - 1) }, 2000)
+                    }
+                }
+                else -> failStudio("tombol Next tidak ketemu di langkah $step")
+            }
+        }
+    }
+
+    /** Langkah 9 upload: pilih visibilitas. "now" = radio Public,
+     *  lalu tombol Publish. Jadwal = radio Schedule, lalu isi
+     *  tanggal + jam. */
+    private fun runStudioVisibility() {
+        if (pendingStudioAction == null) return
+        val schedule = pendingStudioSchedule ?: "now"
+        if (schedule == "now") {
+            writeStudioStatus("running", "memilih visibilitas Public")
+            val labels = org.json.JSONArray(listOf("public", "publik")).toString()
+            webView.evaluateJavascript(studioRadioJs(labels, true)) { raw ->
+                val parts = (raw?.trim()?.removeSurrounding("\"") ?: "").split("|")
+                if (parts.getOrNull(0) == "1" || parts.getOrNull(0) == "clicked") {
+                    runStudioClickPublish()
+                } else {
+                    failStudio("pilihan visibilitas Public tidak ketemu")
+                }
+            }
+        } else {
+            writeStudioStatus("running", "memilih jadwal tayang")
+            val labels = org.json.JSONArray(listOf("schedule", "jadwalkan")).toString()
+            webView.evaluateJavascript(studioRadioJs(labels, true)) { raw ->
+                val parts = (raw?.trim()?.removeSurrounding("\"") ?: "").split("|")
+                if (parts.getOrNull(0) == "1" || parts.getOrNull(0) == "clicked") {
+                    runStudioFillSchedule()
+                } else {
+                    failStudio("pilihan visibilitas Schedule tidak ketemu")
+                }
+            }
+        }
+    }
+
+    /** Langkah 10 upload (hanya bila terjadwal): isi tanggal + jam
+     *  tayang. Format tanggal mengikuti bahasa UI akun (EN MM/DD/YYYY,
+     *  ID DD/MM/YYYY — dicek runStudioUploadDiagnose). Verifikasi
+     *  baca-balik longgar: nilai berisi nomor hari + nomor bulan
+     *  (atau nama bulan EN/ID). Jam EN dicoba dulu 24-jam, lalu
+     *  12-jam ("2:30 PM") bila tidak menempel. */
+    private fun runStudioFillSchedule() {
+        val schedule = pendingStudioSchedule ?: return
+        val parts = schedule.split(" ")
+        if (parts.size != 2) {
+            failStudio("format jadwal tidak valid: $schedule")
+            return
+        }
+        val dp = parts[0].split("-")
+        if (dp.size != 3) {
+            failStudio("format tanggal tidak valid: ${parts[0]}")
+            return
+        }
+        val timePart = parts[1]
+        val dateText = if (studioUiLang == "id") {
+            "${dp[2]}/${dp[1]}/${dp[0]}"
+        } else {
+            "${dp[1]}/${dp[2]}/${dp[0]}"
+        }
+        writeStudioStatus("running", "mengisi tanggal + jam tayang ($schedule)")
+        webView.evaluateJavascript(studioFillJs("date", dateText)) { raw ->
+            val filled = (raw?.trim()?.removeSurrounding("\"") ?: "").split("|")
+            val dateVal = filled.getOrNull(1) ?: ""
+            val day = dp[2].toIntOrNull() ?: 0
+            val month = dp[1].toIntOrNull() ?: 0
+            val monthAbbrs = when (month) {
+                1 -> listOf("jan")
+                2 -> listOf("feb")
+                3 -> listOf("mar")
+                4 -> listOf("apr")
+                5 -> listOf("may", "mei")
+                6 -> listOf("jun")
+                7 -> listOf("jul")
+                8 -> listOf("aug", "agu")
+                9 -> listOf("sep")
+                10 -> listOf("oct", "okt")
+                11 -> listOf("nov")
+                12 -> listOf("dec", "des")
+                else -> emptyList()
+            }
+            val low = dateVal.lowercase()
+            val dayOk = day > 0 && Regex("\\b$day\\b").containsMatchIn(low)
+            val monthOk = month > 0 && (Regex("\\b$month\\b").containsMatchIn(low) || monthAbbrs.any { low.contains(it) })
+            if (filled.getOrNull(0)?.toIntOrNull() ?: 0 <= 0 || !(dateVal.contains(dateText) || (dayOk && monthOk))) {
+                failStudio("tanggal tayang tidak terisi (terbaca: $dateVal)")
+                return@evaluateJavascript
+            }
+            webView.evaluateJavascript(studioFillJs("time", timePart)) { raw2 ->
+                val filled2 = (raw2?.trim()?.removeSurrounding("\"") ?: "").split("|")
+                val timeVal = filled2.getOrNull(1) ?: ""
+                if (timeVal.contains(timePart)) {
+                    runStudioClickPublish()
+                } else if (studioUiLang == "en") {
+                    val h = timePart.substring(0, 2).toIntOrNull() ?: 0
+                    val m = timePart.substring(3, 5)
+                    val h12 = if (h % 12 == 0) 12 else h % 12
+                    val ampm = if (h < 12) "AM" else "PM"
+                    val time12 = "$h12:$m $ampm"
+                    webView.evaluateJavascript(studioFillJs("time", time12)) { raw3 ->
+                        val filled3 = (raw3?.trim()?.removeSurrounding("\"") ?: "").split("|")
+                        val timeVal3 = filled3.getOrNull(1) ?: ""
+                        if (timeVal3.contains(time12) || timeVal3.contains("$h12:$m")) {
+                            runStudioClickPublish()
+                        } else {
+                            failStudio("jam tayang tidak terisi (terbaca: $timeVal3)")
+                        }
+                    }
+                } else {
+                    failStudio("jam tayang tidak terisi (terbaca: $timeVal)")
+                }
+            }
+        }
+    }
+
+    /** Langkah terakhir upload: klik Schedule (terjadwal) atau Publish
+     *  (now). Satu-satunya langkah yang memakai tap beneran sebagai
+     *  fallback (tombol satu-kali; dialog ketutup sesudah klik).
+     *  Verifikasi: dialog upload ketutup (kolom judul hilang). Baru
+     *  sesudah itu verifikasi isi Content — status "done" HANYA bila
+     *  video muncul di daftar (klik saja bukan bukti). */
+    private fun runStudioClickPublish() {
+        if (pendingStudioAction == null) return
+        val scheduled = (pendingStudioSchedule ?: "now") != "now"
+        val labels = org.json.JSONArray(
+            if (scheduled) listOf("schedule", "jadwalkan") else listOf("publish", "publikasikan")
+        ).toString()
+        val verifyJs = """(function(){var tas=[...document.querySelectorAll('textarea,[contenteditable],input,[role="textbox"]')].filter(function(t){return t.offsetParent!==null;});for(var i=0;i<tas.length;i++){var s=((tas[i].getAttribute('aria-label')||'')+' '+(tas[i].getAttribute('placeholder')||'')).toLowerCase();if(s.indexOf('title')>=0||s.indexOf('judul')>=0)return '0';}return '1';})()"""
+        writeStudioStatus("running", if (scheduled) "menjadwalkan video" else "menerbitkan video")
+        studioClickThenVerify(labels, verifyJs, true, true, {
+            writeStudioStatus("running", "video terkirim — memverifikasi di daftar Content")
+            runStudioVerifyUpload(6)
+        }, {
+            failStudio("tombol ${if (scheduled) "Schedule" else "Publish"} tidak menyelesaikan upload")
+        })
+    }
+
+    /** Verifikasi akhir upload: video HARUS muncul di daftar Content
+     *  (cocok judul persis). Buka halaman Content lewat URL langsung
+     *  (channel id dari diagnose) atau klik nav bila id tidak ketahuan. */
+    private fun runStudioVerifyUpload(triesLeft: Int) {
+        if (pendingStudioAction == null) return
+        val title = pendingStudioTitle ?: return
+        val contentUrl = studioChannelId?.let { "https://studio.youtube.com/channel/$it/videos" }
+        if (contentUrl != null && currentUrl != contentUrl) {
+            webView.loadUrl(contentUrl)
+            studioHandler.postDelayed({ runStudioVerifyUploadCheck(title, triesLeft) }, 5000)
+            return
+        }
+        if (contentUrl == null && !currentUrl.contains("/videos")) {
+            runStudioGoContent({ runStudioVerifyUploadCheck(title, triesLeft) })
+            return
+        }
+        runStudioVerifyUploadCheck(title, triesLeft)
+    }
+
+    private fun runStudioVerifyUploadCheck(title: String, triesLeft: Int) {
+        if (pendingStudioAction == null) return
+        if (!currentUrl.contains("/videos")) {
+            if (triesLeft <= 0) {
+                failStudio("halaman Content tidak kebuka untuk verifikasi")
+            } else {
+                studioHandler.postDelayed({ runStudioVerifyUploadCheck(title, triesLeft - 1) }, 3000)
+            }
+            return
+        }
+        val js = """(function(){var rows=[];var links=[...document.querySelectorAll('a[href*="/video/"]')].filter(function(a){return a.offsetParent!==null;});for(var i=0;i<links.length;i++){var h=links[i].getAttribute('href')||'';if(h.indexOf('/edit')<0)continue;var mm=h.match(/\/video\/([A-Za-z0-9_-]{11})/);if(!mm)continue;var t=(links[i].textContent||'').replace(/\s+/g,' ').trim();if(t)rows.push(t+'^'+mm[1]);}return rows.join('~');})()"""
+        webView.evaluateJavascript(js) { raw ->
+            val clean = raw?.trim()?.removeSurrounding("\"") ?: ""
+            var foundId: String? = null
+            if (clean.isNotBlank()) {
+                for (row in clean.split("~")) {
+                    val p = row.split("^")
+                    if (p.size == 2 && p[0].equals(title, ignoreCase = true)) {
+                        foundId = p[1]
+                        break
+                    }
+                }
+            }
+            if (foundId != null) {
+                val scheduled = (pendingStudioSchedule ?: "now") != "now"
+                val data = org.json.JSONObject().apply {
+                    put("title", title)
+                    put("videoId", foundId)
+                    put("videoUrl", "https://www.youtube.com/watch?v=$foundId")
+                    put("visibility", if (scheduled) "scheduled" else "public")
+                    if (scheduled) put("scheduledAt", pendingStudioSchedule)
+                }
+                studioRunning = false
+                pendingStudioAction = null
+                pendingStudioFile = null
+                pendingStudioTitle = null
+                pendingStudioDescription = null
+                pendingStudioSchedule = null
+                writeStudioStatus("done", "video ${if (scheduled) "dijadwalkan" else "diterbitkan"}: $title", data)
+            } else if (triesLeft <= 0) {
+                failStudio("video tidak muncul di daftar Content sesudah ${if ((pendingStudioSchedule ?: "now") != "now") "dijadwalkan" else "diterbitkan"} — kemungkinan masih diproses; cek manual di Studio")
+            } else {
+                studioHandler.postDelayed({ runStudioVerifyUploadCheck(title, triesLeft - 1) }, 10000)
+            }
+        }
+    }
+
+    // ================= AKHIR STUDIO API =================
+
     /** Bersihkan data Space ini (v0.1.30) lalu muat halaman awal.
      *  Dijalankan DI DALAM proses Space (:spaceN) — CookieManager tiap
      *  proses punya toko cookie sendiri (dataDirectorySuffix), jadi
@@ -2436,6 +3290,8 @@ abstract class BrowserActivity : AppCompatActivity() {
         consumeApiPrompt(intent)
         // v0.1.39: payload TTS API susulan.
         consumeApiTts(intent)
+        // v0.1.60: payload eksekutor Studio susulan.
+        consumeApiStudio(intent)
         // v0.1.52: URL navigasi API susulan.
         consumeApiNavigate(intent)
     }

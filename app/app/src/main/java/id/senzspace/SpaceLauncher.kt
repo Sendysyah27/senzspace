@@ -23,7 +23,12 @@ object SpaceLauncher {
         ttsModel: String? = null,
         ttsUrl: String? = null,
         ttsSpeaker: String? = null,
-        navigateUrl: String? = null
+        navigateUrl: String? = null,
+        studioAction: String? = null,
+        studioFile: String? = null,
+        studioTitle: String? = null,
+        studioDescription: String? = null,
+        studioSchedule: String? = null
     ): Intent {
         return Intent(ctx, SpaceRegistry.activityForSlot(entry.slot)).apply {
             flags = Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or
@@ -72,6 +77,22 @@ object SpaceLauncher {
             if (navigateUrl != null) {
                 putExtra(MainActivity.EXTRA_API_NAVIGATE_URL, navigateUrl)
             }
+            // v0.1.60: payload eksekutor YouTube Studio (POST /studio).
+            if (studioAction != null) {
+                putExtra(MainActivity.EXTRA_API_STUDIO_ACTION, studioAction)
+                if (studioFile != null) {
+                    putExtra(MainActivity.EXTRA_API_STUDIO_FILE, studioFile)
+                }
+                if (studioTitle != null) {
+                    putExtra(MainActivity.EXTRA_API_STUDIO_TITLE, studioTitle)
+                }
+                if (studioDescription != null) {
+                    putExtra(MainActivity.EXTRA_API_STUDIO_DESCRIPTION, studioDescription)
+                }
+                if (studioSchedule != null) {
+                    putExtra(MainActivity.EXTRA_API_STUDIO_SCHEDULE, studioSchedule)
+                }
+            }
             putExtra(MainActivity.EXTRA_SPACE_NAME, entry.name)
             putExtra(MainActivity.EXTRA_SPACE_COLOR, entry.color)
             putExtra(MainActivity.EXTRA_URL, entry.url)
@@ -94,7 +115,12 @@ object SpaceLauncher {
         ttsModel: String? = null,
         ttsUrl: String? = null,
         ttsSpeaker: String? = null,
-        navigateUrl: String? = null
+        navigateUrl: String? = null,
+        studioAction: String? = null,
+        studioFile: String? = null,
+        studioTitle: String? = null,
+        studioDescription: String? = null,
+        studioSchedule: String? = null
     ) {
         ctx.startActivity(
             intentFor(
@@ -103,7 +129,11 @@ object SpaceLauncher {
                 promptUrl = promptUrl, promptProject = promptProject,
                 ttsScript = ttsScript, ttsVoice = ttsVoice,
                 ttsModel = ttsModel, ttsUrl = ttsUrl,
-                ttsSpeaker = ttsSpeaker, navigateUrl = navigateUrl
+                ttsSpeaker = ttsSpeaker, navigateUrl = navigateUrl,
+                studioAction = studioAction, studioFile = studioFile,
+                studioTitle = studioTitle,
+                studioDescription = studioDescription,
+                studioSchedule = studioSchedule
             )
         )
     }
