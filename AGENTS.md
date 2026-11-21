@@ -747,3 +747,30 @@ Jangan cuma diagnosa dari kodenya.
   balas 202 needs_tap; foreground = 200 visible:true.
   dumpsys topResumedActivity BISA BASI — kebenaran foreground =
   screenshot.
+- API 67 (21 Nov, v0.1.67): JALUR KIRIM PROMPT ANDAL (OPT-1 + OPT-2).
+  (a) Fill: execCommand telanjang tidak memberitahu model ProseMirror
+  — DOM berisi teks tapi tombol Send tetap nonaktif. Fix:
+  execCommand dulu; bila isi sesudahnya != teks yang diminta
+  (normalisasi whitespace), fallback textContent + InputEvent
+  ('input', inputType:'insertText', data) + Event('input') +
+  Event('change'), lalu isi ulang tertunda 300 ms bila framework
+  menghapus nilainya (pola ttsFillJs — TTS sendiri tidak disentuh).
+  Verifikasi sesudah clear: clear yang gagal (isi lama masih ada)
+  -> gagal jujur "teks lama di kolom chat tidak bisa dihapus",
+  jangan lanjut isi. Verifikasi akhir 500 ms sesudah isi
+  (runPromptFillVerify): innerText (normalisasi) HARUS == teks
+  pending DAN tombol Send ada dan tidak disabled — bila tidak,
+  gagal jujur dengan bukti (isi kolom 80 karakter pertama /
+  keadaan tombol). Fill-guard v0.1.61 tidak berubah (teks lain ->
+  tolak, "kolom chat berisi teks lain").
+  (b) Verify-send: pencocokan teks mentah ke seluruh body lolos
+  oleh teks basi (frasa yang sama di pesan Claude sendiri).
+  Fix: runPromptSend menangkap sidik jari SEBELUM klik (jumlah
+  kemunculan teks prompt di body + jumlah elemen user-turn
+  [data-testid="user-message"]) dan runPromptVerifySend
+  mewajibkan angka itu BERTAMBAH (poll 5x2 dtk tidak berubah) di
+  samping gerbang lama (kolom kosong DAN (Stop ada ATAU teks
+  terlihat)). Status "sent" tetap tidak pernah ditulis sebelum
+  verifikasi lolos. Tanpa ubah perilaku: eksekutor TTS, Studio,
+  FM picker, BootReceiver, SpaceRegistry, dan rute lain tidak
+  disentuh.

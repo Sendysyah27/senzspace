@@ -1444,24 +1444,58 @@ abstract class BrowserActivity : AppCompatActivity() {
      *  Berisi teks LAIN -> gagal jujur "kolom chat berisi teks lain"
      *  + 80 karakter pertama — teks itu TIDAK disentuh dan TIDAK
      *  dikirim (insertText tanpa clear sebelumnya menempelkan teks
-     *  baru ke sisa lama). */
+     *  baru ke sisa lama).
+     *  v0.1.67 - ISI DIBERITAHUKAN KE FRAMEWORK (OPT-1):
+     *  execCommand telanjang tidak memberitahu model ProseMirror
+     *  Claude bahwa teks berubah — DOM berisi teks tapi tombol Send
+     *  tetap nonaktif ("tombol kirim nonaktif"). Pola ttsFillJs:
+     *  execCommand dulu; bila isi sesudahnya != teks yang diminta,
+     *  fallback textContent + InputEvent('input',
+     *  inputType:'insertText') + Event('input') + Event('change'),
+     *  lalu isi ulang tertunda 300 ms bila framework menghapus
+     *  nilainya. Verifikasi sesudah clear: clear yang gagal (isi
+     *  lama masih ada) -> gagal jujur, jangan lanjut isi. Verifikasi
+     *  akhir (runPromptFillVerify, 500 ms sesudah isi): innerText
+     *  (normalisasi) HARUS == teks yang diminta DAN tombol Send ada
+     *  dan tidak disabled — bila tidak, gagal jujur dengan bukti
+     *  (isi kolom, 80 karakter pertama). */
     private fun runPromptFill() {
         val text = pendingPromptText ?: return
         val quoted = org.json.JSONObject.quote(text)
-        val js = """(function(){var c=document.querySelector('div.ProseMirror[contenteditable="true"]')||document.querySelector('div[contenteditable="true"]');if(!c)return '0|nocomposer';var want=$quoted;var norm=function(s){return (s||'').replace(/\s+/g,' ').trim();};var cur=(c.innerText||'');if(norm(cur).length>0&&norm(cur)!==norm(want))return '0|other|'+norm(cur).replace(/\|/g,' ').slice(0,80);c.focus();if(norm(cur).length>0){try{document.execCommand('selectAll',false,null);document.execCommand('delete',false,null);}catch(e){}if(norm(c.innerText||'').length>0){c.textContent='';try{c.dispatchEvent(new InputEvent('input',{bubbles:true,cancelable:true,inputType:'deleteContent'}));}catch(e2){}c.dispatchEvent(new Event('input',{bubbles:true}));}}var ok=document.execCommand('insertText',false,want);return String((c.innerText||'').length)+'|'+(ok?'1':'0');})()"""
+        val js = """(function(){var c=document.querySelector('div.ProseMirror[contenteditable="true"]')||document.querySelector('div[contenteditable="true"]');if(!c)return '0|nocomposer';var want=$quoted;var norm=function(s){return (s||'').replace(/\s+/g,' ').trim();};var cur=(c.innerText||'');if(norm(cur).length>0&&norm(cur)!==norm(want))return '0|other|'+norm(cur).replace(/\|/g,' ').slice(0,80);c.focus();if(norm(cur).length>0){try{document.execCommand('selectAll',false,null);document.execCommand('delete',false,null);}catch(e){}if(norm(c.innerText||'').length>0){c.textContent='';try{c.dispatchEvent(new InputEvent('input',{bubbles:true,cancelable:true,inputType:'deleteContent'}));}catch(e2){}c.dispatchEvent(new Event('input',{bubbles:true}));}if(norm(c.innerText||'').length>0)return '0|clearfail|'+norm(c.innerText||'').replace(/\|/g,' ').slice(0,80);}var ok=false;try{ok=document.execCommand('insertText',false,want);}catch(e){}if(!ok||norm(c.innerText||'')!==norm(want)){c.textContent=want;try{c.dispatchEvent(new InputEvent('input',{bubbles:true,cancelable:true,inputType:'insertText',data:want}));}catch(e2){}c.dispatchEvent(new Event('input',{bubbles:true}));try{c.dispatchEvent(new Event('change',{bubbles:true}));}catch(e3){}try{setTimeout(function(){if(norm(c.innerText||'')!==norm(want)){c.textContent=want;try{c.dispatchEvent(new InputEvent('input',{bubbles:true,cancelable:true,inputType:'insertText',data:want}));}catch(e4){}c.dispatchEvent(new Event('input',{bubbles:true}));}},300);}catch(e5){}}return '1|filled';})()"""
         writePromptStatus("running", "mengisi teks prompt")
         webView.evaluateJavascript(js) { raw ->
             val clean = raw?.trim()?.removeSurrounding("\"") ?: ""
             val parts = clean.split("|")
-            val len = parts.getOrNull(0)?.toIntOrNull() ?: 0
             when (parts.getOrNull(1)) {
                 "other" -> failPrompt("kolom chat berisi teks lain: ${parts.drop(2).joinToString("|")}")
                 "nocomposer" -> failPrompt("kolom chat tidak ketemu")
-                else -> if (len > 0) {
-                    runPromptSend()
-                } else {
-                    failPrompt("teks prompt tidak masuk ke kolom chat")
-                }
+                "clearfail" -> failPrompt("teks lama di kolom chat tidak bisa dihapus: ${parts.drop(2).joinToString("|")}")
+                else -> promptHandler.postDelayed({ runPromptFillVerify() }, 500)
+            }
+        }
+    }
+
+    /** Langkah 3b (v0.1.67, OPT-1): verifikasi akhir isi kolom
+     *  sesudah jeda isi-ulang 300 ms — innerText (normalisasi)
+     *  HARUS sama persis dengan teks pending DAN tombol Send ada
+     *  dan tidak disabled. Gagal -> failPrompt jujur dengan bukti
+     *  (isi kolom 80 karakter pertama / keadaan tombol), JANGAN
+     *  lanjut ke runPromptSend. */
+    private fun runPromptFillVerify() {
+        val text = pendingPromptText ?: return
+        val quoted = org.json.JSONObject.quote(text)
+        val js = """(function(){var c=document.querySelector('div.ProseMirror[contenteditable="true"]')||document.querySelector('div[contenteditable="true"]');if(!c)return '0|nocomposer';var want=$quoted;var norm=function(s){return (s||'').replace(/\s+/g,' ').trim();};var cur=norm(c.innerText||'');if(cur!==norm(want))return '0|mismatch|'+cur.replace(/\|/g,' ').slice(0,80);var b=document.querySelector('button[aria-label="Send message"]')||document.querySelector('button[aria-label="Kirim pesan"]');if(!b)return '0|nosend';if(b.disabled)return '0|senddisabled';return '1|ok';})()"""
+        webView.evaluateJavascript(js) { raw ->
+            val clean = raw?.trim()?.removeSurrounding("\"") ?: ""
+            val parts = clean.split("|")
+            when (parts.getOrNull(1)) {
+                "ok" -> runPromptSend()
+                "nocomposer" -> failPrompt("kolom chat tidak ketemu (sesudah isi teks)")
+                "mismatch" -> failPrompt("teks tidak terdaftar di composer (isi kolom: ${parts.drop(2).joinToString("|")})")
+                "nosend" -> failPrompt("tombol kirim tidak ketemu sesudah isi teks")
+                "senddisabled" -> failPrompt("tombol kirim nonaktif sesudah isi teks (teks sudah terdaftar di composer)")
+                else -> failPrompt("teks prompt tidak terverifikasi di kolom chat")
             }
         }
     }
@@ -1472,14 +1506,26 @@ abstract class BrowserActivity : AppCompatActivity() {
      *  ada karena Claude sedang menjawab (tombol berubah jadi Stop)
      *  -> gagal jujur "Claude sedang menjawab" (teks tetap di kolom
      *  chat — percobaan berikut akan menolaknya lewat aturan
-     *  runPromptFill, bukan menimpanya diam-diam). */
+     *  runPromptFill, bukan menimpanya diam-diam).
+     *  v0.1.67 - SIDIK JARI SEBELUM KLIK (OPT-2): sebelum klik,
+     *  hitung kemunculan teks prompt di body + jumlah elemen
+     *  user-turn ([data-testid="user-message"]) — dikirim ke
+     *  runPromptVerifySend sebagai baseline; verifikasi mewajibkan
+     *  angka itu BERTAMBAH, supaya teks basi di pesan Claude
+     *  sendiri ("tulis 'continue last checkpoint' lagi") tidak
+     *  lagi lolos sebagai "sent" (false positive). */
     private fun runPromptSend() {
-        val js = """(function(){var b=document.querySelector('button[aria-label="Send message"]')||document.querySelector('button[aria-label="Kirim pesan"]');if(!b){var s=document.querySelector('button[aria-label*="Stop"]')||document.querySelector('button[aria-label*="Berhenti"]');return s?'responding':'0';}if(b.disabled)return 'disabled';b.click();return '1';})()"""
+        val text = pendingPromptText ?: return
+        val quoted = org.json.JSONObject.quote(text)
+        val js = """(function(){var b=document.querySelector('button[aria-label="Send message"]')||document.querySelector('button[aria-label="Kirim pesan"]');if(!b){var s=document.querySelector('button[aria-label*="Stop"]')||document.querySelector('button[aria-label*="Berhenti"]');return s?'responding':'0';}if(b.disabled)return 'disabled';var body=document.body?document.body.innerText:'';var occ=body.split($quoted).length-1;var turns=document.querySelectorAll('[data-testid="user-message"]').length;b.click();return '1|'+occ+'|'+turns;})()"""
         webView.evaluateJavascript(js) { raw ->
             val clean = raw?.trim()?.removeSurrounding("\"") ?: ""
-            if (clean == "1") {
+            val parts = clean.split("|")
+            if (parts.getOrNull(0) == "1") {
+                val occBefore = parts.getOrNull(1)?.toIntOrNull() ?: 0
+                val turnsBefore = parts.getOrNull(2)?.toIntOrNull() ?: 0
                 writePromptStatus("running", "tombol kirim diklik - memverifikasi pesan terkirim")
-                runPromptVerifySend(5)
+                runPromptVerifySend(5, occBefore, turnsBefore)
             } else if (clean == "disabled") {
                 failPrompt("tombol kirim nonaktif (teks/lampiran belum diterima Claude)")
             } else if (clean == "responding") {
@@ -1497,11 +1543,17 @@ abstract class BrowserActivity : AppCompatActivity() {
      *  teks sesudah 10 dtk -> gagal "pesan tidak terkirim (masih di
      *  kolom chat)"; kolom kosong tapi tidak terverifikasi -> gagal
      *  "pesan tidak terverifikasi terkirim". Status "sent" TIDAK
-     *  PERNAH ditulis sebelum verifikasi ini lolos. */
-    private fun runPromptVerifySend(triesLeft: Int) {
+     *  PERNAH ditulis sebelum verifikasi ini lolos.
+     *  v0.1.67 - SIDIK JARI HARUS BERTAMBAH (OPT-2): selain gerbang
+     *  di atas, jumlah kemunculan teks prompt di body ATAU jumlah
+     *  elemen user-turn HARUS lebih besar dari baseline yang
+     *  ditangkap runPromptSend SEBELUM klik — teks prompt yang
+     *  sudah ada di halaman (mis. frasa "continue last checkpoint"
+     *  di pesan Claude sendiri) tidak lagi cukup sebagai bukti. */
+    private fun runPromptVerifySend(triesLeft: Int, occBefore: Int = 0, turnsBefore: Int = 0) {
         val text = pendingPromptText ?: return
         val quoted = org.json.JSONObject.quote(text)
-        val js = """(function(){var c=document.querySelector('div.ProseMirror[contenteditable="true"]')||document.querySelector('div[contenteditable="true"]');var empty=!c||(c.innerText||'').trim()==='';if(!empty)return '0|incomposer';var stop=!!(document.querySelector('button[aria-label*="Stop"]')||document.querySelector('button[aria-label*="Berhenti"]'));var body=document.body?document.body.innerText:'';var seen=body.indexOf($quoted)>=0;return (stop||seen)?'1|ok':'0|unverified';})()"""
+        val js = """(function(){var c=document.querySelector('div.ProseMirror[contenteditable="true"]')||document.querySelector('div[contenteditable="true"]');var empty=!c||(c.innerText||'').trim()==='';if(!empty)return '0|incomposer';var stop=!!(document.querySelector('button[aria-label*="Stop"]')||document.querySelector('button[aria-label*="Berhenti"]'));var body=document.body?document.body.innerText:'';var occ=body.split($quoted).length-1;var turns=document.querySelectorAll('[data-testid="user-message"]').length;var grew=(occ>$occBefore)||(turns>$turnsBefore);var seen=occ>0;return (grew&&(stop||seen))?'1|ok':'0|unverified';})()"""
         webView.evaluateJavascript(js) { raw ->
             val parts = (raw?.trim()?.removeSurrounding("\"") ?: "").split("|")
             if (parts.getOrNull(0) == "1") {
@@ -1510,7 +1562,7 @@ abstract class BrowserActivity : AppCompatActivity() {
                 pendingPromptFiles = null
                 writePromptStatus("sent", "terkirim - Claude sedang menjawab")
             } else if (triesLeft > 1) {
-                promptHandler.postDelayed({ runPromptVerifySend(triesLeft - 1) }, 2000)
+                promptHandler.postDelayed({ runPromptVerifySend(triesLeft - 1, occBefore, turnsBefore) }, 2000)
             } else {
                 if (parts.getOrNull(1) == "incomposer") {
                     failPrompt("pesan tidak terkirim (masih di kolom chat)")
