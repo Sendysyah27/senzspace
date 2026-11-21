@@ -937,3 +937,34 @@ Jangan cuma diagnosa dari kodenya.
   izin baru. Tanpa ubah perilaku: eksekutor prompt/TTS/Studio,
   snapshot/thumbnail, limit detection, FileManager, KeepAlive
   per-Space.
+- API 73 (22 Nov, v0.1.73): STARTFOREGROUND PERTAMA DI ONCREATE.
+  (a) Latar: v0.1.72 crash dua proses sekaligus —
+  ForegroundServiceDidNotStartInTimeException untuk ApiService
+  dan WatchdogGuardService — startForeground() tidak terpanggil
+  dalam timeout sistem sesudah startForegroundService(). Izin
+  notifikasi sudah granted; tekanan memori (LMK aktif) membuat
+  proses baru start lambat; onCreate kedua service masih
+  mengerjakan channel + builder + PendingIntent sebelum
+  startForeground, dan try/catch di sekitar startForeground
+  menelan kegagalan (service jalan tanpa foreground lalu dibunuh
+  sistem). Urutan baru di onCreate ApiService, WatchdogGuardService,
+  dan KeepAliveService.onStartCommand: buat channel (satu binder
+  call, idempotent) → notifikasi MINIMAL (icon + judul saja) →
+  startForeground() LANGSUNG tanpa try/catch yang menelan (bila
+  throw, tercatat sebagai crash dengan stack jelas) → sesudah itu
+  lengkapi notifikasi (PendingIntent + teks) via
+  NotificationManager.notify + kerja lain. Log.i di baris pertama
+  onCreate + sebelum + sesudah startForeground (tag SenzWatchdog
+  untuk guardian dan ApiService).
+  (b) Guardian menyalakan ApiService TANPA timeout FGS:
+  ApiService.startPlain() — startService biasa (bukan
+  startForegroundService), tangkap throw + Log.e + Boolean.
+  Guardian tick memakai startPlain; ApiService mempromosikan diri
+  ke foreground lewat startForeground pertama di onCreate-nya
+  sendiri. ApiService.start() (FGS) tetap untuk 7 pemanggil lama
+  (MainActivity, BootReceiver, BrowserActivity, SettingsActivity,
+  ReviveReceiver, WatchdogWorker, + guardian lama).
+  (c) Tanpa izin baru; jalur v0.1.71/v0.1.72 dipertahankan.
+  Tanpa ubah perilaku: eksekutor prompt/TTS/Studio,
+  snapshot/thumbnail, limit detection, FileManager, KeepAlive
+  per-Space, BootReceiver yang sudah ada.

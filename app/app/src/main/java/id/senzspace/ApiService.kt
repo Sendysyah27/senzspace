@@ -56,6 +56,21 @@ class ApiService : Service() {
             }
         }
 
+        // v0.1.73: start biasa (bukan startForegroundService) — tanpa
+        // timeout FGS. Dipakai guardian (uid-nya sudah foreground)
+        // untuk menyalakan ApiService yang lambat start tanpa dibunuh
+        // sistem; ApiService mempromosikan diri ke foreground lewat
+        // startForeground pertama di onCreate-nya sendiri.
+        fun startPlain(ctx: Context): Boolean {
+            return try {
+                ctx.startService(Intent(ctx, ApiService::class.java))
+                true
+            } catch (e: Exception) {
+                Log.e(TAG, "startPlain: start gagal: ${e.message}", e)
+                false
+            }
+        }
+
         fun stop(ctx: Context) {
             ctx.stopService(Intent(ctx, ApiService::class.java))
         }
@@ -64,6 +79,11 @@ class ApiService : Service() {
     private var server: ApiServer? = null
 
     override fun onCreate() {
+        // v0.1.73: startForeground PERTAMA — notifikasi minimal dulu,
+        // langsung, tanpa try/catch yang menelan (bila throw, biarkan
+        // tercatat sebagai crash dengan stack jelas). Channel +
+        // PendingIntent + teks panjang menyusul SESUDAH foreground.
+        Log.i(TAG, "onCreate: masuk")
         super.onCreate()
         if (Build.VERSION.SDK_INT >= 33 &&
             checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) !=
@@ -87,26 +107,35 @@ class ApiService : Service() {
                 }
             )
         }
-        val openIntent = Intent(this, MainActivity::class.java).apply {
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK or
-                Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
-        }
-        val pending = PendingIntent.getActivity(
-            this, NOTIF_ID, openIntent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
         val notif: Notification = NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle("SenzSpace API aktif")
-            .setContentText(
-                "Kontrol lokal di 127.0.0.1:${ApiServer.PORT} — hanya dari HP ini"
-            )
-            .setContentIntent(pending)
             .setOngoing(true)
             .build()
+        Log.i(TAG, "onCreate: startForeground")
+        startForeground(NOTIF_ID, notif)
+        Log.i(TAG, "onCreate: foreground jalan")
         try {
-            startForeground(NOTIF_ID, notif)
-        } catch (_: Exception) {
+            val openIntent = Intent(this, MainActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or
+                    Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
+            }
+            val pending = PendingIntent.getActivity(
+                this, NOTIF_ID, openIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+            val full: Notification = NotificationCompat.Builder(this, CHANNEL_ID)
+                .setSmallIcon(R.drawable.ic_notification)
+                .setContentTitle("SenzSpace API aktif")
+                .setContentText(
+                    "Kontrol lokal di 127.0.0.1:${ApiServer.PORT} — hanya dari HP ini"
+                )
+                .setContentIntent(pending)
+                .setOngoing(true)
+                .build()
+            mgr.notify(NOTIF_ID, full)
+        } catch (e: Exception) {
+            Log.w(TAG, "onCreate: lengkapi notifikasi gagal: ${e.message}")
         }
         server = ApiServer(applicationContext).also { it.start() }
     }

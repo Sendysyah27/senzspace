@@ -131,8 +131,24 @@ open class KeepAliveService : Service() {
             "aistudio" -> 1107
             else -> 1100
         }
-        try {
+        // v0.1.73: startForeground PERTAMA — notifikasi minimal dulu
+        // (icon + judul saja), langsung, tanpa try/catch yang menelan.
+        // PendingIntent (perlu baca registry) + teks menyusul sesudah
+        // foreground lewat notify.
+        if (Build.VERSION.SDK_INT < 33 ||
+            checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) ==
+            PackageManager.PERMISSION_GRANTED
+        ) {
             ensureChannel()
+            val minimal: Notification = NotificationCompat.Builder(this, CHANNEL_ID)
+                .setSmallIcon(R.drawable.ic_notification)
+                .setContentTitle("SenzSpace — $name berjalan")
+                .setGroup(GROUP_KEY)
+                .setOngoing(true)
+                .build()
+            startForeground(notifId, minimal)
+        }
+        try {
             // v0.1.31: tap notifikasi Space ini LANGSUNG membuka Space-nya
             // (bukan cuma Beranda). Intent menarget activity Space itu
             // dengan nama/warna/URL dari registry.
@@ -149,12 +165,8 @@ open class KeepAliveService : Service() {
                 .setGroup(GROUP_KEY)
                 .setOngoing(true)
                 .build()
-            if (Build.VERSION.SDK_INT < 33 ||
-                checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) ==
-                PackageManager.PERMISSION_GRANTED
-            ) {
-                startForeground(notifId, notif)
-            }
+            val mgr = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
+            mgr.notify(notifId, notif)
             // Gabung notifikasi: tanpa ringkasan
             // grup, Android menampilkan 7 baris terpisah. Pastikan satu
             // notifikasi ringkasan (ID 1000) ada supaya panel hanya
@@ -162,7 +174,7 @@ open class KeepAliveService : Service() {
             // melihat semua Space yang berjalan.
             ensureSummary()
         } catch (e: Exception) {
-            // Guard gagal diam-diam; Space tetap jalan sebagai cached process.
+            // Pengayaan notifikasi gagal; notifikasi minimal tetap ada.
         }
         return START_STICKY
     }

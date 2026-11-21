@@ -25,7 +25,7 @@ import androidx.core.app.NotificationCompat
 // di samping ApiService.start yang sudah ada). Sekali jalan,
 // guardian hidup di prosesnya sendiri: foreground service
 // (notifikasi LOW) → uid-nya foreground → boleh memanggil
-// ApiService.start() bila /ping tidak menjawab. Guardian selamat
+// ApiService.startPlain() bila /ping tidak menjawab. Guardian selamat
 // dari matinya proses utama (proses berbeda, prioritas foreground —
 // LMK membunuh terakhir). ApiService tetap tanpa android:process →
 // selalu jalan di proses utama, siapapun yang men-start-nya;
@@ -78,14 +78,19 @@ class WatchdogGuardService : Service() {
                 Log.d(TAG, "tick: /ping menjawab — API hidup")
             } else {
                 Log.w(TAG, "tick: /ping tidak menjawab — menyalakan ApiService")
-                val started = ApiService.start(this@WatchdogGuardService)
-                Log.i(TAG, "tick: ApiService.start=$started")
+                val started = ApiService.startPlain(this@WatchdogGuardService)
+                Log.i(TAG, "tick: ApiService.startPlain=$started")
             }
             handler.postDelayed(this, CHECK_INTERVAL_MS)
         }
     }
 
     override fun onCreate() {
+        // v0.1.73: startForeground PERTAMA — notifikasi minimal dulu,
+        // langsung, tanpa try/catch yang menelan (bila throw, biarkan
+        // tercatat sebagai crash dengan stack jelas). PendingIntent +
+        // teks panjang menyusul SESUDAH foreground.
+        Log.i(TAG, "onCreate: masuk")
         super.onCreate()
         val canForeground = Build.VERSION.SDK_INT < 33 ||
             checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) ==
@@ -110,27 +115,37 @@ class WatchdogGuardService : Service() {
                     }
                 )
             }
-            val openIntent = Intent(this, MainActivity::class.java).apply {
-                flags = Intent.FLAG_ACTIVITY_NEW_TASK or
-                    Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
-            }
-            val pending = PendingIntent.getActivity(
-                this, NOTIF_ID, openIntent,
-                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-            )
             val notif: Notification = NotificationCompat.Builder(
                 this, WatchdogWorker.CHANNEL_ID
             )
                 .setSmallIcon(R.drawable.ic_notification)
                 .setContentTitle("SenzSpace watchdog aktif")
-                .setContentText("Menjaga server API lokal tetap hidup")
-                .setContentIntent(pending)
                 .setOngoing(true)
                 .build()
+            Log.i(TAG, "onCreate: startForeground")
+            startForeground(NOTIF_ID, notif)
+            Log.i(TAG, "onCreate: foreground jalan")
             try {
-                startForeground(NOTIF_ID, notif)
+                val openIntent = Intent(this, MainActivity::class.java).apply {
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or
+                        Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
+                }
+                val pending = PendingIntent.getActivity(
+                    this, NOTIF_ID, openIntent,
+                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+                )
+                val full: Notification = NotificationCompat.Builder(
+                    this, WatchdogWorker.CHANNEL_ID
+                )
+                    .setSmallIcon(R.drawable.ic_notification)
+                    .setContentTitle("SenzSpace watchdog aktif")
+                    .setContentText("Menjaga server API lokal tetap hidup")
+                    .setContentIntent(pending)
+                    .setOngoing(true)
+                    .build()
+                mgr.notify(NOTIF_ID, full)
             } catch (e: Exception) {
-                Log.e(TAG, "onCreate: startForeground gagal: ${e.message}", e)
+                Log.w(TAG, "onCreate: lengkapi notifikasi gagal: ${e.message}")
             }
         }
         Log.i(TAG, "onCreate: guardian jalan (proses :watchdog)")
