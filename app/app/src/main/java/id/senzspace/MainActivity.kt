@@ -103,7 +103,7 @@ class MainActivity : AppCompatActivity() {
             setTextColor(Color.parseColor("#E8ECF4"))
         })
         root.addView(TextView(this).apply {
-            text = "Supaya Jhon bisa membuka Space dari background saat layarnya mati (Android sering menghancurkan layar Space saat RAM menipis), SenzSpace butuh izin sekali: \"Tampil di atas aplikasi lain\". Tanpa izin ini, tugas dari Jhon bisa mentok di \"menunggu Space tampil\"."
+            text = "Supaya API bisa membuka Space dari background saat layarnya mati (Android sering menghancurkan layar Space saat RAM menipis), SenzSpace butuh izin sekali: \"Tampil di atas aplikasi lain\". Tanpa izin ini, tugas API bisa mentok di \"menunggu Space tampil\"."
             textSize = 13f
             setTextColor(Color.parseColor("#8A94A6"))
             setPadding(0, dp(12), 0, dp(12))

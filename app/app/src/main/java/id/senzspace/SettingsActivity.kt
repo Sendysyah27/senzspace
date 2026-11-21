@@ -383,7 +383,7 @@ class SettingsActivity : AppCompatActivity() {
         }
 
         // ---------- API Kontrol (v0.1.36) ----------
-        root.addView(sectionTitle("API Kontrol (untuk Jhon)"))
+        root.addView(sectionTitle("API Kontrol"))
         val apiRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -399,8 +399,7 @@ class SettingsActivity : AppCompatActivity() {
         apiRow.addView(apiSwitch)
         root.addView(apiRow)
         root.addView(TextView(this).apply {
-            text = "Server API lokal di 127.0.0.1:19335 — dipakai Jhon (Muse) " +
-                "untuk mengecek status, membuka Space, dan membaca file/log. " +
+            text = "Server API lokal di 127.0.0.1:19335 — untuk mengecek status, membuka Space, dan membaca file/log lewat API. " +
                 "Hanya bisa diakses dari HP ini (via ADB). Matikan bila tidak dipakai."
             textSize = 12f
             setTextColor(Color.parseColor("#8A94A6"))
@@ -420,7 +419,7 @@ class SettingsActivity : AppCompatActivity() {
         }
         root.addView(apiTokenValue)
         root.addView(TextView(this).apply {
-            text = "Ketuk token untuk menyalin. Token ini rahasia — hanya untuk Jhon."
+            text = "Ketuk token untuk menyalin. Token ini rahasia — jangan dibagikan."
             textSize = 12f
             setTextColor(Color.parseColor("#8A94A6"))
             setPadding(0, 0, 0, 16)
@@ -436,7 +435,7 @@ class SettingsActivity : AppCompatActivity() {
         }
         apiRegenBtn.setOnClickListener {
             ApiToken.regenerate(this)
-            Toast.makeText(this, "Token baru dibuat — Jhon membaca ulang otomatis", Toast.LENGTH_LONG).show()
+            Toast.makeText(this, "Token baru dibuat — perbarui token di klien API", Toast.LENGTH_LONG).show()
             refresh()
         }
         root.addView(apiRegenBtn)
@@ -475,7 +474,7 @@ class SettingsActivity : AppCompatActivity() {
         }
         root.addView(overlayBtn)
         root.addView(TextView(this).apply {
-            text = "Izin ini membuat Jhon bisa membuka Space dari background tanpa ketuk, walau layar Space sudah dihancurkan Android. Minta sekali — setelah diberikan, tugas API jalan sendiri."
+            text = "Izin ini membuat API bisa membuka Space dari background tanpa ketuk, walau layar Space sudah dihancurkan Android. Minta sekali — setelah diberikan, tugas API jalan sendiri."
             textSize = 12f
             setTextColor(Color.parseColor("#8A94A6"))
             setPadding(0, 8, 0, 16)

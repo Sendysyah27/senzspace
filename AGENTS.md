@@ -136,6 +136,19 @@ Jangan cuma diagnosa dari kodenya.
   hanya browsing biasa (eksekutor prompt khusus Claude, TTS khusus
   AI Studio). Halaman YT Studio mengarah ke sign-in Google sampai
   akun masuk di Space itu.
+- API 59 (21 Nov, v0.1.59): NAMA ASISTEN DIHAPUS DARI STRING UI.
+  Semua kemunculan nama asisten di string yang tampil ke pengguna
+  diganti padanan netral atau dihapus bila tidak perlu: judul seksi
+  API Kontrol di Pengaturan, penjelasan server API lokal, toast
+  sesudah token baru dibuat ("perbarui token di klien API"), teks
+  izin overlay di Pengaturan + dialog Beranda, deskripsi channel
+  notifikasi API (ApiService + ApiServer), nilai meta-data
+  foreground service di manifest, dua alasan gagal-jujur
+  watchPickup ("lalu kirim ulang tugasnya"), dan dua note status
+  antrean /prompt dan /tts (sebelumnya bersuara orang pertama).
+  Tanpa ubah perilaku:
+  token, izin overlay, channel notifikasi, dan alur watchPickup
+  tidak berubah; tidak ada perubahan fungsional lain.
 - API 57 (21 Nov, v0.1.57): AUTOSTART SESUDAH INSTALL/UPDATE.
   BootReceiver kini menangani MY_PACKAGE_REPLACED di samping
   BOOT_COMPLETED — cabang yang sama persis (ApiToken.isEnabled →

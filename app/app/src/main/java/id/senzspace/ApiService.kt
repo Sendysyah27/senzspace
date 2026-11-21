@@ -70,7 +70,7 @@ class ApiService : Service() {
                     "API kontrol",
                     NotificationManager.IMPORTANCE_LOW
                 ).apply {
-                    description = "Server API lokal SenzSpace (localhost) untuk kontrol oleh Jhon"
+                    description = "Server API lokal SenzSpace (localhost) untuk kontrol API"
                 }
             )
         }

@@ -513,7 +513,7 @@ class ApiServer(private val ctx: Context) {
                         put("visible", false)
                         put("needs_tap", true)
                         put("status", "queued")
-                        put("note", "lagi jalan di background - lu tetap di Muse aja, gua kabarin hasilnya (ketuk notifikasi kalau mau lihat)")
+                        put("note", "Tugas sedang berjalan di background — hasilnya dilaporkan setelah selesai (ketuk notifikasi kalau mau lihat)")
                     })
                 }
             }
@@ -602,7 +602,7 @@ class ApiServer(private val ctx: Context) {
                         put("visible", false)
                         put("needs_tap", true)
                         put("status", "queued")
-                        put("note", "lagi jalan di background - lu tetap di Muse aja, gua kabarin hasilnya (ketuk notifikasi kalau mau lihat)")
+                        put("note", "Tugas sedang berjalan di background — hasilnya dilaporkan setelah selesai (ketuk notifikasi kalau mau lihat)")
                     })
                 }
             }
@@ -818,9 +818,9 @@ class ApiServer(private val ctx: Context) {
             }
             if (cur.optString("status") == "queued" && cur.optLong("updated") == queuedAt) {
                 val reason = if (!overlay) {
-                    "Space tidak tampil dalam 60 detik — izin 'Tampil di atas aplikasi lain' belum diberikan. Buka SenzSpace → Pengaturan → API Kontrol → 'Beri izin', lalu Jhon kirim ulang tugasnya."
+                    "Space tidak tampil dalam 60 detik — izin 'Tampil di atas aplikasi lain' belum diberikan. Buka SenzSpace → Pengaturan → API Kontrol → 'Beri izin', lalu kirim ulang tugasnya."
                 } else {
-                    "Space tidak tampil dalam 60 detik walau izin overlay sudah ada — activity Space kemungkinan dimatikan Android (tekanan RAM) dan launch gagal. Buka Space sekali, lalu Jhon kirim ulang."
+                    "Space tidak tampil dalam 60 detik walau izin overlay sudah ada — activity Space kemungkinan dimatikan Android (tekanan RAM) dan launch gagal. Buka Space sekali, lalu kirim ulang tugasnya."
                 }
                 try {
                     JSONObject().apply {
@@ -905,7 +905,7 @@ class ApiServer(private val ctx: Context) {
                     "API kontrol",
                     NotificationManager.IMPORTANCE_LOW
                 ).apply {
-                    description = "Server API lokal SenzSpace (localhost) untuk kontrol oleh Jhon"
+                    description = "Server API lokal SenzSpace (localhost) untuk kontrol API"
                 }
             )
         }

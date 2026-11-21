@@ -240,7 +240,7 @@
             android:foregroundServiceType="specialUse">
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
-                android:value="Menjalankan server API lokal SenzSpace (localhost) untuk kontrol oleh Jhon." />
+                android:value="Menjalankan server API lokal SenzSpace (localhost) untuk kontrol API." />
         </service>
 
         <!-- v0.1.55 (audit API, AKAR 4): hidupkan ApiService sesudah
