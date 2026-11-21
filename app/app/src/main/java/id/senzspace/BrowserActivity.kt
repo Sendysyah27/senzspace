@@ -188,14 +188,14 @@ abstract class BrowserActivity : AppCompatActivity() {
      *  upload (file _inbox + judul + deskripsi + jadwal). Aturan host:
      *  hanya studio.youtube.com (dicek ApiServer + maybeRunApiStudio).
      *  pendingStudioFile = file _inbox yang disodorkan ke chooser
-     *  saat JS mengklik "Select files" di dialog upload;
+     *  saat eksekutor mengetuk "Select files" di dialog upload;
      *  studioChooserServed =
      *  chooser sudah dipanggil (dipakai tunggu upload);
      *  studioUploadFileName = nama file (tetap ada sesudah
      *  pendingStudioFile dikosongkan chooser — dipakai verifikasi
      *  nama file di dialog upload); studioSelectFilesClicked =
-     *  klik "Select files" sudah dilakukan sekali di run ini
-     *  (v0.1.63 — jangan klik berulang, chooser kedua jatuh ke
+     *  tap "Select files" sudah dilakukan sekali di run ini
+     *  (v0.1.63 — jangan tap berulang, chooser kedua jatuh ke
      *  pemilih file di layar karena file _inbox sudah terpakai). */
     private var pendingStudioAction: String? = null
     private var pendingStudioFile: java.io.File? = null
@@ -2910,30 +2910,54 @@ abstract class BrowserActivity : AppCompatActivity() {
         })
     }
 
-    /** JS klik "Select files" (v0.1.63): cari di dalam dialog upload
-     *  (ytcp-uploads-dialog) di button/a/div/span/[role="button"]/
-     *  [role="link"]/[onclick] — teks persis tanpa peduli huruf,
-     *  elemen paling dalam (pola interstitial v0.1.62 — kontrol
-     *  Studio bukan selalu <button>). Balik '1' bila diklik, '0'
-     *  bila tidak ketemu. */
+    /** JS posisi tengah "Select files" (v0.1.63, diubah v0.1.64):
+     *  cari di dalam dialog upload (ytcp-uploads-dialog) di
+     *  button/a/div/span/[role="button"]/[role="link"]/[onclick] —
+     *  teks persis tanpa peduli huruf, elemen paling dalam (pola
+     *  interstitial v0.1.62 — kontrol Studio bukan selalu
+     *  <button>). Elemen di-scroll ke tengah viewport dulu, lalu
+     *  balik 'x|y' titik tengahnya (CSS px) atau '0' bila tidak
+     *  ketemu. v0.1.64: TIDAK lagi klik JS di sini — klik .click()
+     *  tidak memicu chooser (Chrome butuh gestur terpercaya);
+     *  pemanggil mengetuk rect ini beneran via studioTapAt
+     *  (pola ttsTapAt v0.1.48, dipakai Schedule/Publish v0.1.60). */
     private fun studioSelectFilesJs(labelsJson: String): String {
-        return """(function(labels){var root=document.querySelector('ytcp-uploads-dialog')||document;var els=[...root.querySelectorAll('button,a,div,span,[role="button"],[role="link"],[onclick]')].filter(function(e){return e.offsetParent!==null;});for(var k=0;k<labels.length;k++){var best=null,bestDepth=-1;for(var i=0;i<els.length;i++){var tx=(els[i].textContent||'').trim().toLowerCase();if(tx===labels[k]){var d=0,p=els[i].parentElement;while(p){d++;p=p.parentElement;}if(d>bestDepth){bestDepth=d;best=els[i];}}}if(best){best.click();return '1';}}return '0';})($labelsJson)"""
+        return """(function(labels){var root=document.querySelector('ytcp-uploads-dialog')||document;var els=[...root.querySelectorAll('button,a,div,span,[role="button"],[role="link"],[onclick]')].filter(function(e){return e.offsetParent!==null;});for(var k=0;k<labels.length;k++){var best=null,bestDepth=-1;for(var i=0;i<els.length;i++){var tx=(els[i].textContent||'').trim().toLowerCase();if(tx===labels[k]){var d=0,p=els[i].parentElement;while(p){d++;p=p.parentElement;}if(d>bestDepth){bestDepth=d;best=els[i];}}}if(best){try{best.scrollIntoView({block:'center'});}catch(e){}var r=best.getBoundingClientRect();if(r.width>0&&r.height>0){return (r.left+r.width/2)+'|'+(r.top+r.height/2);}return '0';}}return '0';})($labelsJson)"""
     }
 
-    /** Klik "Select files" di dialog upload (v0.1.63): picu
-     *  onShowFileChooser yang menyodorkan file _inbox pending.
-     *  Sesudah klik, tunggu 2 dtk lalu lanjutkan poll tunggu
-     *  dialog (chooser dipanggil async oleh Chromium). Tombol
-     *  tidak ketemu -> gagal jujur dengan bukti teks halaman. */
+    /** Tap beneran "Select files" di dialog upload (v0.1.63,
+     *  diubah v0.1.64): picu onShowFileChooser yang menyodorkan
+     *  file _inbox pending. v0.1.64: klik JS .click() TIDAK memicu
+     *  chooser (Chrome butuh gestur terpercaya — preseden tombol
+     *  Download TTS v0.1.51), jadi tombol diketuk beneran:
+     *  baca rect dari studioSelectFilesJs lalu dispatchTouchEvent
+     *  di titik tengahnya via studioTapAt (CSS px x webView.scale,
+     *  pola ttsTapAt v0.1.48 — TANPA koordinat mati, rect dibaca
+     *  live dari DOM tiap tap). Sesudah tap, tunggu 2 dtk lalu
+     *  lanjutkan poll tunggu dialog (chooser dipanggil async oleh
+     *  Chromium). Tombol tidak ketemu -> gagal jujur dengan bukti
+     *  teks halaman. */
     private fun runStudioClickSelectFiles(triesLeft: Int) {
         if (pendingStudioAction == null) return
         val labels = org.json.JSONArray(listOf("select files", "pilih file")).toString()
         webView.evaluateJavascript(studioSelectFilesJs(labels)) { raw ->
-            val clicked = (raw?.trim()?.removeSurrounding("\"") ?: "") == "1"
-            if (!clicked) {
+            val clean = raw?.trim()?.removeSurrounding("\"") ?: ""
+            if (clean == "0" || clean.isBlank()) {
                 failStudioWithEvidence("tombol 'Select files' tidak ketemu di dialog upload")
                 return@evaluateJavascript
             }
+            val parts = clean.split("|")
+            val rx = parts.getOrNull(0)?.toFloatOrNull()
+            val ry = parts.getOrNull(1)?.toFloatOrNull()
+            if (rx == null || ry == null) {
+                failStudioWithEvidence("tombol 'Select files' tidak ketemu di dialog upload")
+                return@evaluateJavascript
+            }
+            val scale = webView.scale
+            val tx = (rx * scale).toInt()
+            val ty = (ry * scale).toInt()
+            writeStudioStatus("running", "dialog upload kebuka — mengetuk tombol 'Select files' (tap beneran, titik=${tx}x${ty})")
+            studioTapAt(rx * scale, ry * scale)
             studioHandler.postDelayed({ runStudioWaitDialog(triesLeft) }, 2000)
         }
     }
@@ -2951,11 +2975,14 @@ abstract class BrowserActivity : AppCompatActivity() {
      *  dan flag chooser — supaya penyebabnya bisa dibaca tanpa
      *  menebak. v0.1.63: dialog kebuka TANPA flag chooser BUKAN
      *  lagi gagal langsung — klik menu "Upload videos" membuka
-     *  dialog TANPA memicu chooser, jadi eksekutor klik "Select
+     *  dialog TANPA memicu chooser, jadi eksekutor mengetuk "Select
      *  files" sendiri (sekali saja per run) buat memicunya; berlaku
      *  sama untuk dialog yang baru dibuka run ini maupun dialog
      *  sisa sesi sebelumnya (keduanya dipulihkan dengan cara yang
-     *  sama, tanpa dibedakan). Sesudah klik, poll sampai nama file
+     *  sama, tanpa dibedakan). v0.1.64: tap-nya tap beneran
+     *  (dispatchTouchEvent di rect tombol, pola studioTapAt) —
+     *  klik JS .click() tidak memicu chooser. Sesudah tap, poll
+     *  sampai nama file
      *  muncul; bila anggaran habis dan chooser sudah tersaji, tetap
      *  lanjut isi judul — nama file bisa tidak tampil sebagai teks
      *  dan isi judul punya verifikasi baca-balik sendiri. Bila
@@ -2972,11 +2999,12 @@ abstract class BrowserActivity : AppCompatActivity() {
             if (dialogOpen) {
                 if (!studioChooserServed && !studioSelectFilesClicked) {
                     // v0.1.63: dialog kebuka tapi chooser belum tersaji —
-                    // klik "Select files" sendiri buat picu chooser
-                    // (bukan gagal — klik menu "Upload videos" membuka
-                    // dialog TANPA memicu chooser).
+                    // tap beneran "Select files" sendiri buat picu
+                    // chooser (bukan gagal — klik menu "Upload videos"
+                    // membuka dialog TANPA memicu chooser; v0.1.64:
+                    // klik JS .click() tidak memicu chooser, jadi tap).
                     studioSelectFilesClicked = true
-                    writeStudioStatus("running", "dialog upload kebuka — memilih file (klik 'Select files')")
+                    writeStudioStatus("running", "dialog upload kebuka — memilih file (tap 'Select files')")
                     runStudioClickSelectFiles(triesLeft)
                     return@evaluateJavascript
                 }

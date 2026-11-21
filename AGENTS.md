@@ -279,6 +279,32 @@ Jangan cuma diagnosa dari kodenya.
   perilaku: dismissal interstitial, tunggu dialog 30 dtk, isi
   judul/deskripsi, audience, visibilitas, dan verifikasi Content
   tidak disentuh.
+- API 64 (21 Nov, v0.1.64): TAP BENERAN "SELECT FILES" DI DIALOG
+  UPLOAD. Klik JS .click() pada "Select files" tidak memicu file
+  chooser — onShowFileChooser tidak pernah terpanggil dan run gagal
+  "file tidak tersaji ke chooser sesudah klik 'Select files'",
+  padahal dialog kebuka dan tombolnya ada. Akar yang diduga: Chrome
+  butuh gestur terpercaya (user activation) untuk membuka file
+  chooser; klik sintetis dari evaluateJavascript tidak terpercaya
+  dan diabaikan — preseden yang sama: tombol Download TTS v0.1.51
+  (JS .click() nol aktivitas blob di semua run, tap beneran yang
+  jalan). Fix: (a) studioSelectFilesJs tidak lagi klik — ia
+  mengembalikan rect titik tengah tombol (CSS px): cari elemen
+  berteks persis yang sama seperti v0.1.63 (button/a/div/span/
+  [role]/[onclick] dalam ytcp-uploads-dialog, paling dalam),
+  scrollIntoView ke tengah viewport dulu, balik 'x|y' atau '0';
+  (b) runStudioClickSelectFiles mengetuk rect itu beneran via
+  studioTapAt (dispatchTouchEvent DOWN+UP, CSS px x webView.scale
+  — helper yang sama dipakai Schedule/Publish v0.1.60, pola
+  ttsTapAt v0.1.48; TANPA koordinat mati, rect dibaca live dari
+  DOM tiap tap); (c) guard sekali-per-run (studioSelectFilesClicked,
+  reset di consumeApiStudio) dan poll sesudah tap tidak berubah:
+  tunggu 2 dtk lalu poll chooser tersaji + nama file; bila chooser
+  sudah tersaji tapi nama tidak tampil, tetap lanjut isi judul
+  (verifikasi baca-balik judul yang menjaga). Tanpa ubah perilaku:
+  dismissal interstitial, tunggu dialog 30 dtk, isi judul/
+  deskripsi, audience, visibilitas, dan verifikasi Content
+  tidak disentuh.
 - API 57 (21 Nov, v0.1.57): AUTOSTART SESUDAH INSTALL/UPDATE.
   BootReceiver kini menangani MY_PACKAGE_REPLACED di samping
   BOOT_COMPLETED — cabang yang sama persis (ApiToken.isEnabled →
