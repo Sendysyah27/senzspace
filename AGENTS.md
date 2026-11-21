@@ -118,6 +118,23 @@ Jangan cuma diagnosa dari kodenya.
   (BufferedReader bisa menelan byte body). senz.py v2 ngomong ke
   API via `adb forward tcp:19335 tcp:19335`; procs/shot/type/tap/
   key/home tetap ADB (level perangkat).
+- API 57 (21 Nov, v0.1.57): AUTOSTART SESUDAH INSTALL/UPDATE
+  (Gas Sendy 11:11 — "update lagi bro sekalian tambah autostart
+  receiver nya, agar jalur API ngga ada hambatan"). Bukti 11:05:
+  v0.1.56 terinstall via adb install -r ~10:51, API sempat mati
+  (ping gagal, dicek builder 2x), lalu HIDUP SENDIRI sebelum 11:05
+  tanpa ada yang buka app (Sendy membantah membuka; builder tidak
+  pakai am start). Dugaan saat itu: Android me-restart ApiService
+  START_STICKY — belum terverifikasi, dan app TIDAK punya receiver
+  PACKAGE_REPLACED (grep nol). Fix eksplisit: BootReceiver kini
+  menangani MY_PACKAGE_REPLACED di samping BOOT_COMPLETED — cabang
+  yang sama persis (ApiToken.isEnabled → ApiService.start, yang
+  sudah menangani cabang izin notifikasi sendiri per API 36);
+  manifest tambah action MY_PACKAGE_REPLACED di intent-filter
+  BootReceiver. TIDAK perlu izin baru (aksi ini hanya dikirim
+  sistem ke app sendiri). BOOT_COMPLETED tidak berubah. Tes live:
+  install → JANGAN buka app → ping tiap 1 menit sampai 5 menit;
+  LULUS bila ping OK tanpa buka app.
 - API 56 (21 Nov, v0.1.56): FILE MANAGER JADI PICKER + /stage + /delete
   (Gas Sendy 10:32 — "kerjakan OPSI A + B dan temuan lainnya langsung di
   fix juga", lanjutan audit FM+API 21 Nov 10:11). AKAR 7-11: (a) OPSI A —

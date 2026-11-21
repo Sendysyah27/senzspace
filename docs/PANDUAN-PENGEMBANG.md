@@ -5,6 +5,25 @@ panduan tes per slice (bahasa bayi) — dipindah dari README utama saat
 repo dibuka untuk semua pengguna (17 Nov 2026). README utama sekarang
 adalah halaman produk untuk pengguna.
 
+## Tes autostart API v0.1.57 di HP (bahasa bayi)
+
+"Autostart" = API jalan sendiri sesudah app di-update, tanpa buka app
+dulu. "Ping" = perintah dari komputer buat nanya "API hidup nggak?".
+"API" = jalur kendali SenzSpace lewat komputer (bukan layar).
+
+1. Install APK v0.1.57 (nimpa, JANGAN uninstall — uninstall = semua
+   login 7 Space hilang). SESUDAH install, JANGAN buka app SenzSpace,
+   JANGAN ketuk apa pun di HP.
+   **LULUS** bila: dalam 5 menit, `ping` dari komputer jawab OK
+   (versi 0.1.57, build 62) TANPA app dibuka sama sekali.
+   **GAGAL** bila: sesudah 5 menit ping masih mati — berarti receiver
+   tidak jalan, fallback tetap buka app sekali manual.
+2. Bila langkah 1 LULUS, cek `status` dari komputer.
+   **LULUS** bila: daftar Space muncul + semua akun `logged_in: true`.
+   **GAGAL** bila: status error / daftar Space kosong.
+3. JANGAN kirim prompt/resume apa pun selama tes ini — resume Gigi +
+   Paper Cut jam 12:01 itu urusan monitor, bukan tes ini.
+
 ## Tes FM picker + /stage + /delete + nama-unik upload v0.1.56 di HP (bahasa bayi)
 
 "FM picker" = File Manager di dalam app SenzSpace yang dipakai buat

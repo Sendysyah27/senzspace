@@ -244,12 +244,16 @@
         </service>
 
         <!-- v0.1.55 (audit API, AKAR 4): hidupkan ApiService sesudah
-             HP reboot — tanpa ini API mati sampai app dibuka manual. -->
+             HP reboot — tanpa ini API mati sampai app dibuka manual.
+             v0.1.57: + MY_PACKAGE_REPLACED — hidupkan ApiService
+             sesudah app di-update/di-install ulang, tanpa buka app
+             sekali (aksi ini hanya dikirim ke app sendiri). -->
         <receiver
             android:name=".BootReceiver"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
             </intent-filter>
         </receiver>
 
