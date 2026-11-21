@@ -2506,7 +2506,9 @@ abstract class BrowserActivity : AppCompatActivity() {
      *  v0.1.65 juga tombol Create (menu tidak kebuka sesudah klik
      *  JS). Tap fallback selalu SEKALI per pemanggilan (tombol
      *  satu-kali; klik ganda menu/Next bisa menutup menu atau
-     *  melompati langkah). */
+     *  melompati langkah). v0.1.66: sebelum tap, keadaan
+     *  diverifikasi sekali lagi di studioClickThenVerify — tap tidak
+     *  jalan bila menu sudah kebuka (klik JS lambat). */
     private fun studioTapAt(x: Float, y: Float) {
         val now = android.os.SystemClock.uptimeMillis()
         val down = android.view.MotionEvent.obtain(now, now, android.view.MotionEvent.ACTION_DOWN, x, y, 0)
@@ -2521,15 +2523,25 @@ abstract class BrowserActivity : AppCompatActivity() {
 
     /** JS: cari tombol terlihat dari daftar label (aria-label persis
      *  ATAU teks persis, tanpa peduli huruf besar-kecil — pola tiga
-     *  lapis v0.1.46). Mode "click": klik dan balik "1|label"; mode
-     *  "rect": balik "x|y|label" titik tengah (CSS px). Tombol yang
-     *  nonaktif dilewati (kliknya tidak berbuat apa-apa). Tidak
-     *  ketemu: "0|". dialogScope=true mencari di dalam dialog upload
-     *  (ytcp-uploads-dialog) supaya tidak kena tombol halaman di
-     *  belakang modal. */
+     *  lapis v0.1.46). v0.1.66: pilih kandidat yang BENAR-BENAR
+     *  terlihat — offsetParent non-null saja tidak cukup (elemen di
+     *  drawer/menu tersembunyi atau di luar viewport tetap lolos,
+     *  jadi klik JS + tap beneran bisa mendarat di tombol yang tidak
+     *  pernah dilihat pengguna). Syarat terlihat: offsetParent
+     *  non-null DAN rect di dalam viewport (lebar/tinggi > 0, tidak
+     *  di luar layar) DAN computed style visibility/display DAN
+     *  opacity > 0. Bila ada beberapa kandidat, yang terlihat
+     *  didahulukan (urutan DOM di antara yang terlihat). Bila tidak
+     *  ada yang terlihat: "0|". Mode "click": klik dan balik
+     *  "1|label"; mode "rect": balik "x|y|label" titik tengah
+     *  (CSS px) — rect yang dipakai tap adalah rect elemen terlihat
+     *  yang sama. Tombol yang nonaktif dilewati (kliknya tidak
+     *  berbuat apa-apa). dialogScope=true mencari di dalam dialog
+     *  upload (ytcp-uploads-dialog) supaya tidak kena tombol halaman
+     *  di belakang modal. */
     private fun studioButtonJs(mode: String, labelsJson: String, dialogScope: Boolean): String {
         val root = if (dialogScope) "var root=document.querySelector('ytcp-uploads-dialog')||document;" else "var root=document;"
-        return """(function(mode,labels){$root var bs=[...root.querySelectorAll('button,a,[role="button"],[role="menuitem"],[role="option"],[role="link"],li')].filter(function(b){return b.offsetParent!==null;});for(var k=0;k<labels.length;k++){for(var i=0;i<bs.length;i++){if(bs[i].disabled)continue;var l=(bs[i].getAttribute('aria-label')||'').trim().toLowerCase();var tx=(bs[i].textContent||'').trim().toLowerCase();if(l===labels[k]||tx===labels[k]){if(mode==='rect'){var r=bs[i].getBoundingClientRect();return (r.left+r.width/2)+'|'+(r.top+r.height/2)+'|'+labels[k];}bs[i].click();return '1|'+labels[k];}}}return '0|';})('$mode',$labelsJson)"""
+        return """(function(mode,labels){$root function vis(b){if(b.offsetParent===null)return false;var r=b.getBoundingClientRect();if(r.width<=0||r.height<=0||r.bottom<=0||r.right<=0||r.top>=window.innerHeight||r.left>=window.innerWidth)return false;var cs=getComputedStyle(b);return cs.visibility!=='hidden'&&cs.display!=='none'&&parseFloat(cs.opacity)>0;}var bs=[...root.querySelectorAll('button,a,[role="button"],[role="menuitem"],[role="option"],[role="link"],li')].filter(function(b){return !b.disabled;});for(var k=0;k<labels.length;k++){for(var i=0;i<bs.length;i++){if(!vis(bs[i]))continue;var l=(bs[i].getAttribute('aria-label')||'').trim().toLowerCase();var tx=(bs[i].textContent||'').trim().toLowerCase();if(l===labels[k]||tx===labels[k]){if(mode==='rect'){var r=bs[i].getBoundingClientRect();return (r.left+r.width/2)+'|'+(r.top+r.height/2)+'|'+labels[k];}bs[i].click();return '1|'+labels[k];}}}return '0|';})('$mode',$labelsJson)"""
     }
 
     /** JS: klik radio dari daftar label (teks baris mengandung label).
@@ -2560,15 +2572,16 @@ abstract class BrowserActivity : AppCompatActivity() {
     }
 
     /** Poll verifikasi keadaan (JS balik "1") — maks triesLeft kali,
-     *  1 detik sekali. Dipakai sesudah tiap klik (menu/dialog butuh
-     *  waktu animasi; jangan tembak sekali lalu gagal). */
-    private fun studioVerifyLoop(verifyJs: String, triesLeft: Int, onOk: () -> Unit, onFail: () -> Unit) {
+     *  intervalMs sekali (default 1 dtk). Dipakai sesudah tiap klik
+     *  (menu/dialog butuh waktu animasi; jangan tembak sekali lalu
+     *  gagal). */
+    private fun studioVerifyLoop(verifyJs: String, triesLeft: Int, onOk: () -> Unit, onFail: () -> Unit, intervalMs: Long = 1000) {
         webView.evaluateJavascript(verifyJs) { raw ->
             val ok = (raw?.trim()?.removeSurrounding("\"") ?: "") == "1"
             if (ok) {
                 onOk()
             } else if (triesLeft > 1) {
-                studioHandler.postDelayed({ studioVerifyLoop(verifyJs, triesLeft - 1, onOk, onFail) }, 1000)
+                studioHandler.postDelayed({ studioVerifyLoop(verifyJs, triesLeft - 1, onOk, onFail, intervalMs) }, intervalMs)
             } else {
                 onFail()
             }
@@ -2576,30 +2589,37 @@ abstract class BrowserActivity : AppCompatActivity() {
     }
 
     /** Klik tombol dari daftar label lalu verifikasi keadaan berikut.
-     *  Urutan: klik JS -> tunggu 1200 ms -> verifikasi (3x, 1 dtk)
-     *  -> bila gagal dan allowTap: tap beneran sekali di rect tombol
-     *  lalu verifikasi lagi (2x); bila tombol sudah tidak ada
-     *  (aksi berhasil tapi verifikasi lambat), verifikasi sekali lagi
-     *  sebelum gagal. onFail membawa alasan: "noclick" (tombol tidak
-     *  ketemu), "noverify" (keadaan tidak berubah). */
+     *  Urutan: klik JS -> tunggu 1200 ms -> verifikasi (3x, interval
+     *  verifyIntervalMs) -> bila gagal dan allowTap: baca rect tombol
+     *  -> verifikasi sekali lagi SEBELUM tap (menu bisa kebuka lambat
+     *  sesudah klik JS — tap di atas menu yang sudah kebuka malah
+     *  menutupnya lagi, race v0.1.66) -> bila masih tertutup, tap
+     *  beneran sekali di rect tombol lalu verifikasi lagi (2x); bila
+     *  tombol sudah tidak ada (aksi berhasil tapi verifikasi lambat),
+     *  verifikasi sekali lagi sebelum gagal. onFail membawa alasan +
+     *  jejak percobaan: "noclick" (tombol tidak ketemu / tidak ada
+     *  yang terlihat) atau "noverify" (keadaan tidak berubah),
+     *  diikuti hasil tiap langkah dalam kurung — dipakai detail
+     *  gagal langkah Create. */
     private fun studioClickThenVerify(
         labelsJson: String,
         verifyJs: String,
         dialogScope: Boolean,
         allowTap: Boolean,
         onOk: () -> Unit,
-        onFail: (String) -> Unit
+        onFail: (String) -> Unit,
+        verifyIntervalMs: Long = 1000
     ) {
         webView.evaluateJavascript(studioButtonJs("click", labelsJson, dialogScope)) { raw ->
             val clicked = (raw?.trim()?.removeSurrounding("\"") ?: "").split("|").getOrNull(0) == "1"
             if (!clicked) {
-                onFail("noclick")
+                onFail("noclick (tombol tidak ketemu / tidak ada kandidat terlihat)")
                 return@evaluateJavascript
             }
             studioHandler.postDelayed({
                 studioVerifyLoop(verifyJs, 3, onOk, {
                     if (!allowTap) {
-                        onFail("noverify")
+                        onFail("noverify (klik JS ok; menu=0 sesudah verifikasi 3x @${verifyIntervalMs}ms)")
                     } else {
                         webView.evaluateJavascript(studioButtonJs("rect", labelsJson, dialogScope)) { raw3 ->
                             val rp = (raw3?.trim()?.removeSurrounding("\"") ?: "").split("|")
@@ -2608,17 +2628,27 @@ abstract class BrowserActivity : AppCompatActivity() {
                             if (rx == null || ry == null) {
                                 // Tombol hilang — mungkin aksi berhasil
                                 // tapi verifikasi lambat: verifikasi lagi.
-                                studioVerifyLoop(verifyJs, 2, onOk, { onFail("noverify") })
+                                studioVerifyLoop(verifyJs, 2, onOk, { onFail("noverify (klik JS ok; tombol hilang; menu=0 sesudah verifikasi 2x)") })
                                 return@evaluateJavascript
                             }
-                            val scale = webView.scale
-                            studioTapAt(rx * scale, ry * scale)
-                            studioHandler.postDelayed({
-                                studioVerifyLoop(verifyJs, 2, onOk, { onFail("noverify") })
-                            }, 1200)
+                            // v0.1.66: verifikasi sekali lagi SEBELUM tap —
+                            // menu yang kebuka lambat sesudah klik JS
+                            // tidak boleh ditutup lagi oleh tap fallback.
+                            webView.evaluateJavascript(verifyJs) { rawV ->
+                                val openNow = (rawV?.trim()?.removeSurrounding("\"") ?: "") == "1"
+                                if (openNow) {
+                                    onOk()
+                                    return@evaluateJavascript
+                                }
+                                val scale = webView.scale
+                                studioTapAt(rx * scale, ry * scale)
+                                studioHandler.postDelayed({
+                                    studioVerifyLoop(verifyJs, 2, onOk, { onFail("noverify (klik JS ok; menu=0 sesudah verifikasi 3x @${verifyIntervalMs}ms; tap beneran rect=${rx}x${ry}; menu=0 sesudah tap + verifikasi 2x)") })
+                                }, 1200)
+                            }
                         }
                     }
-                })
+                }, verifyIntervalMs)
             }, 1200)
         }
     }
@@ -2667,15 +2697,40 @@ abstract class BrowserActivity : AppCompatActivity() {
     }
 
     /** Gagal jujur dengan bukti (v0.1.62): 300 karakter pertama teks
-     *  halaman + dump kontrol — pola runStudioWaitDialog. */
-    private fun failStudioWithEvidence(prefix: String) {
+     *  halaman + dump kontrol — pola runStudioWaitDialog. Param
+     *  extra (v0.1.66) ditempel sesudah prefix bila tidak kosong. */
+    private fun failStudioWithEvidence(prefix: String, extra: String = "") {
         val diagJs = """(function(){var t=(document.body?document.body.innerText:'')||'';return t.replace(/\s+/g,' ').trim().slice(0,300);})()"""
         webView.evaluateJavascript(diagJs) { rawDiag ->
             val diag = (rawDiag?.trim()?.removeSurrounding("\"") ?: "").take(300)
             webView.evaluateJavascript(studioDumpJs()) { rawDump ->
                 val dump = (rawDump?.trim()?.removeSurrounding("\"") ?: "").take(300)
-                failStudio("$prefix (teks halaman: $diag; $dump)")
+                failStudio("$prefix${if (extra.isNotBlank()) " ($extra)" else ""} (teks halaman: $diag; $dump)")
             }
+        }
+    }
+
+    /** JS probe tombol Create (v0.1.66): hitung kandidat berlabel
+     *  Create/Buat, berapa yang terlihat (syarat yang sama dengan
+     *  studioButtonJs), tag + rect + dalam-viewport kandidat
+     *  terpilih, dan apakah menu ("Upload videos") sudah kebuka.
+     *  Balik 'ditemukan|terlihat|tag|x,y,w,h|dalamViewport|menu'. */
+    private fun studioCreateProbeJs(labelsJson: String): String {
+        return """(function(labels){function vis(b){if(b.offsetParent===null)return false;var r=b.getBoundingClientRect();if(r.width<=0||r.height<=0||r.bottom<=0||r.right<=0||r.top>=window.innerHeight||r.left>=window.innerWidth)return false;var cs=getComputedStyle(b);return cs.visibility!=='hidden'&&cs.display!=='none'&&parseFloat(cs.opacity)>0;}var bs=[...document.querySelectorAll('button,a,[role="button"],[role="menuitem"],[role="option"],[role="link"],li')].filter(function(b){return !b.disabled;});var found=0,seen=0,pick=null;for(var k=0;k<labels.length;k++){for(var i=0;i<bs.length;i++){var l=(bs[i].getAttribute('aria-label')||'').trim().toLowerCase();var tx=(bs[i].textContent||'').trim().toLowerCase();if(l===labels[k]||tx===labels[k]){found++;if(vis(bs[i])){seen++;if(!pick)pick=bs[i];}}}}var tag='none',rect='none',inVp='0';if(pick){tag=pick.tagName;var r=pick.getBoundingClientRect();rect=Math.round(r.left)+','+Math.round(r.top)+','+Math.round(r.width)+','+Math.round(r.height);inVp=(r.bottom>0&&r.right>0&&r.top<window.innerHeight&&r.left<window.innerWidth)?'1':'0';}var t=document.body?document.body.innerText:'';var menu=(t.indexOf('Upload videos')>=0||t.indexOf('Upload video')>=0||t.indexOf('Unggah video')>=0)?'1':'0';return found+'|'+seen+'|'+tag+'|'+rect+'|'+inVp+'|'+menu;})($labelsJson)"""
+    }
+
+    /** Gagal jujur langkah Create dengan bukti (v0.1.66): alasan +
+     *  jejak percobaan dari studioClickThenVerify (klik JS, hasil
+     *  verifikasi, rect tap), probe tombol Create (ditemukan /
+     *  terlihat / tag / rect / dalam-viewport / menu), 300 karakter
+     *  pertama teks halaman + dump kontrol — pola
+     *  failStudioWithEvidence. */
+    private fun failStudioCreateMenu(reason: String) {
+        val labels = org.json.JSONArray(listOf("create", "buat")).toString()
+        webView.evaluateJavascript(studioCreateProbeJs(labels)) { rawProbe ->
+            val p = (rawProbe?.trim()?.removeSurrounding("\"") ?: "").split("|")
+            val probe = "Create: ditemukan=${p.getOrNull(0) ?: "?"} terlihat=${p.getOrNull(1) ?: "?"} tag=${p.getOrNull(2) ?: "?"} rect=${p.getOrNull(3) ?: "?"} dalamViewport=${p.getOrNull(4) ?: "?"} menu=${p.getOrNull(5) ?: "?"}"
+            failStudioWithEvidence("menu Create tidak kebuka sesudah klik tombol Create ($reason)", probe)
         }
     }
 
@@ -2893,9 +2948,12 @@ abstract class BrowserActivity : AppCompatActivity() {
             writeStudioStatus("running", "tombol Create ketemu — membuka menu upload")
             val labels = org.json.JSONArray(listOf("create", "buat")).toString()
             val verifyJs = """(function(){var t=document.body?document.body.innerText||'':'';return (t.indexOf('Upload videos')>=0||t.indexOf('Upload video')>=0||t.indexOf('Unggah video')>=0)?'1':'0';})()"""
-            studioClickThenVerify(labels, verifyJs, false, true, { runStudioClickUploadMenu() }, {
-                failStudio("menu Create tidak kebuka sesudah klik tombol Create")
-            })
+            // v0.1.66: verifikasi 3x @2 dtk (bukan 1 dtk) — menu bisa
+            // kebuka lambat sesudah klik JS; tap fallback baru jalan
+            // sesudah jendela itu, dan gagal membawa bukti probe.
+            studioClickThenVerify(labels, verifyJs, false, true, onOk = { runStudioClickUploadMenu() }, onFail = { reason ->
+                failStudioCreateMenu(reason)
+            }, verifyIntervalMs = 2000)
         }
     }
 

@@ -324,6 +324,36 @@ Jangan cuma diagnosa dari kodenya.
   perilaku: dismissal interstitial, tap beneran "Select files",
   tunggu dialog 30 dtk, isi judul/deskripsi, audience,
   visibilitas, dan verifikasi Content tidak disentuh.
+- API 66 (21 Nov, v0.1.66): SELIDIKI KEGAGALAN MENU CREATE.
+  Klik JS tombol Create + tap beneran (v0.1.65) sama-sama tidak
+  membuka menu — teks "Upload videos" tidak pernah muncul, padahal
+  dasbor sehat (tombol Create ada di header, tanpa interstitial)
+  dan klik JS yang sama bekerja di run sebelumnya. Dua akar yang
+  diduga: (a) selektor menemukan tombol Create yang salah
+  (duplikat tersembunyi / di luar viewport — filter lama cuma
+  offsetParent); (b) menu kebuka lambat sesudah klik JS, lalu tap
+  fallback menutupnya lagi. Fix: (a) studioButtonJs kini memilih
+  kandidat yang BENAR-BENAR terlihat — offsetParent non-null DAN
+  rect di dalam viewport DAN computed style visibility/display DAN
+  opacity > 0; bila ada beberapa kandidat, yang terlihat
+  didahulukan (urutan DOM di antara yang terlihat); bila tidak ada
+  yang terlihat, balik "0|" (tidak ketemu) — berlaku untuk klik
+  dan untuk rect tap (elemen yang sama); (b) studioClickThenVerify
+  kini terima verifyIntervalMs (default 1000 ms — pemanggil lain
+  tidak berubah); langkah Create memakai 2000 ms, jadi jendela
+  verifikasi sesudah klik JS jadi ~7,2 dtk (1200 ms + 3x2 dtk)
+  sebelum tap fallback jalan; (c) SEBELUM tap, keadaan
+  diverifikasi sekali lagi — bila menu sudah kebuka, tap dilewati
+  dan alur lanjut (menutup celah race antara verifikasi terakhir
+  dan tap); (d) onFail kini membawa jejak percobaan (klik JS ok /
+  hasil tiap verifikasi / rect tap) dan langkah Create gagal
+  lewat failStudioCreateMenu — probe studioCreateProbeJs
+  (ditemukan / terlihat / tag / rect / dalam-viewport / menu) +
+  300 karakter pertama teks halaman + dump kontrol (pola
+  failStudioWithEvidence). Tanpa ubah perilaku: dismissal
+  interstitial, tap beneran "Select files", tunggu dialog 30 dtk,
+  isi judul/deskripsi, audience, visibilitas, dan verifikasi
+  Content tidak disentuh; "Upload videos" tetap allowTap=false.
 - API 57 (21 Nov, v0.1.57): AUTOSTART SESUDAH INSTALL/UPDATE.
   BootReceiver kini menangani MY_PACKAGE_REPLACED di samping
   BOOT_COMPLETED — cabang yang sama persis (ApiToken.isEnabled →
