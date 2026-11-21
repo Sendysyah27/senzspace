@@ -305,6 +305,25 @@ Jangan cuma diagnosa dari kodenya.
   dismissal interstitial, tunggu dialog 30 dtk, isi judul/
   deskripsi, audience, visibilitas, dan verifikasi Content
   tidak disentuh.
+- API 65 (21 Nov, v0.1.65): FALLBACK TAP BENERAN UNTUK TOMBOL
+  CREATE. Klik JS pada tombol Create tidak membuka menu — teks
+  "Upload videos" tidak pernah muncul di body sesudah jeda 1200
+  ms + verifikasi 3x1 dtk — padahal klik JS yang sama bekerja di
+  run sebelumnya, jadi penyebabnya diduga kondisi halaman sesudah
+  install/reload (menu belum terpasang / popup menutupi), bukan
+  aturan deterministik. Fix: pemanggilan studioClickThenVerify
+  untuk tombol Create di runStudioUploadDiagnose kini
+  allowTap=true (dulu false) — bila klik JS gagal membuka menu,
+  helper mengetuk tombol SEKALI beneran di rect live-nya
+  (studioTapAt, CSS px x webView.scale; tanpa koordinat mati)
+  lalu verifikasi lagi 2x. Jalur fallback itu sudah ada di helper
+  dan dipakai Schedule/Publish sejak v0.1.60; komentar studioTapAt
+  diperbarui (Create kini termasuk pemakai, tap tetap sekali
+  karena tap kedua bisa menutup menu). verifyJs, jeda 1200 ms,
+  ronde verifikasi 3x, dan pesan gagal tidak berubah. Tanpa ubah
+  perilaku: dismissal interstitial, tap beneran "Select files",
+  tunggu dialog 30 dtk, isi judul/deskripsi, audience,
+  visibilitas, dan verifikasi Content tidak disentuh.
 - API 57 (21 Nov, v0.1.57): AUTOSTART SESUDAH INSTALL/UPDATE.
   BootReceiver kini menangani MY_PACKAGE_REPLACED di samping
   BOOT_COMPLETED — cabang yang sama persis (ApiToken.isEnabled →

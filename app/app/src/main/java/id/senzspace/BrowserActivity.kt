@@ -2502,8 +2502,10 @@ abstract class BrowserActivity : AppCompatActivity() {
 
     /** Tap beneran di koordinat WebView (pola ttsTapAt v0.1.48):
      *  dispatchTouchEvent DOWN + UP (120 ms). Dipakai fallback klik
-     *  tombol Schedule/Publish bila JS .click() diam — hanya di sana
-     *  (tombol satu-kali; klik ganda menu/Next bisa menutup menu atau
+     *  tombol Schedule/Publish bila JS .click() diam, dan sejak
+     *  v0.1.65 juga tombol Create (menu tidak kebuka sesudah klik
+     *  JS). Tap fallback selalu SEKALI per pemanggilan (tombol
+     *  satu-kali; klik ganda menu/Next bisa menutup menu atau
      *  melompati langkah). */
     private fun studioTapAt(x: Float, y: Float) {
         val now = android.os.SystemClock.uptimeMillis()
@@ -2891,7 +2893,7 @@ abstract class BrowserActivity : AppCompatActivity() {
             writeStudioStatus("running", "tombol Create ketemu — membuka menu upload")
             val labels = org.json.JSONArray(listOf("create", "buat")).toString()
             val verifyJs = """(function(){var t=document.body?document.body.innerText||'':'';return (t.indexOf('Upload videos')>=0||t.indexOf('Upload video')>=0||t.indexOf('Unggah video')>=0)?'1':'0';})()"""
-            studioClickThenVerify(labels, verifyJs, false, false, { runStudioClickUploadMenu() }, {
+            studioClickThenVerify(labels, verifyJs, false, true, { runStudioClickUploadMenu() }, {
                 failStudio("menu Create tidak kebuka sesudah klik tombol Create")
             })
         }
