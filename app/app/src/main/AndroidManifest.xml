@@ -8,10 +8,6 @@
          Space supaya sistem tidak mematikan Space yang lama tidak dibuka. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
-    <!-- v0.1.71: watchdog WorkManager — foreground service internal
-         WorkManager bertipe dataSync (target SDK 34 wajib izin ini,
-         izin normal, tanpa prompt runtime). -->
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- v0.1.42: izin "tampil di atas aplikasi lain" — membebaskan launch Space dari background (BAL), supaya tugas API jalan tanpa ketuk walau activity Space sudah dihancurkan Android. Diminta sekali di Beranda + Pengaturan. -->
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />

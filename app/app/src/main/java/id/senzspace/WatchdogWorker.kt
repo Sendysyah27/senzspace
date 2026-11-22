@@ -1,16 +1,9 @@
 package id.senzspace
 
-import android.app.NotificationChannel
-import android.app.NotificationManager
 import android.content.Context
-import android.content.pm.ServiceInfo
-import android.os.Build
 import android.util.Log
-import androidx.core.app.NotificationCompat
 import androidx.work.ExistingPeriodicWorkPolicy
-import androidx.work.ForegroundInfo
 import androidx.work.OneTimeWorkRequestBuilder
-import androidx.work.OutOfQuotaPolicy
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.Worker
@@ -39,7 +32,6 @@ class WatchdogWorker(appContext: Context, params: WorkerParameters) :
         private const val TAG = "SenzWatchdog"
         const val UNIQUE_NAME = "senzspace-watchdog"
         const val CHANNEL_ID = "senzspace_watchdog"
-        const val NOTIF_ID = 1201
 
         // Idempotent: KEEP bila sudah terdaftar. Tidak pernah throw —
         // pemanggil dari proses Space (:spaceN) tidak boleh mati
@@ -62,15 +54,18 @@ class WatchdogWorker(appContext: Context, params: WorkerParameters) :
             }
         }
 
-        // One-time expedited: dipakai ReviveReceiver. Start langsung
-        // dari receiver di background hampir pasti ditolak (bukan
-        // broadcast yang dikecualikan sistem), jadi serahkan ke
-        // worker — worker setForeground dulu baru start, jalur yang
-        // disahkan sistem untuk kerja background. Tidak pernah throw.
+        // One-time biasa (tanpa expedited): dipakai ReviveReceiver.
+        // v0.1.76: TANPA setExpedited DAN TANPA setForegroundAsync —
+        // expedited work WAJIB foreground, dan promosi foreground
+        // worker MENCRASHKAN proses utama (SystemForegroundService
+        // memanggil startForeground DATA_SYNC, tapi merged manifest
+        // tidak mendeklarasikan foregroundServiceType untuk service
+        // itu → IllegalArgumentException ~0,5 dtk sesudah start).
+        // Worker hanya ping socket + startPlain — tidak butuh
+        // foreground; one-time biasa cukup. Tidak pernah throw.
         fun enqueueNow(context: Context) {
             try {
                 val req = OneTimeWorkRequestBuilder<WatchdogWorker>()
-                    .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
                     .build()
                 WorkManager.getInstance(context).enqueue(req)
                 Log.d(TAG, "enqueueNow: one-time work didaftarkan")
@@ -122,19 +117,18 @@ class WatchdogWorker(appContext: Context, params: WorkerParameters) :
         // apa pun (enqueue juga dicek di pemanggil, tapi saklar bisa
         // berubah sesudah enqueue).
         if (!ApiToken.isEnabled(applicationContext)) return Result.success()
-        // Promosikan worker ke foreground service SEBELUM memeriksa:
-        // promosi menjaga worker sendiri tetap hidup selama doWork
-        // berjalan. (v0.1.74: promosi ini TIDAK LAGI syarat untuk
-        // menyalakan ApiService — ApiService.startPlain tidak butuh
-        // foreground; startForegroundService dari background justru
-        // yang membunuh service lewat timeout FGS. Bila promosi gagal,
-        // tetap lanjut.)
-        try {
-            setForegroundAsync(createForegroundInfo())
-                .get(10, TimeUnit.SECONDS)
-        } catch (e: Exception) {
-            Log.w(TAG, "doWork: promosi foreground gagal: ${e.message}")
-        }
+        // v0.1.76: TIDAK ADA promosi foreground di sini. doWork()
+        // hanya ping socket + startPlain — worker jalan sebagai
+        // background worker biasa. setForegroundAsync DIHAPUS karena
+        // mencrashkan proses utama: SystemForegroundService
+        // memanggil startForeground DATA_SYNC, tapi merged manifest
+        // tidak mendeklarasikan foregroundServiceType untuk service
+        // itu (atribut 0x0) → IllegalArgumentException ~0,5 dtk
+        // sesudah start, tiap buka app (FC sejak v0.1.74 — saat
+        // enqueue periodik akhirnya berhasil dan worker jalan
+        // pertama kali). Try/catch di sekitar setForegroundAsync
+        // TIDAK menolong: exception dilempar asinkron di main thread
+        // di dalam Handler SystemForegroundService sendiri.
         if (!isApiAlive(applicationContext)) {
             Log.w(TAG, "doWork: /ping tidak menjawab — menyalakan ApiService")
             val started = ApiService.startPlain(applicationContext)
@@ -145,36 +139,8 @@ class WatchdogWorker(appContext: Context, params: WorkerParameters) :
         return Result.success()
     }
 
-    private fun createForegroundInfo(): ForegroundInfo {
-        val mgr = applicationContext.getSystemService(
-            Context.NOTIFICATION_SERVICE
-        ) as NotificationManager
-        if (Build.VERSION.SDK_INT >= 26 &&
-            mgr.getNotificationChannel(CHANNEL_ID) == null
-        ) {
-            mgr.createNotificationChannel(
-                NotificationChannel(
-                    CHANNEL_ID,
-                    "Watchdog API",
-                    NotificationManager.IMPORTANCE_LOW
-                ).apply {
-                    description = "Pemeriksaan berkala server API lokal SenzSpace"
-                }
-            )
-        }
-        val notif = NotificationCompat.Builder(applicationContext, CHANNEL_ID)
-            .setSmallIcon(R.drawable.ic_notification)
-            .setContentTitle("SenzSpace watchdog")
-            .setContentText("Memeriksa server API lokal")
-            .setOngoing(true)
-            .build()
-        return ForegroundInfo(
-            NOTIF_ID,
-            notif,
-            ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
-        )
-    }
-
     // v0.1.72: isApiAlive pindah ke companion object (dipakai ulang
     // WatchdogGuardService) — lihat atas.
+    // v0.1.76: createForegroundInfo() DIHAPUS (lihat doWork) — worker
+    // tidak lagi promosi foreground.
 }

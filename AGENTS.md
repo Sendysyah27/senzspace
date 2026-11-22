@@ -1046,3 +1046,33 @@ Jangan cuma diagnosa dari kodenya.
   butuh Context); Zip-Slip bandingkan dengan dest + separator;
   backup rules kecualikan SharedPreferences token; isApiAlive
   kirim Authorization Bearer sehingga guardian tahu API hidup.
+- API 76 (22 Nov, v0.1.76): WORKER FOREGROUND CRASH DIHAPUS.
+  (a) Latar: app force-close tiap dibuka sejak v0.1.74. Crash log
+  HP (dropbox + crash buffer): IllegalArgumentException
+  "foregroundServiceType 0x00000001 is not a subset of
+  foregroundServiceType attribute 0x00000000" di
+  SystemForegroundService.startForeground (WorkManager internal),
+  proses utama mati ~0,5 dtk sesudah start. Merged manifest
+  membuktikan SystemForegroundService dideklarasikan TANPA
+  foregroundServiceType.
+  (b) Akar: WatchdogWorker.doWork() memanggil setForegroundAsync
+  (ForegroundInfo DATA_SYNC). Crash baru muncul di v0.1.74 karena
+  sebelum itu enqueue() periodik selalu gagal sehingga doWork()
+  tidak pernah jalan; v0.1.74 menghapus setExpedited dari
+  periodic enqueue → worker jalan pertama kali → crash pertama.
+  Try/catch di doWork() tidak menolong: exception dilempar
+  asinkron di main thread di dalam Handler SystemForegroundService.
+  (c) Perbaikan: setForegroundAsync + createForegroundInfo()
+  DIHAPUS dari WatchdogWorker — worker jalan sebagai background
+  worker biasa (hanya ping socket + startPlain, tidak butuh
+  foreground). setExpedited DIHAPUS dari enqueueNow() (expedited
+  work wajib foreground) → one-time request biasa. Permission
+  FOREGROUND_SERVICE_DATA_SYNC DIHAPUS dari manifest (tidak ada
+  pemakai lain). CHANNEL_ID worker dipertahankan (dipakai
+  WatchdogGuardService untuk channel notifikasinya).
+  (d) TIDAK BERUBAH: semua pemanggil startPlain, probe
+  isAppVisible di onCreate, guardian tick 60 dtk, isApiAlive
+  Bearer, logging SenzWatchdog/SenzRevive, periodic WorkManager
+  tanpa setExpedited, seluruh perbaikan audit v0.1.75, eksekutor
+  prompt/TTS/Studio, snapshot/thumbnail, limit detection,
+  FileManager UI. Tanpa izin baru.
