@@ -71,8 +71,49 @@ object FileStore {
     fun snapStuckFile(ctx: Context, suffix: String): File =
         File(liveDir(ctx), "$suffix-snapstuck.txt")
 
+    /** v0.1.75 (audit #13): SATU gerbang path — canonicalize, wajib
+     *  di bawah rootDir. Kembalikan null bila keluar root. */
+    fun resolveUnderRoot(ctx: Context, vararg parts: String): File? {
+        val root = try {
+            rootDir(ctx).canonicalFile
+        } catch (_: Exception) {
+            return null
+        }
+        var cur = root
+        for (part in parts) {
+            if (part.isEmpty()) continue
+            cur = File(cur, part)
+        }
+        val canon = try {
+            cur.canonicalFile
+        } catch (_: Exception) {
+            return null
+        }
+        val rootPath = root.path + File.separator
+        if (canon.path != root.path && !canon.path.startsWith(rootPath)) return null
+        return canon
+    }
+
+    /** File HARUS di bawah rootDir (canonical). */
+    fun isUnderRoot(ctx: Context, file: File): Boolean {
+        val root = try {
+            rootDir(ctx).canonicalFile
+        } catch (_: Exception) {
+            return false
+        }
+        val canon = try {
+            file.canonicalFile
+        } catch (_: Exception) {
+            return false
+        }
+        val rootPath = root.path + File.separator
+        return canon.path == root.path || canon.path.startsWith(rootPath)
+    }
+
     fun folderDir(ctx: Context, key: String): File {
-        return File(rootDir(ctx), key)
+        // Kunci tidak valid (mis. "../") tidak pernah keluar dari
+        // root — jatuh ke sentinel di bawah root, bukan ke luar.
+        return resolveUnderRoot(ctx, key) ?: File(rootDir(ctx), "invalid-key")
     }
 
     /** Buat semua folder bila belum ada (dipanggil saat app dibuka). */
@@ -117,6 +158,7 @@ object FileStore {
 
     /** Salin file ke folder tujuan (nama bentrok → tambah (1), (2), dst). */
     fun copy(ctx: Context, file: File, destKey: String): File? {
+        if (!isUnderRoot(ctx, file)) return null
         val destDir = folderDir(ctx, destKey)
         destDir.mkdirs()
         var dest = File(destDir, file.name)
@@ -138,7 +180,8 @@ object FileStore {
     }
 
     /** Ganti nama file di tempat (nama bentrok → tambah (1), (2), dst). */
-    fun rename(file: File, newName: String): File? {
+    fun rename(ctx: Context, file: File, newName: String): File? {
+        if (!isUnderRoot(ctx, file)) return null
         val clean = newName.trim()
         if (clean.isEmpty() || clean.contains("/") || clean.contains("\\")) return null
         var dest = File(file.parentFile, clean)
@@ -155,7 +198,8 @@ object FileStore {
     }
 
     /** Buat subfolder di dalam folder kerja (mis. per episode di _Arsip). */
-    fun newFolder(parent: File, name: String): File? {
+    fun newFolder(ctx: Context, parent: File, name: String): File? {
+        if (!isUnderRoot(ctx, parent)) return null
         val clean = name.trim()
         if (clean.isEmpty() || clean.contains("/") || clean.contains("\\")) return null
         val dir = File(parent, clean)
@@ -185,6 +229,7 @@ object FileStore {
 
     /** Pindah file ke folder tujuan. Nama bentrok → tambah (1), (2), dst. */
     fun move(ctx: Context, file: File, destKey: String): File? {
+        if (!isUnderRoot(ctx, file)) return null
         val destDir = folderDir(ctx, destKey)
         destDir.mkdirs()
         var dest = File(destDir, file.name)
@@ -201,8 +246,10 @@ object FileStore {
     }
 
     /** Hapus file atau folder beserta isinya (rekursif untuk folder). */
-    fun delete(file: File): Boolean =
-        if (file.isDirectory) file.deleteRecursively() else file.delete()
+    fun delete(ctx: Context, file: File): Boolean {
+        if (!isUnderRoot(ctx, file)) return false
+        return if (file.isDirectory) file.deleteRecursively() else file.delete()
+    }
 
     // ---------- Custom path ekspor (v0.1.31) ----------
     // Folder ekspor bisa dipilih pengguna (SAF): URI pohon dokumen

@@ -1091,9 +1091,17 @@ class FileManagerActivity : AppCompatActivity() {
                     var entry = zis.nextEntry
                     while (entry != null) {
                         val out = File(destDir, entry.name)
-                        // Anti Zip-Slip: tolak entri yang keluar dari
-                        // folder tujuan.
-                        if (!out.canonicalPath.startsWith(destCanonical)) {
+                        // Anti Zip-Slip (v0.1.75, audit #12): bandingkan
+                        // dengan dest + separator — sibling yang berbagi
+                        // prefix nama (mis. archive2 vs archive) DITOLAK.
+                        // File yang canonical-nya SAMA dengan folder
+                        // tujuan juga ditolak; entri direktori itu
+                        // sendiri (mkdirs) dibolehkan.
+                        val outCanon = out.canonicalPath
+                        val inside = outCanon.startsWith(
+                            destCanonical + java.io.File.separator
+                        )
+                        if (!inside && !(entry.isDirectory && outCanon == destCanonical)) {
                             zis.closeEntry()
                             entry = zis.nextEntry
                             continue
@@ -1151,7 +1159,7 @@ class FileManagerActivity : AppCompatActivity() {
             .setPositiveButton("Hapus") { _, _ ->
                 var ok = 0
                 for (e in entries) {
-                    if (FileStore.delete(e)) ok++
+                    if (FileStore.delete(this, e)) ok++
                 }
                 Toast.makeText(this, "$ok item dihapus", Toast.LENGTH_SHORT).show()
                 clearSelection()
@@ -1178,7 +1186,7 @@ class FileManagerActivity : AppCompatActivity() {
             .setPositiveButton("Simpan") { _, _ ->
                 val name = input.text.toString().trim()
                 if (name.isEmpty()) return@setPositiveButton
-                if (FileStore.rename(entry, name) != null) {
+                if (FileStore.rename(this, entry, name) != null) {
                     Toast.makeText(this, "Nama diganti", Toast.LENGTH_SHORT).show()
                 } else {
                     Toast.makeText(this, "Gagal mengganti nama", Toast.LENGTH_LONG).show()
@@ -1202,7 +1210,7 @@ class FileManagerActivity : AppCompatActivity() {
             .setPositiveButton("Buat") { _, _ ->
                 val name = input.text.toString().trim()
                 if (name.isEmpty()) return@setPositiveButton
-                if (FileStore.newFolder(dir, name) != null) {
+                if (FileStore.newFolder(this, dir, name) != null) {
                     Toast.makeText(this, "Folder \"$name\" dibuat", Toast.LENGTH_SHORT).show()
                 } else {
                     Toast.makeText(this, "Gagal — nama sudah ada / tidak valid", Toast.LENGTH_LONG).show()

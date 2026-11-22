@@ -95,6 +95,14 @@ class ApiServer(private val ctx: Context) {
             "aistudio", "space8", "space9", "space10",
             "_inbox", "_arsip", "_log-blob", "_log-crash", "_live"
         )
+        // v0.1.75 (audit #4): batas body per-route, dicek SEBELUM
+        // alokasi ByteArray — satu request tanpa token tidak bisa
+        // OOM-kan proses utama. /upload tetap 100 MB (file VO/MP4);
+        // route JSON lain 1 MB (prompt/TTS/Studio ≤ 50 rb karakter).
+        private const val MAX_HEADER_LINE = 8192
+        private const val MAX_HEADERS = 100
+        private const val MAX_BODY_JSON = 1024 * 1024
+        private const val MAX_BODY_UPLOAD = 100 * 1024 * 1024
     }
 
     private var serverSocket: ServerSocket? = null
@@ -145,8 +153,18 @@ class ApiServer(private val ctx: Context) {
             if (b == -1) return if (bytes.isEmpty()) null else String(bytes.toByteArray(), Charsets.US_ASCII)
             if (b == '\n'.code) break
             if (b != '\r'.code) bytes.add(b.toByte())
+            // v0.1.75 (audit #4): satu baris header dibatasi —
+            // tanpa batas, satu baris tanpa newline menelan memori.
+            if (bytes.size > MAX_HEADER_LINE) return null
         }
         return String(bytes.toByteArray(), Charsets.US_ASCII)
+    }
+
+    /** Batas body yang boleh dibaca untuk satu (method, path). */
+    private fun bodyCapFor(method: String, path: String): Int = when {
+        method == "POST" && path == "/upload" -> MAX_BODY_UPLOAD
+        method == "POST" -> MAX_BODY_JSON
+        else -> 0
     }
 
     private fun handle(client: Socket) {
@@ -162,17 +180,47 @@ class ApiServer(private val ctx: Context) {
             val method = parts[0].uppercase()
             val rawTarget = parts[1]
             val headers = mutableMapOf<String, String>()
+            var headerCount = 0
             while (true) {
                 val line = readLine(input) ?: break
                 if (line.isEmpty()) break
+                headerCount++
+                if (headerCount > MAX_HEADERS) {
+                    send(client, 400, "application/json", errJson("too many headers"))
+                    return
+                }
                 val idx = line.indexOf(':')
                 if (idx > 0) {
                     headers[line.substring(0, idx).trim().lowercase()] =
                         line.substring(idx + 1).trim()
                 }
             }
+            // v0.1.75 (audit #4): token DICEK DULU — sebelum body
+            // dibaca. Tanpa token, server tidak mengalokasikan apa pun.
+            if (!ApiToken.check(ctx, headers["authorization"])) {
+                send(client, 401, "application/json", errJson("unauthorized"))
+                return
+            }
+            val qIdx = rawTarget.indexOf('?')
+            val path = if (qIdx >= 0) rawTarget.substring(0, qIdx) else rawTarget
+            val query = if (qIdx >= 0) parseQuery(rawTarget.substring(qIdx + 1)) else emptyMap()
+            // Batas body per-route — dicek SEBELUM alokasi.
             val contentLength = headers["content-length"]?.toIntOrNull() ?: 0
-            val bodyBytes = ByteArray(contentLength)
+            if (contentLength < 0) {
+                send(client, 400, "application/json", errJson("bad content-length"))
+                return
+            }
+            if (contentLength > bodyCapFor(method, path)) {
+                send(client, 413, "application/json", errJson("body terlalu besar"))
+                return
+            }
+            val bodyBytes = try {
+                ByteArray(contentLength)
+            } catch (e: OutOfMemoryError) {
+                Log.e(TAG, "handle: alokasi body gagal (OOM)")
+                send(client, 500, "application/json", errJson("internal error"))
+                return
+            }
             var read = 0
             while (read < contentLength) {
                 val n = input.read(bodyBytes, read, contentLength - read)
@@ -181,14 +229,13 @@ class ApiServer(private val ctx: Context) {
             }
             val body = String(bodyBytes, 0, read, Charsets.UTF_8)
             val bodyRaw = bodyBytes.copyOf(read)
-            if (!ApiToken.check(ctx, headers["authorization"])) {
-                send(client, 401, "application/json", errJson("unauthorized"))
-                return
-            }
-            val qIdx = rawTarget.indexOf('?')
-            val path = if (qIdx >= 0) rawTarget.substring(0, qIdx) else rawTarget
-            val query = if (qIdx >= 0) parseQuery(rawTarget.substring(qIdx + 1)) else emptyMap()
             route(client, method, path, query, body, bodyRaw)
+        } catch (e: OutOfMemoryError) {
+            Log.e(TAG, "handle OOM: ${e.message}")
+            try {
+                send(client, 500, "application/json", errJson("internal error"))
+            } catch (_: Exception) {
+            }
         } catch (e: Exception) {
             Log.w(TAG, "handle gagal: ${e.message}")
             try {
@@ -227,6 +274,7 @@ class ApiServer(private val ctx: Context) {
             400 -> "Bad Request"
             401 -> "Unauthorized"
             404 -> "Not Found"
+            413 -> "Payload Too Large"
             500 -> "Internal Server Error"
             else -> "OK"
         }
@@ -426,7 +474,7 @@ class ApiServer(private val ctx: Context) {
                     sendJson(client, 400, JSONObject().put("error", "tidak boleh menghapus folder itu sendiri"))
                     return
                 }
-                if (!FileStore.delete(target)) {
+                if (!FileStore.delete(ctx, target)) {
                     sendJson(client, 500, JSONObject().put("error", "gagal menghapus: $path"))
                     return
                 }
@@ -884,7 +932,32 @@ class ApiServer(private val ctx: Context) {
             }
             method == "GET" && path == "/thumb" -> {
                 val suffix = query["space"] ?: ""
+                // v0.1.75 (audit #5): suffix HARUS salah satu suffix
+                // Space yang dikenal — "../" tidak bisa keluar.
+                val validSuffixes = (1..10).map { SpaceRegistry.suffixForSlot(it) }.toSet()
+                if (suffix !in validSuffixes) {
+                    sendJson(client, 404, JSONObject().put("error", "thumbnail tidak ada"))
+                    return
+                }
                 val file = FileStore.liveThumbFile(ctx, suffix)
+                // Lapisan kedua: containment kanonis — file WAJIB
+                // di bawah folder _live.
+                val liveCanon = try {
+                    FileStore.liveDir(ctx).canonicalPath
+                } catch (_: Exception) {
+                    ""
+                }
+                val fileCanon = try {
+                    file.canonicalPath
+                } catch (_: Exception) {
+                    ""
+                }
+                if (liveCanon.isEmpty() || (fileCanon != liveCanon &&
+                        !fileCanon.startsWith("$liveCanon/"))
+                ) {
+                    sendJson(client, 404, JSONObject().put("error", "thumbnail tidak ada"))
+                    return
+                }
                 if (!file.exists()) {
                     sendJson(client, 404, JSONObject().put("error", "thumbnail tidak ada"))
                     return

@@ -85,7 +85,10 @@ class WatchdogWorker(appContext: Context, params: WorkerParameters) :
         // ulang WatchdogGuardService (guardian :watchdog) tanpa
         // duplikasi — pola Socket mentah yang sama (tanpa proxy,
         // tidak kena larangan cleartext).
-        fun isApiAlive(): Boolean {
+        // v0.1.75 (audit #14): kirim Authorization Bearer — /ping
+        // ikut dicek token di handle(), jadi tanpa token probe
+        // SELALU lapor mati dan guardian startPlain tanpa henti.
+        fun isApiAlive(ctx: Context): Boolean {
             var socket: Socket? = null
             return try {
                 socket = Socket()
@@ -93,7 +96,8 @@ class WatchdogWorker(appContext: Context, params: WorkerParameters) :
                 socket.soTimeout = 2000
                 val out = socket.getOutputStream()
                 out.write(
-                    "GET /ping HTTP/1.0\r\nHost: 127.0.0.1\r\n\r\n"
+                    ("GET /ping HTTP/1.0\r\nHost: 127.0.0.1\r\n" +
+                        "Authorization: Bearer ${ApiToken.getOrCreate(ctx)}\r\n\r\n")
                         .toByteArray(Charsets.UTF_8)
                 )
                 out.flush()
@@ -131,7 +135,7 @@ class WatchdogWorker(appContext: Context, params: WorkerParameters) :
         } catch (e: Exception) {
             Log.w(TAG, "doWork: promosi foreground gagal: ${e.message}")
         }
-        if (!isApiAlive()) {
+        if (!isApiAlive(applicationContext)) {
             Log.w(TAG, "doWork: /ping tidak menjawab — menyalakan ApiService")
             val started = ApiService.startPlain(applicationContext)
             Log.i(TAG, "doWork: ApiService.startPlain=$started")

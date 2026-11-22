@@ -1007,3 +1007,42 @@ Jangan cuma diagnosa dari kodenya.
   Tanpa ubah perilaku: eksekutor prompt/TTS/Studio,
   snapshot/thumbnail, limit detection, FileManager, KeepAlive
   per-Space.
+- API 75 (22 Nov, v0.1.75): STARTFOREGROUNDSERVICE DIHAPUS SEPENUHNYA.
+  (a) Latar: v0.1.74 masih menyisakan dua pemanggil
+  startForegroundService — ApiService.start() dan
+  WatchdogGuardService.start(), dipanggil MainActivity/
+  BrowserActivity saat install menciptakan ulang activity stack
+  selagi app belum foreground. Panggilan itu menciptakan penantian
+  FGS; onCreate (probe isAppVisible benar) melewati startForeground
+  saat background → penantian tidak terpenuhi → service dibunuh
+  timeout. Probe + startForegroundService tidak kompatibel.
+  (b) ApiService.start() / WatchdogGuardService.start() kini
+  memanggil startPlain (startService biasa + try/catch +
+  Log.e + Boolean); KeepAlive.start() juga startService biasa.
+  Setelah perubahan ini TIDAK ADA LAGI panggilan
+  startForegroundService di app/src/main.
+  (c) onCreate ApiService/WatchdogGuardService +
+  KeepAliveService.onStartCommand TIDAK BERUBAH: startForeground()
+  hanya bila app visible (probe isAppVisible), bila background
+  jalan sebagai background service; promosi ke foreground terjadi
+  di onCreate/onStartCommand bila app visible. Guardian tick 60
+  dtk, WorkManager tanpa setExpedited di periodic, dan logging
+  SenzWatchdog/SenzRevive dipertahankan.
+  (d) Tanpa izin baru; tanpa ubah perilaku: eksekutor prompt/TTS/
+  Studio, snapshot/thumbnail, limit detection, FileManager,
+  KeepAlive per-Space.
+  (e) Perbaikan audit (9 temuan, code-only, belum dibuktikan live):
+  API handle() cek Bearer token SEBELUM baca body + batas body
+  per-route sebelum alokasi (/upload 100 MB, JSON lain 1 MB,
+  GET 0) + batas baris/jumlah header + tangkap OutOfMemoryError;
+  jembatan JS (SenzLive/SenzBlob/SenzHttp) di-gate ke host home
+  Space / host trap / host login Google (+ subdomain); CSP tidak
+  lagi di-strip — skrip trap blob diberi nonce halaman bila ada,
+  atau dimuat sebagai file same-origin dari memori; mixed content
+  NEVER_ALLOW di WebView utama + popup; /thumb validasi suffix
+  terhadap suffix Space yang dikenal + containment kanonis;
+  FileStore.resolveUnderRoot/isUnderRoot dipakai folderDir/copy/
+  move/delete/rename/newFolder (delete/rename/newFolder kini
+  butuh Context); Zip-Slip bandingkan dengan dest + separator;
+  backup rules kecualikan SharedPreferences token; isApiAlive
+  kirim Authorization Bearer sehingga guardian tahu API hidup.

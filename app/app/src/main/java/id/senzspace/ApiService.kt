@@ -27,34 +27,18 @@ class ApiService : Service() {
         const val NOTIF_ID = 1200
         private const val TAG = "SenzWatchdog"
 
-        // v0.1.72: kembalikan Boolean — true bila salah satu jalur
-        // start terpanggil, false bila keduanya ditolak sistem.
-        // Pemanggil lama yang mengabaikan nilai balik tidak rusak
-        // (Kotlin boleh mengabaikan return value). Kegagalan start
-        // TIDAK PERNAH ditelan diam-diam lagi: tiap throw dicatat
-        // Log.e supaya revive yang gagal terdiagnosis dari logcat.
+        // v0.1.75: start() kini SAMA dengan startPlain — startService
+        // biasa, tanpa startForegroundService. v0.1.74 menunjukkan
+        // pemanggil "foreground" (MainActivity/BrowserActivity) juga
+        // menembak saat app belum foreground (rekreasi pasca-install):
+        // startForegroundService menciptakan penantian FGS yang tidak
+        // pernah terpenuhi bila onCreate melewati startForeground
+        // (probe isAppVisible benar), lalu sistem membunuh service.
+        // Promosi ke foreground tetap terjadi di onCreate bila app
+        // visible. Kembalikan Boolean — true bila start terpanggil,
+        // false bila ditolak sistem (tidak pernah ditelan diam-diam).
         fun start(ctx: Context): Boolean {
-            val intent = Intent(ctx, ApiService::class.java)
-            val canForeground = Build.VERSION.SDK_INT < 33 ||
-                ctx.checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) ==
-                PackageManager.PERMISSION_GRANTED
-            try {
-                if (canForeground && Build.VERSION.SDK_INT >= 26) {
-                    ctx.startForegroundService(intent)
-                } else {
-                    ctx.startService(intent)
-                }
-                return true
-            } catch (e: Exception) {
-                Log.e(TAG, "start: start gagal: ${e.message}", e)
-                try {
-                    ctx.startService(intent)
-                    return true
-                } catch (e2: Exception) {
-                    Log.e(TAG, "start: fallback startService juga gagal: ${e2.message}", e2)
-                    return false
-                }
-            }
+            return startPlain(ctx)
         }
 
         // v0.1.73: start biasa (bukan startForegroundService) — tanpa

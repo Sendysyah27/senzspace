@@ -21,8 +21,9 @@ import androidx.core.app.NotificationCompat
 // (receiver/worker tidak dikecualikan), WorkManager tidak pernah
 // terjadwal, dan semua lapis menelan kegagalan diam-diam — revive
 // dari VM tidak pernah menyalakan API. Guardian di-start dari
-// MainActivity/BrowserActivity (foreground, start()) atau
-// BootReceiver (background, startPlain — v0.1.74). Sekali jalan,
+// MainActivity/BrowserActivity (start()) atau BootReceiver
+// (startPlain); sejak v0.1.75 keduanya startService biasa —
+// startForegroundService dihapus dari seluruh codebase. Sekali jalan,
 // guardian hidup di prosesnya sendiri: foreground service
 // (notifikasi LOW) → uid-nya foreground → boleh memanggil
 // ApiService.startPlain() bila /ping tidak menjawab. Guardian selamat
@@ -41,28 +42,20 @@ class WatchdogGuardService : Service() {
         const val NOTIF_ID = 1202
         private const val CHECK_INTERVAL_MS = 60_000L
 
-        // Idempotent: startForegroundService aman bila service sudah
-        // jalan (onStartCommand dipanggil ulang, loop tidak digandakan
-        // — lihat onStartCommand). Tidak pernah throw: start yang
-        // ditolak sistem dicatat + dilaporkan false.
-        // HANYA untuk pemanggil foreground (MainActivity,
-        // BrowserActivity) — dari background pakai startPlain.
+        // v0.1.75: start() kini SAMA dengan startPlain — startService
+        // biasa, tanpa startForegroundService. Alasan sama seperti
+        // ApiService.start(): pemanggil "foreground"
+        // (MainActivity/BrowserActivity) menembak saat app belum
+        // foreground (rekreasi pasca-install) dan penantian FGS yang
+        // tercipta tidak pernah terpenuhi bila onCreate melewati
+        // startForeground (probe isAppVisible benar). Promosi ke
+        // foreground tetap terjadi di onCreate bila app visible.
+        // Idempotent: start aman bila service sudah jalan
+        // (onStartCommand dipanggil ulang, loop tidak digandakan).
+        // Tidak pernah throw: start yang ditolak sistem dicatat +
+        // dilaporkan false.
         fun start(ctx: Context): Boolean {
-            val intent = Intent(ctx, WatchdogGuardService::class.java)
-            val canForeground = Build.VERSION.SDK_INT < 33 ||
-                ctx.checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) ==
-                PackageManager.PERMISSION_GRANTED
-            return try {
-                if (canForeground && Build.VERSION.SDK_INT >= 26) {
-                    ctx.startForegroundService(intent)
-                } else {
-                    ctx.startService(intent)
-                }
-                true
-            } catch (e: Exception) {
-                Log.e(TAG, "start: gagal menyalakan guardian: ${e.message}", e)
-                false
-            }
+            return startPlain(ctx)
         }
 
         // v0.1.74: start biasa (bukan startForegroundService) — tanpa
@@ -91,7 +84,7 @@ class WatchdogGuardService : Service() {
                 stopSelf()
                 return
             }
-            if (WatchdogWorker.isApiAlive()) {
+            if (WatchdogWorker.isApiAlive(this@WatchdogGuardService)) {
                 Log.d(TAG, "tick: /ping menjawab — API hidup")
             } else {
                 Log.w(TAG, "tick: /ping tidak menjawab — menyalakan ApiService")

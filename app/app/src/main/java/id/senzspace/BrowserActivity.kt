@@ -153,6 +153,30 @@ abstract class BrowserActivity : AppCompatActivity() {
         return TRAP_HOSTS.any { host.endsWith(".$it") }
     }
 
+    /** v0.1.75 (audit #1): gerbang origin jembatan JS. Jembatan
+     *  (SenzLive/SenzBlob/SenzHttp) HANYA boleh dipanggil halaman
+     *  yang URL-nya sekarang di host home Space ini, host trap
+     *  (Claude/AI Studio), atau host login Google (OAuth) — atau
+     *  subdomainnya. Halaman lain (tautan/redirect/iframe asing)
+     *  tidak bisa menulis file lewat jembatan. URL kosong = tolak. */
+    private fun isBridgeOriginAllowed(): Boolean {
+        val host = try {
+            android.net.Uri.parse(currentUrl).host
+        } catch (_: Exception) {
+            null
+        } ?: return false
+        if (isTrapHost(host)) return true
+        if (host in NO_INJECT_HOSTS) return true
+        if (NO_INJECT_HOSTS.any { host.endsWith(".$it") }) return true
+        val homeHost = try {
+            android.net.Uri.parse(homeUrl).host
+        } catch (_: Exception) {
+            null
+        }
+        if (homeHost != null && (host == homeHost || host.endsWith(".$homeHost"))) return true
+        return false
+    }
+
     /** v0.1.38 - payload prompt API yang sedang dieksekusi di Space
      *  ini (datang lewat intent extra, lihat consumeApiPrompt).
      *  pendingPromptFiles = file _inbox yang disodorkan ke chooser
@@ -665,6 +689,7 @@ abstract class BrowserActivity : AppCompatActivity() {
     private inner class LiveBridge {
         @android.webkit.JavascriptInterface
         fun onChanged() {
+            if (!isBridgeOriginAllowed()) return
             liveHandler.post {
                 // v0.1.35: catat DOM berubah — Beranda pakai ini untuk
                 // membedakan "halaman diam (idle)" vs "renderer beku".
@@ -676,6 +701,7 @@ abstract class BrowserActivity : AppCompatActivity() {
 
         @android.webkit.JavascriptInterface
         fun onLimit(reset: String) {
+            if (!isBridgeOriginAllowed()) return
             liveHandler.post {
                 SpaceStatus.writeLimit(this@BrowserActivity, dataDirectorySuffix, reset)
             }
@@ -683,6 +709,7 @@ abstract class BrowserActivity : AppCompatActivity() {
 
         @android.webkit.JavascriptInterface
         fun onLimitCleared() {
+            if (!isBridgeOriginAllowed()) return
             liveHandler.post {
                 SpaceStatus.clearLimit(this@BrowserActivity, dataDirectorySuffix)
             }
@@ -745,6 +772,9 @@ abstract class BrowserActivity : AppCompatActivity() {
             settings.setSupportMultipleWindows(true)
             settings.domStorageEnabled = true
             settings.databaseEnabled = true
+            // v0.1.75 (audit #2): konten campuran diblokir di popup
+            // juga — sama seperti WebView utama.
+            settings.mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
             settings.userAgentString = settings.userAgentString
                 .replace("; wv", "")
                 .replace(" Version/4.0", "")
@@ -995,7 +1025,7 @@ abstract class BrowserActivity : AppCompatActivity() {
             settings.domStorageEnabled = true
             settings.databaseEnabled = true
             settings.cacheMode = WebSettings.LOAD_DEFAULT
-            settings.mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
+            settings.mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
             settings.mediaPlaybackRequiresUserGesture = false
             settings.allowContentAccess = true
             settings.allowFileAccess = true
@@ -1094,6 +1124,15 @@ abstract class BrowserActivity : AppCompatActivity() {
                     view: WebView,
                     request: WebResourceRequest
                 ): android.webkit.WebResourceResponse? {
+                    // v0.1.75 (audit #3): skrip penangkap blob dilayani
+                    // sebagai file same-origin (bukan inline) bila
+                    // halaman tidak memakai nonce CSP.
+                    if (request.method == "GET" &&
+                        request.url.path == TRAP_SCRIPT_PATH &&
+                        isTrapHost(request.url.host ?: "")
+                    ) {
+                        return trapScriptResponse()
+                    }
                     return interceptDocument(request)
                 }
 
@@ -4034,11 +4073,13 @@ abstract class BrowserActivity : AppCompatActivity() {
 
         @android.webkit.JavascriptInterface
         fun onDiag(msg: String) {
+            if (!isBridgeOriginAllowed()) return
             logBlobDiag("UNDUH-WEB diag: $msg")
         }
 
         @android.webkit.JavascriptInterface
         fun onMeta(totalStr: String, cdName: String) {
+            if (!isBridgeOriginAllowed()) return
             httpMetaReceived = true
             total = totalStr.toLongOrNull() ?: 0L
             baseName = cdName.ifBlank { pendingHttpFileName }
@@ -4052,6 +4093,7 @@ abstract class BrowserActivity : AppCompatActivity() {
 
         @android.webkit.JavascriptInterface
         fun onChunk(base64: String) {
+            if (!isBridgeOriginAllowed()) return
             try {
                 val bytes = android.util.Base64.decode(base64, android.util.Base64.DEFAULT)
                 if (out == null) {
@@ -4079,6 +4121,7 @@ abstract class BrowserActivity : AppCompatActivity() {
 
         @android.webkit.JavascriptInterface
         fun onDone() {
+            if (!isBridgeOriginAllowed()) return
             try { out?.close() } catch (e: Exception) {}
             out = null
             val d = dest
@@ -4102,6 +4145,7 @@ abstract class BrowserActivity : AppCompatActivity() {
 
         @android.webkit.JavascriptInterface
         fun onError(reason: String) {
+            if (!isBridgeOriginAllowed()) return
             finishError(reason)
         }
 
@@ -4263,6 +4307,7 @@ abstract class BrowserActivity : AppCompatActivity() {
     private inner class BlobDownloadBridge {
         @android.webkit.JavascriptInterface
         fun onBlobData(base64: String, fileName: String) {
+            if (!isBridgeOriginAllowed()) return
             // Nama asli dari atribut download anchor (mis.
             // "Generated Audio ... .wav", "PROJECT STATE.md") MENANG
             // atas nama tebakan WebView (UUID + .bin/.txt) — tebakan
@@ -4293,11 +4338,13 @@ abstract class BrowserActivity : AppCompatActivity() {
         /** Diagnosis dari halaman — ditulis ke _Log-Blob. */
         @android.webkit.JavascriptInterface
         fun onBlobDiag(info: String) {
+            if (!isBridgeOriginAllowed()) return
             logBlobDiag(info)
         }
 
         @android.webkit.JavascriptInterface
         fun onBlobError(reason: String) {
+            if (!isBridgeOriginAllowed()) return
             logBlobDiag("GAGAL: $reason")
             runOnUiThread {
                 Toast.makeText(
@@ -4458,25 +4505,51 @@ abstract class BrowserActivity : AppCompatActivity() {
         return core + trap
     }
 
+    /** v0.1.75 (audit #3): path semu skrip penangkap blob — tidak
+     *  ada di server asli; shouldInterceptRequest melayaninya dari
+     *  memori supaya CSP 'self' mengizinkannya tanpa strip. */
+    private val TRAP_SCRIPT_PATH = "/__senzspace_blob_trap_v1.js"
+
+    /** Layani skrip penangkap blob sebagai file JavaScript
+     *  same-origin (dipakai bila halaman tidak memakai nonce CSP). */
+    private fun trapScriptResponse(): android.webkit.WebResourceResponse {
+        val bytes = blobInjectScript().toByteArray(Charsets.UTF_8)
+        return android.webkit.WebResourceResponse(
+            "application/javascript", "UTF-8", 200, "OK",
+            emptyMap(), java.io.ByteArrayInputStream(bytes)
+        )
+    }
+
+    /** Cari nilai nonce CSP ("nonce-...") di nilai-nilai header
+     *  atau teks tag <meta> CSP. */
+    private fun extractCspNonce(values: Collection<String>): String? {
+        val re = Regex("nonce-([A-Za-z0-9+/=]+)")
+        for (v in values) {
+            val m = re.find(v)
+            if (m != null) return m.groupValues[1]
+        }
+        return null
+    }
+
     /** Sisipkan skrip penangkap blob ke HTML: sebelum </body> (fallback:
-     *  tempel di akhir). Hapus juga <meta> CSP supaya skrip inline
-     *  tidak diblokir. */
-    private fun injectBlobScript(html: String): String {
+     *  tempel di akhir).
+     *  v0.1.75 (audit #3): CSP TIDAK LAGI di-strip — meta CSP dibiarkan
+     *  utuh. Bila halaman memakai nonce CSP, skrip inline diberi nonce
+     *  itu (diizinkan kebijakan); bila tidak, skrip dimuat sebagai file
+     *  same-origin (diizinkan 'self', dilayani dari memori). */
+    private fun injectBlobScript(html: String, nonce: String?, host: String): String {
         var out = html
         try {
-            out = out.replace(
-                Regex(
-                    "<meta[^>]*http-equiv\\s*=\\s*[\"'']?Content-Security-Policy[\"'']?[^>]*>",
-                    RegexOption.IGNORE_CASE
-                ),
-                ""
-            )
-            val script = "<script>" + blobInjectScript() + "</script>"
+            val scriptTag = if (nonce != null) {
+                "<script nonce=\"" + nonce + "\">" + blobInjectScript() + "</script>"
+            } else {
+                "<script src=\"https://" + host + TRAP_SCRIPT_PATH + "\"></script>"
+            }
             val idx = out.lastIndexOf("</body>", ignoreCase = true)
             out = if (idx >= 0) {
-                out.substring(0, idx) + script + out.substring(idx)
+                out.substring(0, idx) + scriptTag + out.substring(idx)
             } else {
-                out + script
+                out + scriptTag
             }
         } catch (e: Exception) {
         }
@@ -4484,7 +4557,9 @@ abstract class BrowserActivity : AppCompatActivity() {
     }
 
     /** Inti v0.1.17: ambil dokumen HTML (frame utama + iframe), sisipkan
-     *  skrip penangkap blob, kembalikan tanpa header CSP.
+     *  skrip penangkap blob, kembalikan dengan header CSP UTUH
+     *  (v0.1.75, audit #3 — CSP tidak lagi di-strip; skrip diberi
+     *  nonce halaman bila ada, atau dimuat sebagai file same-origin).
      *  Dipanggil dari shouldInterceptRequest (thread IO WebView).
      *  Hanya GET tanpa Range + URL yang kelihatan seperti dokumen
      *  (tanpa ekstensi statis) yang diambil; sisanya null (WebView
@@ -4540,10 +4615,11 @@ abstract class BrowserActivity : AppCompatActivity() {
             val headers = mutableMapOf<String, String>()
             for ((k, vs) in conn.headerFields) {
                 if (k == null) continue
-                if (k.equals("Content-Security-Policy", true) ||
-                    k.equals("Content-Security-Policy-Report-Only", true) ||
-                    k.equals("Content-Length", true)
-                ) continue
+                // v0.1.75 (audit #3): header CSP + Report-Only
+                // DITERUSKAN utuh (dulu di-strip); hanya
+                // Content-Length yang dibuang (panjang body berubah
+                // sesudah injeksi).
+                if (k.equals("Content-Length", true)) continue
                 headers[k] = vs?.joinToString(", ") ?: ""
             }
             val mime = contentType.substringBefore(';').trim()
@@ -4555,7 +4631,18 @@ abstract class BrowserActivity : AppCompatActivity() {
             var body = bytes
             if (mime.contains("text/html")) {
                 val html = String(bytes, charset(charset))
-                val injected = injectBlobScript(html)
+                // v0.1.75 (audit #3): nonce CSP dari header; bila
+                // tidak ada, cari di <meta> CSP di HTML.
+                var nonce = extractCspNonce(conn.headerFields.values.flatten())
+                if (nonce == null) {
+                    val metaRe = Regex(
+                        "<meta[^>]*http-equiv\\s*=\\s*[\"'']?Content-Security-Policy[\"'']?[^>]*>",
+                        RegexOption.IGNORE_CASE
+                    )
+                    val meta = metaRe.find(html)
+                    if (meta != null) nonce = extractCspNonce(listOf(meta.value))
+                }
+                val injected = injectBlobScript(html, nonce, host)
                 body = injected.toByteArray(charset(charset))
                 logBlobDiag("INJECT: $urlStr (${body.size} B)")
             }

@@ -302,11 +302,10 @@ object KeepAlive {
                 putExtra(KeepAliveService.EXTRA_SUFFIX, suffix)
                 putExtra(KeepAliveService.EXTRA_SPACE_NAME, spaceName)
             }
-            if (Build.VERSION.SDK_INT >= 26) {
-                ctx.startForegroundService(intent)
-            } else {
-                ctx.startService(intent)
-            }
+            // v0.1.75: startService biasa — startForegroundService
+            // dihapus dari seluruh codebase. Promosi ke foreground
+            // tetap terjadi di onStartCommand bila app visible.
+            ctx.startService(intent)
         } catch (e: Exception) {
             // Guard gagal — Space tetap jalan tanpa anti-kill.
         }
