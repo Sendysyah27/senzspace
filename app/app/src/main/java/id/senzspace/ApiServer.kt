@@ -362,6 +362,36 @@ class ApiServer(private val ctx: Context) {
                 })
             }
             method == "GET" && path == "/status" -> sendJson(client, 200, statusJson())
+            method == "GET" && path == "/guard" -> sendJson(client, 200, guardJson())
+            method == "POST" && path == "/guard" -> {
+                // v0.1.78: test hook — paksa shed SATU slot (supaya
+                // live test tidak perlu menunggu RAM benar-benar
+                // kritis). Auth Bearer sama seperti POST lain (dicek
+                // di handle() sebelum route).
+                val req = try {
+                    JSONObject(body)
+                } catch (_: Exception) {
+                    sendJson(client, 400, JSONObject().put("error", "body bukan JSON"))
+                    return
+                }
+                val action = req.optString("action", "")
+                if (action != "shed") {
+                    sendJson(client, 400, JSONObject().put("error", "action tidak dikenal: $action"))
+                    return
+                }
+                val slot = req.optInt("slot", -1)
+                val entry = SpaceRegistry.load(ctx).firstOrNull { it.slot == slot }
+                if (entry == null) {
+                    sendJson(client, 404, JSONObject().put("error", "no Space on slot $slot"))
+                    return
+                }
+                WatchdogGuardService.sendShedBroadcast(ctx, slot)
+                sendJson(client, 200, JSONObject().apply {
+                    put("action", "shed")
+                    put("slot", slot)
+                    put("sent", true)
+                })
+            }
             method == "GET" && path == "/spaces" -> {
                 val arr = JSONArray()
                 for (s in spaceJsonList()) arr.put(s)
@@ -393,6 +423,13 @@ class ApiServer(private val ctx: Context) {
                     clearData = req.optBoolean("clearData", false),
                     splitWith = if (req.has("splitWith")) req.optInt("splitWith") else null
                 )
+                // v0.1.78: Space dibawa ke depan (app foreground) —
+                // promosikan semua service guard ke foreground selagi
+                // legal (startForeground dari background ditolak).
+                try {
+                    GuardPromoter.promoteAll(ctx)
+                } catch (_: Exception) {
+                }
                 if (visible || overlay) {
                     sendJson(client, 200, JSONObject().apply {
                         put("opened", entry.name)
@@ -1224,6 +1261,8 @@ class ApiServer(private val ctx: Context) {
     private fun spaceJsonList(): List<JSONObject> {
         val spaces = SpaceRegistry.load(ctx)
         val procs = liveProcessNames()
+        // v0.1.78: peta fgs dari state guard (ditulis tick guardian).
+        val fgsMap = readGuardState()?.optJSONObject("fgs")
         val now = System.currentTimeMillis()
         return spaces.map { entry ->
             val suffix = SpaceRegistry.suffixForSlot(entry.slot)
@@ -1269,6 +1308,8 @@ class ApiServer(private val ctx: Context) {
                 put("last_dom_ms", lastDomMs)
                 put("last_pixel_ms", lastPixelMs)
                 put("snapshot_stuck_ms", snapStuckMs)
+                // v0.1.78: KeepAlive service Space ini sedang foreground?
+                put("fgs", fgsMap?.optBoolean(suffix, false) ?: false)
                 val newest = FileStore.listFiles(ctx, suffix)
                     .maxByOrNull { it.lastModified() }
                 if (newest != null) {
@@ -1294,7 +1335,66 @@ class ApiServer(private val ctx: Context) {
             put("build", BuildConfig.VERSION_CODE)
             put("overlay_permission", Settings.canDrawOverlays(ctx))
             put("live_interval_ms", interval)
+            // v0.1.78: observabilitas guard anti-LMK.
+            putGuardFields(this)
             put("spaces", arr)
+        }
+    }
+
+    /** v0.1.78 — field guard yang sama di /status dan /guard:
+     *  mem_avail_mb + mem_low (baca langsung, sama untuk semua
+     *  proses), guard_heartbeat_age_sec (file guard-heartbeat;
+     *  -1 = guard belum pernah tick), shed_count + last_shed_ms
+     *  (guard-state.json, ditulis tick guardian). */
+    private fun putGuardFields(obj: JSONObject) {
+        val am = ctx.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
+        val memInfo = ActivityManager.MemoryInfo()
+        try {
+            am.getMemoryInfo(memInfo)
+        } catch (_: Exception) {
+        }
+        val guardState = readGuardState()
+        val heartbeatMs = readGuardHeartbeatMs()
+        val heartbeatAgeSec = if (heartbeatMs > 0) {
+            ((System.currentTimeMillis() - heartbeatMs) / 1000).coerceAtLeast(0)
+        } else {
+            -1
+        }
+        obj.put("mem_avail_mb", memInfo.availMem / (1024 * 1024))
+        obj.put("mem_low", memInfo.lowMemory)
+        obj.put("guard_heartbeat_age_sec", heartbeatAgeSec)
+        obj.put("shed_count", guardState?.optInt("shed_count", 0) ?: 0)
+        obj.put("last_shed_ms", guardState?.optLong("last_shed_ms", 0L) ?: 0L)
+    }
+
+    /** v0.1.78 — state guard (sama dengan field /status di atas)
+     *  + peta fgs per Space. */
+    private fun guardJson(): JSONObject {
+        val guardState = readGuardState()
+        return JSONObject().apply {
+            putGuardFields(this)
+            put("fgs", guardState?.optJSONObject("fgs") ?: JSONObject())
+        }
+    }
+
+    /** v0.1.78 — baca guard-state.json (ditulis WatchdogGuardService
+     *  tiap tick): heartbeat_ms, shed_count, last_shed_ms, fgs. */
+    private fun readGuardState(): JSONObject? {
+        return try {
+            val f = File(ctx.filesDir, "guard-state.json")
+            if (!f.isFile) null else JSONObject(f.readText())
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    /** v0.1.78 — baca guard-heartbeat (epoch ms tick terakhir). */
+    private fun readGuardHeartbeatMs(): Long {
+        return try {
+            val f = File(ctx.filesDir, "guard-heartbeat")
+            if (!f.isFile) 0L else f.readText().trim().toLongOrNull() ?: 0L
+        } catch (_: Exception) {
+            0L
         }
     }
 }

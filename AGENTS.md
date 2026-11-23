@@ -1105,3 +1105,59 @@ Jangan cuma diagnosa dari kodenya.
   Tanpa ubah perilaku: eksekutor prompt/TTS/Studio, snapshot/
   thumbnail, limit detection, FileManager, BootReceiver,
   SpaceRegistry, rute API lain, TRAP_HOSTS tidak disentuh.
+- API 78 (23 Nov, v0.1.78): GUARD ANTI-LMK (PROMOTE-ON-FOREGROUND +
+  MEMORYGUARD + WATCHDOG BENAR-BENAR JALAN).
+  (a) Latar: sweep via /spaces — 10/10 proses Space mati dalam
+  jendela yang sama sementara proses utama + API tetap hidup; limit
+  free bukan penyebab (Space yang kena limit justru hidup). Akar:
+  KeepAlive/ApiService/WatchdogGuardService hanya memanggil
+  startForeground bila app sedang foreground (isAppVisible,
+  v0.1.74); Space hampir selalu di-start dari background (API /
+  boot / revive) → service jalan sebagai background service →
+  proses Space = cached → LMK membunuh paling dulu.
+  (b) GuardPromoter.promoteAll() (KeepAliveService.kt): memanggil
+  start + promote untuk SEMUA service guard — ApiService.promote()
+  + WatchdogGuardService.promote() (startService biasa + extra
+  EXTRA_PROMOTE → onStartCommand menjalankan blok startForeground
+  yang sama seperti onCreate, tanpa startForegroundService baru)
+  + KeepAlive.start() untuk Space yang prosesnya sedang hidup
+  (jangan bangkitkan Space mati — RAM justru bertambah).
+  Dipanggil dari MainActivity.onResume + BrowserActivity.onResume
+  (bila flag guard_needs_promotion set) dan handler API /open
+  (sesudah Space dibawa ke depan). Flag guard_needs_promotion
+  (SharedPreferences senzspace_ui): diset di tiap catch-block /
+  cabang background startForeground yang sudah ada, di-clear saat
+  promoteAll berhasil.
+  (c) MemoryGuard di tick WatchdogGuardService (60 dtk): baca
+  ActivityManager.getMemoryInfo — shed SATU Space per tick bila
+  lowMemory atau availMem < 300 MB (SHED_AVAIL_MB = 300). Korban =
+  Space background yang prosesnya hidup, snapshot terakhirnya
+  TIDAK generating, paling lama tidak aktif (LRU dari file status
+  live _live/<suffix>-status.txt, fallback mtime thumbnail);
+  bila semua background generating → shed nol, dicatat di log.
+  Mekanisme: broadcast dalam-app
+  id.senzspace.debug.action.SHED_SPACE (setPackage + receiver
+  dinamis di BrowserActivity, extra slot) → saveState (jalur
+  v0.1.77, disimpan per-suffix untuk restoreState) lalu
+  webView.destroy() + stopLiveCapture; activity + proses +
+  KeepAlive tetap hidup. Pemulihan: onResume melihat flag →
+  recreate() → onCreate memulihkan state shed atau URL terakhir
+  dari snapshot (v0.1.77). onResume tidak pernah menyentuh
+  WebView yang sudah di-destroy.
+  (d) Watchdog benar-benar jalan: WatchdogGuardService di-start
+  dari ApiService.onCreate (mutual watchdog), MainActivity.onCreate,
+  BootReceiver, dan ReviveReceiver — startService biasa saja.
+  Guard menulis heartbeat tiap tick ke filesDir/guard-heartbeat
+  (epoch ms, atomik tmp+rename, pola api-token v0.1.77) +
+  guard-state.json (heartbeat_ms, shed_count, last_shed_ms,
+  fgs per Space via getRunningServices); penghitung shed
+  dipulihkan dari state file saat service dibuat ulang.
+  (e) Observabilitas: /status tambah mem_avail_mb, mem_low,
+  guard_heartbeat_age_sec (-1 = guard belum pernah tick),
+  shed_count, last_shed_ms; /spaces tambah fgs per Space;
+  POST /guard {"action":"shed","slot":N} → paksa shed satu slot
+  (test hook; action lain 400, slot tanpa Space 404); GET /guard
+  → state guard yang sama. Tanpa ubah perilaku:
+  WatchdogWorker, /prompt, /tts, /studio, FileStore,
+  PIN/biometrik, UI, dan cara kerja v0.1.77 tidak disentuh;
+  largeHeap tidak dipakai.

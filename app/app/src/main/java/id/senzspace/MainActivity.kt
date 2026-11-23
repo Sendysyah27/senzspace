@@ -314,6 +314,9 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
+        // v0.1.78: promosikan service guard bila ada yang gagal
+        // dipromosikan sebelumnya (flag guard_needs_promotion).
+        GuardPromoter.promoteIfNeeded(this)
         LockGate.check(this, lockLauncher)
         renderDashboard()
         if (mode() == MODE_LIVE && !liveTicking) {

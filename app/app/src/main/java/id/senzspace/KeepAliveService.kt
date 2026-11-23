@@ -1,5 +1,6 @@
 package id.senzspace
 
+import android.app.ActivityManager
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -157,9 +158,13 @@ open class KeepAliveService : Service() {
                     startForeground(notifId, minimal)
                 } catch (e: Exception) {
                     Log.w(TAG, "onStartCommand: startForeground ditolak — jalan sebagai background service: ${e.message}")
+                    // v0.1.78: tandai supaya onResume berikut mempromosikan ulang.
+                    GuardPromoter.markNeedsPromotion(this)
                 }
             } else {
                 Log.i(TAG, "onStartCommand: app di background — lewati startForeground, jalan sebagai background service")
+                // v0.1.78: tandai supaya onResume berikut mempromosikan ulang.
+                GuardPromoter.markNeedsPromotion(this)
             }
         }
         try {
@@ -315,6 +320,99 @@ object KeepAlive {
         try {
             ctx.stopService(Intent(ctx, serviceClass(suffix)))
         } catch (e: Exception) {
+        }
+    }
+}
+
+/** v0.1.78 — GuardPromoter: promosikan semua service guard menjadi
+ *  foreground service saat app PASTI foreground. Latar: service hanya
+ *  mempromosikan diri di onCreate/onStartCommand bila app sedang
+ *  visible (isAppVisible, v0.1.74); Space hampir selalu di-start dari
+ *  background (API / boot / revive) → service jalan sebagai background
+ *  service → proses Space = cached → LMK membunuh paling dulu. Sekali
+ *  dipromosikan, service TETAP foreground walau app kembali background
+ *  (yang dilarang Android 12+ hanya MEMULAI FGS dari background, bukan
+ *  mempertahankannya). Dipanggil dari MainActivity.onResume +
+ *  BrowserActivity.onResume (bila flag guard_needs_promotion set) dan
+ *  handler API /open (sesudah Space dibawa ke depan). */
+object GuardPromoter {
+    private const val TAG = "SenzWatchdog"
+    private const val PREFS = "senzspace_ui"
+    private const val KEY_NEEDS_PROMOTION = "guard_needs_promotion"
+
+    fun markNeedsPromotion(ctx: Context) {
+        try {
+            ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                .edit().putBoolean(KEY_NEEDS_PROMOTION, true).apply()
+        } catch (_: Exception) {
+        }
+    }
+
+    fun needsPromotion(ctx: Context): Boolean {
+        return try {
+            ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                .getBoolean(KEY_NEEDS_PROMOTION, false)
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    fun clearNeedsPromotion(ctx: Context) {
+        try {
+            ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                .edit().putBoolean(KEY_NEEDS_PROMOTION, false).apply()
+        } catch (_: Exception) {
+        }
+    }
+
+    /** Promosi bila flag set (dipakai onResume). */
+    fun promoteIfNeeded(ctx: Context) {
+        if (needsPromotion(ctx)) promoteAll(ctx)
+    }
+
+    /** Promosikan SEMUA service guard yang sedang jalan. KeepAlive
+     *  hanya untuk Space yang prosesnya sedang hidup — jangan
+     *  bangkitkan Space yang sudah mati (RAM justru bertambah, LMK
+     *  makin cepat membunuh). ApiService + WatchdogGuardService selalu
+     *  dipromosikan (bila saklar API hidup). Idempotent: startService
+     *  aman bila service sudah jalan. */
+    fun promoteAll(ctx: Context) {
+        try {
+            if (ApiToken.isEnabled(ctx)) {
+                ApiService.promote(ctx)
+                WatchdogGuardService.promote(ctx)
+            }
+            val guardOn = try {
+                ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                    .getBoolean("guard_enabled", true)
+            } catch (_: Exception) {
+                true
+            }
+            if (guardOn) {
+                val live = liveSpaceSuffixes(ctx)
+                for (entry in SpaceRegistry.load(ctx)) {
+                    val suffix = SpaceRegistry.suffixForSlot(entry.slot)
+                    if (suffix in live) KeepAlive.start(ctx, suffix, entry.name)
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "promoteAll gagal: ${e.message}")
+        }
+        clearNeedsPromotion(ctx)
+    }
+
+    /** Suffix Space yang prosesnya sedang hidup. */
+    private fun liveSpaceSuffixes(ctx: Context): Set<String> {
+        return try {
+            val am = ctx.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
+            am.runningAppProcesses
+                ?.mapNotNull { it.processName }
+                ?.filter { it.startsWith(ctx.packageName + ":") }
+                ?.map { it.substringAfter(":") }
+                ?.filter { it.startsWith("space") || it == "aistudio" }
+                ?.toSet() ?: emptySet()
+        } catch (_: Exception) {
+            emptySet()
         }
     }
 }

@@ -1,5 +1,6 @@
 package id.senzspace
 
+import android.app.ActivityManager
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -14,6 +15,8 @@ import android.os.IBinder
 import android.os.Looper
 import android.util.Log
 import androidx.core.app.NotificationCompat
+import java.io.File
+import org.json.JSONObject
 
 // v0.1.72 — guardian watchdog: foreground service di proses sendiri
 // (:watchdog) yang menjaga ApiService tetap hidup. v0.1.71 gagal di
@@ -72,10 +75,64 @@ class WatchdogGuardService : Service() {
                 false
             }
         }
+
+        // v0.1.78: extra + promote() — sama seperti ApiService (lihat
+        // sana): service yang sudah jalan tidak mengulang onCreate,
+        // jadi promosi ulang butuh pemicu lewat onStartCommand.
+        const val EXTRA_PROMOTE = "extra_promote"
+
+        /** v0.1.78: minta guardian yang sudah jalan mempromosikan diri
+         *  ke foreground (startService biasa + extra). */
+        fun promote(ctx: Context): Boolean {
+            return try {
+                ctx.startService(
+                    Intent(ctx, WatchdogGuardService::class.java).apply {
+                        putExtra(EXTRA_PROMOTE, true)
+                    }
+                )
+                true
+            } catch (e: Exception) {
+                Log.e(TAG, "promote: start gagal: ${e.message}", e)
+                false
+            }
+        }
+
+        // v0.1.78 — MemoryGuard: shed terkendali (bukan dibunuh LMK).
+        // Broadcast dalam-app saja (pengirim setPackage + receiver
+        // dinamis NOT_EXPORTED di BrowserActivity) — tidak ada
+        // receiver di manifest, tidak ada aksi sistem.
+        const val ACTION_SHED_SPACE = "id.senzspace.debug.action.SHED_SPACE"
+        const val EXTRA_SHED_SLOT = "extra_shed_slot"
+
+        /** Ambang shed: lowMemory ATAU RAM tersedia di bawah ini. */
+        const val SHED_AVAIL_MB = 300L
+
+        private const val GUARD_HEARTBEAT_FILE = "guard-heartbeat"
+        private const val GUARD_STATE_FILE = "guard-state.json"
+
+        /** Kirim perintah shed ke SATU slot (dipakai tick guard +
+         *  POST /guard). */
+        fun sendShedBroadcast(ctx: Context, slot: Int) {
+            try {
+                val intent = Intent(ACTION_SHED_SPACE).apply {
+                    setPackage(ctx.packageName)
+                    putExtra(EXTRA_SHED_SLOT, slot)
+                }
+                ctx.sendBroadcast(intent)
+                Log.i(TAG, "sendShedBroadcast: slot=$slot")
+            } catch (e: Exception) {
+                Log.w(TAG, "sendShedBroadcast gagal: ${e.message}")
+            }
+        }
     }
 
     private val handler = Handler(Looper.getMainLooper())
     private var loopStarted = false
+
+    // v0.1.78 — penghitung shed (di memori guard + ditulis ke
+    // guard-state.json tiap tick supaya bisa dibaca API).
+    private var shedCount = 0
+    private var lastShedMs = 0L
 
     private val checkRunnable = object : Runnable {
         override fun run() {
@@ -90,6 +147,17 @@ class WatchdogGuardService : Service() {
                 Log.w(TAG, "tick: /ping tidak menjawab — menyalakan ApiService")
                 val started = ApiService.startPlain(this@WatchdogGuardService)
                 Log.i(TAG, "tick: ApiService.startPlain=$started")
+            }
+            // v0.1.78: MemoryGuard + heartbeat tiap tick (60 dtk).
+            try {
+                memoryGuardTick()
+            } catch (e: Exception) {
+                Log.w(TAG, "tick: MemoryGuard gagal: ${e.message}")
+            }
+            try {
+                writeGuardState()
+            } catch (e: Exception) {
+                Log.w(TAG, "tick: tulis guard-state gagal: ${e.message}")
             }
             handler.postDelayed(this, CHECK_INTERVAL_MS)
         }
@@ -107,6 +175,22 @@ class WatchdogGuardService : Service() {
         // alih-alih sekadar menolak.
         Log.i(TAG, "onCreate: masuk")
         super.onCreate()
+        // v0.1.78: blok foreground dipindah ke promoteToForeground()
+        // (bisa dipicu ulang dari onStartCommand via EXTRA_PROMOTE).
+        // Pulihkan penghitung shed dari state file — guardian bisa
+        // di-restart sistem, angka tidak boleh reset ke 0 diam-diam.
+        restoreShedCounters()
+        promoteToForeground()
+        Log.i(TAG, "onCreate: guardian jalan (proses :watchdog)")
+    }
+
+    /** v0.1.78 — promosi ke foreground yang bisa dipicu ulang (bukan
+     *  cuma sekali di onCreate). Isi = blok startForeground lama dari
+     *  onCreate (v0.1.73/74): tanpa izin notifikasi (SDK 33+) jalan
+     *  tanpa foreground; bila app di background, panggilan dilewati
+     *  dan flag guard_needs_promotion diset supaya onResume berikut
+     *  mencoba lagi. */
+    private fun promoteToForeground() {
         val canForeground = Build.VERSION.SDK_INT < 33 ||
             checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) ==
             PackageManager.PERMISSION_GRANTED
@@ -114,64 +198,65 @@ class WatchdogGuardService : Service() {
             // Tanpa izin notifikasi: jalan tanpa foreground (pola yang
             // sama seperti ApiService/KeepAliveService) — guard melemah
             // tapi service tetap jalan dan loop tetap memeriksa.
-            Log.w(TAG, "onCreate: tanpa izin notifikasi — jalan tanpa foreground")
-        } else {
-            val mgr = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
-            if (Build.VERSION.SDK_INT >= 26 &&
-                mgr.getNotificationChannel(WatchdogWorker.CHANNEL_ID) == null
-            ) {
-                mgr.createNotificationChannel(
-                    NotificationChannel(
-                        WatchdogWorker.CHANNEL_ID,
-                        "Watchdog API",
-                        NotificationManager.IMPORTANCE_LOW
-                    ).apply {
-                        description = "Pemeriksaan berkala server API lokal SenzSpace"
-                    }
-                )
+            Log.w(TAG, "promoteToForeground: tanpa izin notifikasi — jalan tanpa foreground")
+            return
+        }
+        val mgr = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
+        if (Build.VERSION.SDK_INT >= 26 &&
+            mgr.getNotificationChannel(WatchdogWorker.CHANNEL_ID) == null
+        ) {
+            mgr.createNotificationChannel(
+                NotificationChannel(
+                    WatchdogWorker.CHANNEL_ID,
+                    "Watchdog API",
+                    NotificationManager.IMPORTANCE_LOW
+                ).apply {
+                    description = "Pemeriksaan berkala server API lokal SenzSpace"
+                }
+            )
+        }
+        val notif: Notification = NotificationCompat.Builder(
+            this, WatchdogWorker.CHANNEL_ID
+        )
+            .setSmallIcon(R.drawable.ic_notification)
+            .setContentTitle("SenzSpace watchdog aktif")
+            .setOngoing(true)
+            .build()
+        Log.i(TAG, "promoteToForeground: startForeground")
+        if (ApiService.isAppVisible(this)) {
+            try {
+                startForeground(NOTIF_ID, notif)
+                Log.i(TAG, "promoteToForeground: foreground jalan")
+            } catch (e: Exception) {
+                Log.w(TAG, "promoteToForeground: startForeground ditolak — jalan sebagai background service: ${e.message}")
+                GuardPromoter.markNeedsPromotion(this)
             }
-            val notif: Notification = NotificationCompat.Builder(
+        } else {
+            Log.i(TAG, "promoteToForeground: app di background — lewati startForeground, jalan sebagai background service")
+            GuardPromoter.markNeedsPromotion(this)
+        }
+        try {
+            val openIntent = Intent(this, MainActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or
+                    Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
+            }
+            val pending = PendingIntent.getActivity(
+                this, NOTIF_ID, openIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+            val full: Notification = NotificationCompat.Builder(
                 this, WatchdogWorker.CHANNEL_ID
             )
                 .setSmallIcon(R.drawable.ic_notification)
                 .setContentTitle("SenzSpace watchdog aktif")
+                .setContentText("Menjaga server API lokal tetap hidup")
+                .setContentIntent(pending)
                 .setOngoing(true)
                 .build()
-            Log.i(TAG, "onCreate: startForeground")
-            if (ApiService.isAppVisible(this)) {
-                try {
-                    startForeground(NOTIF_ID, notif)
-                    Log.i(TAG, "onCreate: foreground jalan")
-                } catch (e: Exception) {
-                    Log.w(TAG, "onCreate: startForeground ditolak — jalan sebagai background service: ${e.message}")
-                }
-            } else {
-                Log.i(TAG, "onCreate: app di background — lewati startForeground, jalan sebagai background service")
-            }
-            try {
-                val openIntent = Intent(this, MainActivity::class.java).apply {
-                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or
-                        Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
-                }
-                val pending = PendingIntent.getActivity(
-                    this, NOTIF_ID, openIntent,
-                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-                )
-                val full: Notification = NotificationCompat.Builder(
-                    this, WatchdogWorker.CHANNEL_ID
-                )
-                    .setSmallIcon(R.drawable.ic_notification)
-                    .setContentTitle("SenzSpace watchdog aktif")
-                    .setContentText("Menjaga server API lokal tetap hidup")
-                    .setContentIntent(pending)
-                    .setOngoing(true)
-                    .build()
-                mgr.notify(NOTIF_ID, full)
-            } catch (e: Exception) {
-                Log.w(TAG, "onCreate: lengkapi notifikasi gagal: ${e.message}")
-            }
+            mgr.notify(NOTIF_ID, full)
+        } catch (e: Exception) {
+            Log.w(TAG, "promoteToForeground: lengkapi notifikasi gagal: ${e.message}")
         }
-        Log.i(TAG, "onCreate: guardian jalan (proses :watchdog)")
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -180,11 +265,192 @@ class WatchdogGuardService : Service() {
             stopSelf()
             return START_NOT_STICKY
         }
+        // v0.1.78: promosi ulang dari GuardPromoter (lihat ApiService).
+        if (intent?.getBooleanExtra(EXTRA_PROMOTE, false) == true) {
+            promoteToForeground()
+        }
         if (!loopStarted) {
             loopStarted = true
             handler.post(checkRunnable)
         }
         return START_STICKY
+    }
+
+    /** v0.1.78 — MemoryGuard: saat RAM kritis, lepas (shed) SATU Space
+     *  background per tick SECARA TERKENDALI — bukan dibunuh acak oleh
+     *  LMK. Korban = Space yang prosesnya hidup, sedang TIDAK terlihat
+     *  di foreground, snapshot terakhirnya TIDAK generating, dan paling
+     *  lama tidak aktif (LRU). Bila semua Space background sedang
+     *  generating → shed NOL, dicatat di log. URL terakhir Space yang
+     *  di-shed tersimpan di snapshot (v0.1.77) — /open memulihkannya. */
+    private fun memoryGuardTick() {
+        val am = getSystemService(ACTIVITY_SERVICE) as ActivityManager
+        val info = ActivityManager.MemoryInfo()
+        am.getMemoryInfo(info)
+        val availMb = info.availMem / (1024 * 1024)
+        if (!info.lowMemory && availMb >= SHED_AVAIL_MB) return
+        val procs = try {
+            am.runningAppProcesses ?: emptyList()
+        } catch (_: Exception) {
+            emptyList()
+        }
+        val prefix = "$packageName:"
+        val foregroundSuffixes = procs.filter {
+            it.processName.startsWith(prefix) &&
+                (it.importance ==
+                    ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND ||
+                    it.importance ==
+                    ActivityManager.RunningAppProcessInfo.IMPORTANCE_VISIBLE)
+        }.mapNotNull {
+            it.processName.substringAfter(":", "").takeIf { s -> s.isNotEmpty() }
+        }.toSet()
+        val liveSuffixes = procs.mapNotNull { it.processName }
+            .filter { it.startsWith(prefix) }
+            .map { it.substringAfter(":") }
+            .toSet()
+        var victimSlot = -1
+        var victimIdle = Long.MAX_VALUE
+        for (entry in SpaceRegistry.load(this)) {
+            val suffix = SpaceRegistry.suffixForSlot(entry.slot)
+            if (suffix in foregroundSuffixes) continue
+            if (suffix !in liveSuffixes) continue
+            if (snapshotGenerating(suffix)) continue
+            val idle = lastActivityMs(suffix)
+            if (idle < victimIdle) {
+                victimIdle = idle
+                victimSlot = entry.slot
+            }
+        }
+        if (victimSlot < 0) {
+            Log.i(
+                TAG,
+                "memoryGuard: RAM kritis (avail=${availMb}MB low=${info.lowMemory}) " +
+                    "tapi tidak ada Space yang bisa di-shed"
+            )
+            return
+        }
+        sendShedBroadcast(this, victimSlot)
+        shedCount++
+        lastShedMs = System.currentTimeMillis()
+        Log.i(
+            TAG,
+            "memoryGuard: shed slot=$victimSlot " +
+                "(avail=${availMb}MB low=${info.lowMemory})"
+        )
+    }
+
+    /** Snapshot terakhir Space ini bilang generating? File tidak ada /
+     *  tidak bisa dibaca = tidak generating (Space belum pernah
+     *  snapshot — prosesnya pun biasanya belum hidup). */
+    private fun snapshotGenerating(suffix: String): Boolean {
+        return try {
+            val f = File(filesDir, "api-page-$suffix.json")
+            if (!f.isFile) false
+            else JSONObject(f.readText()).optBoolean("generating", false)
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    /** Aktivitas terakhir Space (untuk LRU): DOM/piksel terakhir
+     *  berubah (file _live/<suffix>-status.txt) atau mtime thumbnail;
+     *  0 = tidak pernah aktif. */
+    private fun lastActivityMs(suffix: String): Long {
+        return try {
+            val f = FileStore.liveStatusFile(this, suffix)
+            if (f.exists()) {
+                val p = f.readText().trim().split("|")
+                val dom = p.getOrNull(1)?.toLongOrNull() ?: 0L
+                val pix = p.getOrNull(2)?.toLongOrNull() ?: 0L
+                maxOf(dom, pix).takeIf { it > 0 } ?: thumbMs(suffix)
+            } else {
+                thumbMs(suffix)
+            }
+        } catch (_: Exception) {
+            0L
+        }
+    }
+
+    private fun thumbMs(suffix: String): Long {
+        return try {
+            val t = FileStore.liveThumbFile(this, suffix)
+            if (t.exists()) t.lastModified() else 0L
+        } catch (_: Exception) {
+            0L
+        }
+    }
+
+    /** v0.1.78 — heartbeat + state guard (atomik tmp+rename, pola
+     *  api-token v0.1.77): guard-heartbeat = epoch ms tick terakhir
+     *  saja; guard-state.json = heartbeat + shed_count + last_shed_ms
+     *  + fgs per Space. Dibaca /status, /spaces, /guard di proses
+     *  utama. */
+    private fun writeGuardState() {
+        val now = System.currentTimeMillis()
+        try {
+            val hb = File(filesDir, GUARD_HEARTBEAT_FILE)
+            val tmpHb = File(filesDir, "$GUARD_HEARTBEAT_FILE.tmp")
+            tmpHb.writeText(now.toString())
+            if (!tmpHb.renameTo(hb)) hb.writeText(now.toString())
+        } catch (_: Exception) {
+        }
+        try {
+            val obj = JSONObject().apply {
+                put("heartbeat_ms", now)
+                put("shed_count", shedCount)
+                put("last_shed_ms", lastShedMs)
+                val fgs = JSONObject()
+                for ((suffix, fg) in foregroundServiceMap()) fgs.put(suffix, fg)
+                put("fgs", fgs)
+            }
+            val f = File(filesDir, GUARD_STATE_FILE)
+            val tmp = File(filesDir, "$GUARD_STATE_FILE.tmp")
+            tmp.writeText(obj.toString())
+            if (!tmp.renameTo(f)) f.writeText(obj.toString())
+        } catch (_: Exception) {
+        }
+    }
+
+    /** KeepAlive service mana yang sedang foreground — via
+     *  ActivityManager.getRunningServices (milik app sendiri).
+     *  Dipakai /spaces field fgs. */
+    private fun foregroundServiceMap(): Map<String, Boolean> {
+        val out = mutableMapOf<String, Boolean>()
+        for (slot in 1..10) out[SpaceRegistry.suffixForSlot(slot)] = false
+        try {
+            val am = getSystemService(ACTIVITY_SERVICE) as ActivityManager
+            @Suppress("DEPRECATION")
+            val running = am.getRunningServices(Int.MAX_VALUE) ?: return out
+            for (svc in running) {
+                // className = nama kelas (id.senzspace.KeepAlive...),
+                // BUKAN applicationId — tanpa suffix ".debug".
+                val cls = svc.service.className
+                if (!cls.startsWith("id.senzspace.KeepAlive")) continue
+                val suffix = when {
+                    cls.endsWith("KeepAliveAiStudioService") -> "aistudio"
+                    else -> {
+                        val m = Regex("KeepAliveSpace(\\d+)Service").find(cls)
+                        if (m != null) "space${m.groupValues[1]}" else null
+                    }
+                } ?: continue
+                if (svc.foreground) out[suffix] = true
+            }
+        } catch (_: Exception) {
+        }
+        return out
+    }
+
+    /** Pulihkan penghitung shed dari state file (best effort). */
+    private fun restoreShedCounters() {
+        try {
+            val f = File(filesDir, GUARD_STATE_FILE)
+            if (f.isFile) {
+                val obj = JSONObject(f.readText())
+                shedCount = obj.optInt("shed_count", 0)
+                lastShedMs = obj.optLong("last_shed_ms", 0L)
+            }
+        } catch (_: Exception) {
+        }
     }
 
     override fun onDestroy() {

@@ -62,6 +62,30 @@ class ApiService : Service() {
             }
         }
 
+        // v0.1.78: extra untuk memicu promoteToForeground() dari
+        // onStartCommand — service yang sudah jalan sebagai background
+        // tidak mengulang onCreate, jadi tanpa extra ini start ulang
+        // tidak mempromosikan apa pun.
+        const val EXTRA_PROMOTE = "extra_promote"
+
+        /** v0.1.78: minta service yang sudah jalan mempromosikan diri
+         *  ke foreground (startService biasa + extra — tanpa
+         *  startForegroundService, pelajaran v0.1.74/75). Dipakai
+         *  GuardPromoter.promoteAll() saat app foreground. */
+        fun promote(ctx: Context): Boolean {
+            return try {
+                ctx.startService(
+                    Intent(ctx, ApiService::class.java).apply {
+                        putExtra(EXTRA_PROMOTE, true)
+                    }
+                )
+                true
+            } catch (e: Exception) {
+                Log.e(TAG, "promote: start gagal: ${e.message}", e)
+                false
+            }
+        }
+
         // v0.1.74: probe murah apakah app sedang foreground (ada
         // activity yang terlihat). Dipakai onCreate/onStartCommand
         // sebelum startForeground(): bila app di background, panggilan
@@ -110,14 +134,33 @@ class ApiService : Service() {
         // background service (API tetap menjawab poll begitu,
         // 06:36–06:38 v0.1.73). try/catch + Log.w sebagai jaring
         // pengaman bila ROM melempar alih-alih sekadar menolak.
+        // v0.1.78: blok foreground dipindah ke promoteToForeground()
+        // (bisa dipicu ulang dari onStartCommand via EXTRA_PROMOTE).
         Log.i(TAG, "onCreate: masuk")
         super.onCreate()
+        promoteToForeground()
+        server = ApiServer(applicationContext).also { it.start() }
+        // v0.1.78: mutual watchdog — API memastikan guard jalan
+        // (guard memastikan API jalan di tick-nya); start biasa,
+        // tanpa startForegroundService (pelajaran v0.1.74/75).
+        if (ApiToken.isEnabled(this)) WatchdogGuardService.startPlain(this)
+    }
+
+    /** v0.1.78 — promosi ke foreground yang bisa dipicu ulang (bukan
+     *  cuma sekali di onCreate): GuardPromoter memanggil promote()
+     *  saat app foreground, dan onStartCommand dengan EXTRA_PROMOTE
+     *  menjalankan blok yang sama. Isi = blok startForeground lama
+     *  dari onCreate (v0.1.73/74): tanpa izin notifikasi (SDK 33+)
+     *  jalan tanpa foreground; bila app di background, panggilan
+     *  dilewati dan flag guard_needs_promotion diset supaya onResume
+     *  berikut mencoba lagi. */
+    private fun promoteToForeground() {
         if (Build.VERSION.SDK_INT >= 33 &&
             checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) !=
             PackageManager.PERMISSION_GRANTED
         ) {
             // Tanpa izin notifikasi: jalan tanpa foreground.
-            server = ApiServer(applicationContext).also { it.start() }
+            Log.w(TAG, "promoteToForeground: tanpa izin notifikasi — jalan tanpa foreground")
             return
         }
         val mgr = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
@@ -139,16 +182,18 @@ class ApiService : Service() {
             .setContentTitle("SenzSpace API aktif")
             .setOngoing(true)
             .build()
-        Log.i(TAG, "onCreate: startForeground")
+        Log.i(TAG, "promoteToForeground: startForeground")
         if (isAppVisible(this)) {
             try {
                 startForeground(NOTIF_ID, notif)
-                Log.i(TAG, "onCreate: foreground jalan")
+                Log.i(TAG, "promoteToForeground: foreground jalan")
             } catch (e: Exception) {
-                Log.w(TAG, "onCreate: startForeground ditolak — jalan sebagai background service: ${e.message}")
+                Log.w(TAG, "promoteToForeground: startForeground ditolak — jalan sebagai background service: ${e.message}")
+                GuardPromoter.markNeedsPromotion(this)
             }
         } else {
-            Log.i(TAG, "onCreate: app di background — lewati startForeground, jalan sebagai background service")
+            Log.i(TAG, "promoteToForeground: app di background — lewati startForeground, jalan sebagai background service")
+            GuardPromoter.markNeedsPromotion(this)
         }
         try {
             val openIntent = Intent(this, MainActivity::class.java).apply {
@@ -170,12 +215,18 @@ class ApiService : Service() {
                 .build()
             mgr.notify(NOTIF_ID, full)
         } catch (e: Exception) {
-            Log.w(TAG, "onCreate: lengkapi notifikasi gagal: ${e.message}")
+            Log.w(TAG, "promoteToForeground: lengkapi notifikasi gagal: ${e.message}")
         }
-        server = ApiServer(applicationContext).also { it.start() }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        // v0.1.78: promosi ulang dari GuardPromoter — service sudah
+        // jalan sebagai background (onCreate tidak jalan lagi), jadi
+        // startService biasa saja tidak mempromosikan. Extra ini
+        // menjalankan blok startForeground yang sama seperti onCreate.
+        if (intent?.getBooleanExtra(EXTRA_PROMOTE, false) == true) {
+            promoteToForeground()
+        }
         return START_STICKY
     }
 

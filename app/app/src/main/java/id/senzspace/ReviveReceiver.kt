@@ -44,6 +44,10 @@ class ReviveReceiver : BroadcastReceiver() {
         // + mencatat throw sendiri.
         val started = ApiService.startPlain(context)
         Log.i(TAG, "onReceive: ApiService.startPlain=$started")
+        // v0.1.78: pastikan guardian watchdog ikut jalan (start biasa,
+        // tanpa startForegroundService — pelajaran v0.1.74/75).
+        val guardStarted = WatchdogGuardService.startPlain(context)
+        Log.i(TAG, "onReceive: WatchdogGuardService.startPlain=$guardStarted")
         // Jalur andalan: expedited one-time work.
         WatchdogWorker.enqueueNow(context)
         // Pastikan watchdog periodik juga terdaftar.

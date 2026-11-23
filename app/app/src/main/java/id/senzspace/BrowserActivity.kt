@@ -69,6 +69,14 @@ abstract class BrowserActivity : AppCompatActivity() {
         // satu suffix — jadi sekali setel sudah cukup selamanya.
         @Volatile
         private var dataDirectorySuffixSet = false
+
+        /** v0.1.78 — state WebView yang disimpan saat shed (MemoryGuard),
+         *  keyed by suffix. Dipulihkan onCreate berikut (restoreState)
+         *  bila state sistem tidak cukup; dihapus sesudah dipakai.
+         *  Hidup per proses (tiap :spaceN punya map sendiri) — bila
+         *  proses mati, map hilang dan fallback URL snapshot (v0.1.77)
+         *  yang berlaku. */
+        private val shedStateBySuffix = mutableMapOf<String, Bundle>()
     }
 
     private lateinit var webView: WebView
@@ -92,6 +100,11 @@ abstract class BrowserActivity : AppCompatActivity() {
     private var spaceName = "Space"
     private var homeUrl = "https://claude.ai"
     private var activityDestroyed = false
+    /** v0.1.78 — WebView sudah di-destroy MemoryGuard (shed): jangan
+     *  sentuh webView lagi (url/draw melempar) sampai activity
+     *  dibuat ulang (onResume → recreate()). */
+    private var shedWebViewDestroyed = false
+    private var shedReceiver: android.content.BroadcastReceiver? = null
     private var pendingBlobFileName = ""
     private var pendingHttpFileName = "download"
     private var httpWatchdogSeq = 0
@@ -417,6 +430,8 @@ abstract class BrowserActivity : AppCompatActivity() {
 
     private fun captureLiveThumbnail() {
         if (!::webView.isInitialized) return
+        // v0.1.78: WebView sudah di-destroy (shed) — jangan draw.
+        if (shedWebViewDestroyed) return
         // v0.1.20: Live dibekukan dari Beranda (tahan lama tile →
         // Matikan Live) — thumbnail berhenti update, browser + sesi
         // tetap jalan. Satu titik cek ini menutup semua pemicu tangkap
@@ -634,6 +649,8 @@ abstract class BrowserActivity : AppCompatActivity() {
 
     private fun capturePageSnapshot() {
         if (!::webView.isInitialized) return
+        // v0.1.78: WebView sudah di-destroy (shed) — jangan evaluate.
+        if (shedWebViewDestroyed) return
         if (pageSnapRunning) return
         pageSnapRunning = true
         pageSnapSeq++
@@ -1399,6 +1416,19 @@ abstract class BrowserActivity : AppCompatActivity() {
                     restored = false
                 }
                 if (!restored || isWebViewBlank()) {
+                    // v0.1.78: state yang disimpan saat shed
+                    // (MemoryGuard) — coba pulihkan dulu sebelum
+                    // fallback URL terakhir.
+                    val shed = shedStateBySuffix.remove(dataDirectorySuffix)
+                    if (shed != null) {
+                        try {
+                            restored = webView.restoreState(shed) != null
+                        } catch (_: Exception) {
+                            restored = false
+                        }
+                    }
+                }
+                if (!restored || isWebViewBlank()) {
                     loadLastUrlOrHome()
                 } else {
                     currentUrl = webView.url ?: ""
@@ -1425,6 +1455,36 @@ abstract class BrowserActivity : AppCompatActivity() {
             true
         }
         if (guardOn) KeepAlive.start(this, dataDirectorySuffix, spaceName)
+        // v0.1.78: receiver shed terkendali (MemoryGuard). Broadcast
+        // dalam-app saja (pengirim setPackage + flag NOT_EXPORTED di
+        // sini) — tidak ada receiver di manifest, tidak ada aksi
+        // sistem. Didaftar di akhir onCreate (webView sudah ada).
+        val receiver = object : android.content.BroadcastReceiver() {
+            override fun onReceive(
+                context: android.content.Context?,
+                intent: android.content.Intent?
+            ) {
+                if (intent?.action == WatchdogGuardService.ACTION_SHED_SPACE) {
+                    onShedBroadcast(intent)
+                }
+            }
+        }
+        shedReceiver = receiver
+        try {
+            val filter =
+                android.content.IntentFilter(WatchdogGuardService.ACTION_SHED_SPACE)
+            if (android.os.Build.VERSION.SDK_INT >= 33) {
+                registerReceiver(
+                    receiver, filter,
+                    android.content.Context.RECEIVER_NOT_EXPORTED
+                )
+            } else {
+                @Suppress("DEPRECATION")
+                registerReceiver(receiver, filter)
+            }
+        } catch (_: Exception) {
+            shedReceiver = null
+        }
     }
 
 
@@ -3948,6 +4008,60 @@ abstract class BrowserActivity : AppCompatActivity() {
         }
     }
 
+    /** v0.1.78 — shed terkendali dari MemoryGuard: simpan state WebView
+     *  (jalur v0.1.77), lepas renderer + JS heap (destroy), tapi
+     *  activity + proses + KeepAlive tetap hidup. Pemulihan saat Space
+     *  dibuka lagi: onResume melihat flag → recreate() → onCreate
+     *  memulihkan state shed (bila ada) atau URL terakhir dari snapshot
+     *  (v0.1.77). Abaikan bila Space ini sedang terlihat (balapan
+     *  dengan guard) atau WebView sudah di-shed / belum dibuat. */
+    private fun onShedBroadcast(intent: android.content.Intent) {
+        val slot = intent.getIntExtra(WatchdogGuardService.EXTRA_SHED_SLOT, -1)
+        val mySlot = try {
+            SpaceRegistry.load(this).firstOrNull {
+                SpaceRegistry.suffixForSlot(it.slot) == dataDirectorySuffix
+            }?.slot
+        } catch (e: Exception) {
+            null
+        }
+        if (slot < 0 || slot != mySlot) return
+        if (isForeground) return
+        if (!::webView.isInitialized || shedWebViewDestroyed) return
+        // Simpan state (v0.1.77) sebelum destroy — onCreate berikut
+        // memulihkannya bila snapshot URL tidak cukup.
+        try {
+            val bundle = Bundle()
+            webView.saveState(bundle)
+            shedStateBySuffix[dataDirectorySuffix] = bundle
+        } catch (_: Exception) {
+        }
+        stopLiveCapture()
+        // Urutan hancur yang aman (komentar onDestroy): pop-up dulu,
+        // baru WebView utama — pop-up pegang referensi ke WebView utama.
+        try {
+            popupView?.let {
+                popupView = null
+                rootLayout.removeView(it)
+                it.destroy()
+            }
+        } catch (_: Exception) {
+        }
+        try {
+            rootLayout.removeView(webView)
+            webView.destroy()
+        } catch (_: Exception) {
+        }
+        shedWebViewDestroyed = true
+        try {
+            CookieManager.getInstance().flush()
+        } catch (_: Exception) {
+        }
+        android.util.Log.i(
+            "SenzWatchdog",
+            "onShedBroadcast: WebView slot $slot di-shed (saveState + destroy)"
+        )
+    }
+
     /** v0.1.77 — simpan state WebView supaya onCreate bisa
      *  memulihkannya bila activity dibuat ulang sistem (tekanan RAM).
      *  Tanpa ini, blok loadUrl di onCreate dilewati (savedInstanceState
@@ -3965,6 +4079,17 @@ abstract class BrowserActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         isForeground = true
+        // v0.1.78: WebView di-shed MemoryGuard — buat ulang activity
+        // (WebView segar + restore v0.1.77). Jangan sentuh WebView
+        // yang sudah di-destroy (url/draw melempar).
+        if (shedWebViewDestroyed) {
+            shedWebViewDestroyed = false
+            recreate()
+            return
+        }
+        // v0.1.78: promosikan service guard bila ada yang gagal
+        // dipromosikan sebelumnya (flag guard_needs_promotion).
+        GuardPromoter.promoteIfNeeded(this)
         // v0.1.31: hidupkan lagi timer tangkap live (idempotent) — bila
         // activity sempat dihancurkan sistem selagi Space dibekukan,
         // timer mati dan "Nyalakan Live" saja tidak menghidupkannya lagi
@@ -4815,6 +4940,12 @@ abstract class BrowserActivity : AppCompatActivity() {
         // keduanya dari parent, baru hancurkan WebView utama.
         activityDestroyed = true
         stopLiveCapture()
+        // v0.1.78: lepas receiver shed.
+        try {
+            shedReceiver?.let { unregisterReceiver(it) }
+        } catch (_: Exception) {
+        }
+        shedReceiver = null
         try {
             popupView?.let {
                 popupView = null
