@@ -1301,6 +1301,18 @@ abstract class BrowserActivity : AppCompatActivity() {
                             promptChooserServed = true
                             filePathCallback.onReceiveValue(uris)
                         } catch (e: Exception) {
+                            // v0.1.80 (D1): JANGAN telan diam-diam — bila
+                            // serving gagal, status prompt harus bilang
+                            // apa yang gagal (nama file + pesan), bukan
+                            // "pemilih file tidak muncul" (menyesatkan).
+                            // Status "failed" tetap ditulis
+                            // waitPromptChooser sesudah timeout; ini
+                            // hanya jejak diagnosa.
+                            val names = staged?.map { it.name }?.joinToString(", ")
+                            writePromptStatus(
+                                "running",
+                                "gagal sodorkan file _inbox ($names): ${e.message}"
+                            )
                             filePathCallback.onReceiveValue(null)
                         }
                         return true
@@ -1606,17 +1618,24 @@ abstract class BrowserActivity : AppCompatActivity() {
      *  ID project sendiri, JANGAN hardcode URL project) -> tunggu URL
      *  /project/ (baca LIVE via JS, v0.1.70) -> diagnose composer
      *  halaman Project langsung.
+     *  v0.1.80 (D2): cek dulu sidebar SUDAH terbuka (nama Project
+     *  sudah kelihatan) — bila ya, langsung pilih Project tanpa klik
+     *  toggle (toggle saat sidebar terbuka bisa menutupnya, dan
+     *  tombolnya sering tidak ketemu); pencarian toggle diperluas
+     *  ke button,[role="button"].
      *  Semua jalan di background (WebView tetap mengeksekusi meski
      *  activity tidak tampil). */
     private fun runPromptProject() {
         if (pendingPromptText == null) return
-        val js = """(function(){var open=['toggle sidebar','open sidebar','buka sidebar','alih sidebar','buka bilah sisi','open navigation menu','buka menu navigasi'];var bs=[...document.querySelectorAll('button')].filter(function(b){return b.offsetParent!==null;});for(var i=0;i<open.length;i++){for(var j=0;j<bs.length;j++){var l=(bs[j].getAttribute('aria-label')||'').trim().toLowerCase();if(l===open[i]){bs[j].click();return '1';}}}for(var k=0;k<bs.length;k++){var al=(bs[k].getAttribute('aria-label')||'').toLowerCase();if(al.indexOf('sidebar')>=0||al.indexOf('bilah')>=0){bs[k].click();return '1';}}return '0';})()"""
+        val want = pendingPromptProject ?: return runPromptDiagnose(5)
+        val quoted = org.json.JSONObject.quote(want)
+        val js = """(function(){var want=$quoted.toLowerCase();function vis(e){if(e.offsetParent===null)return false;var r=e.getBoundingClientRect();if(r.width<=0||r.height<=0||r.bottom<=0||r.right<=0||r.top>=window.innerHeight||r.left>=window.innerWidth)return false;var cs=getComputedStyle(e);return cs.visibility!=='hidden'&&cs.display!=='none'&&parseFloat(cs.opacity)>0;}var els=[...document.querySelectorAll('a,button,[role="link"],[role="button"],[role="menuitem"],li')].filter(function(e){return vis(e);});for(var i=0;i<els.length;i++){var t=(els[i].textContent||'').trim().toLowerCase();if(t===want||t==='projects'||t==='proyek'){return 'open';}}var open=['toggle sidebar','open sidebar','buka sidebar','alih sidebar','buka bilah sisi','open navigation menu','buka menu navigasi'];var bs=[...document.querySelectorAll('button,[role="button"]')].filter(function(b){return vis(b);});for(var j=0;j<open.length;j++){for(var k=0;k<bs.length;k++){var l=(bs[k].getAttribute('aria-label')||'').trim().toLowerCase();if(l===open[j]){bs[k].click();return '1';}}}for(var m=0;m<bs.length;m++){var al=(bs[m].getAttribute('aria-label')||'').toLowerCase();if(al.indexOf('sidebar')>=0||al.indexOf('bilah')>=0){bs[m].click();return '1';}}return '0';})()"""
         webView.evaluateJavascript(js) { raw ->
             val clean = raw?.trim()?.removeSurrounding("\"") ?: ""
-            if (clean == "1") {
-                promptHandler.postDelayed({ runPromptPickProject() }, 1500)
-            } else {
-                failPrompt("tombol sidebar (kiri atas) tidak ketemu - tidak bisa masuk Project")
+            when (clean) {
+                "open" -> runPromptPickProject()
+                "1" -> promptHandler.postDelayed({ runPromptPickProject() }, 1500)
+                else -> failPrompt("tombol sidebar (kiri atas) tidak ketemu - tidak bisa masuk Project")
             }
         }
     }
@@ -1687,15 +1706,18 @@ abstract class BrowserActivity : AppCompatActivity() {
         }
     }
 
-    /** Langkah 2 (bila ada file): klik tombol attach, tunggu chooser
+    /** Langkah 2 (bila ada file): ketuk tombol attach, tunggu chooser
      *  disodori file, tunggu 3 dtk, cek chip lampiran muncul.
      *  v0.1.70 - MENU ATTACH: di composer halaman Project, klik attach
      *  membuka MENU ("Upload from device" / "Unggah dari perangkat"),
      *  bukan chooser langsung. Menu bisa juga sudah terbuka dari
-     *  percobaan sebelumnya -> cek item menu DULU sebelum klik attach
-     *  (klik attach saat menu terbuka malah menutup menu). Pencarian
+     *  percobaan sebelumnya -> cek item menu DULU sebelum ketuk attach
+     *  (ketuk attach saat menu terbuka malah menutup menu). Pencarian
      *  item menu by teks + visibility, BUKAN koordinat (posisi menu
-     *  mengikuti tinggi composer). */
+     *  mengikuti tinggi composer).
+     *  v0.1.80 - TAP BENERAN (bukan klik JS): klik JS .click() TIDAK
+     *  memicu <input type=file> Claude — akar "pemilih file tidak
+     *  muncul" (lihat clickAttachMenuItem / clickAttachButton). */
     private fun runPromptAttach() {
         val files = pendingPromptFiles ?: emptyList()
         promptChooserServed = false
@@ -1703,7 +1725,6 @@ abstract class BrowserActivity : AppCompatActivity() {
         clickAttachMenuItem { clicked ->
             if (pendingPromptText == null) return@clickAttachMenuItem
             if (clicked) {
-                writePromptStatus("running", "item menu unduh diklik")
                 waitPromptChooser(20)
             } else {
                 clickAttachButton()
@@ -1714,36 +1735,61 @@ abstract class BrowserActivity : AppCompatActivity() {
     /** v0.1.70 - cari item menu "Upload from device" / "Unggah dari
      *  perangkat" yang TERLIHAT lalu klik; callback true = diklik.
      *  Bila beberapa elemen cocok (induk + anak), ambil yang
-     *  TERAKHIR di urutan DOM = yang paling dalam/spesifik. */
+     *  TERAKHIR di urutan DOM = yang paling dalam/spesifik.
+     *  v0.1.80 - TAP BENERAN: JS hanya mengembalikan pusat rect
+     *  elemen terlihat (vis() gaya Studio: offsetParent + rect di
+     *  viewport + computed visibility/display/opacity — offsetParent
+     *  saja meloloskan elemen tersembunyi/duplikat), Kotlin mengetuk
+     *  titik itu via studioTapAt (dispatchTouchEvent DOWN+UP, pola
+     *  ttsTapAt/studioTapAt). Label exact didahulukan atas contains;
+     *  di antara yang sejenis, yang TERDALAM (paling akhir di urutan
+     *  DOM) menang. Callback true = diketuk (rect ketemu). */
     private fun clickAttachMenuItem(onDone: (Boolean) -> Unit) {
-        val js = """(function(){var labels=['upload from device','unggah dari perangkat'];var els=[...document.querySelectorAll('button,[role="menuitem"],[role="button"],li')].filter(function(e){return e.offsetParent!==null;});var hit=null;for(var i=0;i<els.length;i++){var t=(els[i].textContent||'').trim().toLowerCase();for(var k=0;k<labels.length;k++){if(t===labels[k]||(t.indexOf(labels[k])>=0&&t.length<60)){hit=els[i];}}}if(hit){hit.click();return '1';}return '';})()"""
+        val js = """(function(){function vis(b){if(b.offsetParent===null)return false;var r=b.getBoundingClientRect();if(r.width<=0||r.height<=0||r.bottom<=0||r.right<=0||r.top>=window.innerHeight||r.left>=window.innerWidth)return false;var cs=getComputedStyle(b);return cs.visibility!=='hidden'&&cs.display!=='none'&&parseFloat(cs.opacity)>0;}var labels=['upload from device','unggah dari perangkat'];var els=[...document.querySelectorAll('button,[role="menuitem"],[role="button"],li')].filter(function(e){return !e.disabled;});var hit=null,hitLabel='',hitExact=false;for(var i=0;i<els.length;i++){if(!vis(els[i]))continue;var t=(els[i].textContent||'').trim().toLowerCase();for(var k=0;k<labels.length;k++){var exact=(t===labels[k]);var cont=!exact&&(t.indexOf(labels[k])>=0&&t.length<60);if(exact||cont){if(!hit||exact||!hitExact){hit=els[i];hitLabel=labels[k];hitExact=exact;}}}}if(hit){var r=hit.getBoundingClientRect();return (r.left+r.width/2)+'|'+(r.top+r.height/2)+'|'+hit.tagName+'|'+hitLabel;}return '';})()"""
         webView.evaluateJavascript(js) { raw ->
             val clean = raw?.trim()?.removeSurrounding("\"") ?: ""
-            onDone(clean == "1")
+            val parts = clean.split("|")
+            val x = parts.getOrNull(0)?.toFloatOrNull()
+            val y = parts.getOrNull(1)?.toFloatOrNull()
+            if (parts.size < 4 || x == null || y == null) {
+                onDone(false)
+                return@evaluateJavascript
+            }
+            val tag = parts[2]
+            val label = parts[3]
+            writePromptStatus("running", "item menu unduh diketuk: $label ($tag) @$x,$y")
+            studioTapAt(x, y)
+            onDone(true)
         }
     }
 
-    /** Klik tombol attach (perilaku lama), lalu tunggu ~1,5 dtk dan
-     *  coba lagi item menu — bila menu muncul, klik; bila tidak ada
+    /** Ketuk tombol attach (perilaku lama), lalu tunggu ~1,5 dtk dan
+     *  coba lagi item menu — bila menu muncul, ketuk; bila tidak ada
      *  menu (chooser langsung terbuka, seperti di chat biasa),
-     *  langsung tunggu chooser. */
+     *  langsung tunggu chooser.
+     *  v0.1.80 - TAP BENERAN: JS hanya mengembalikan pusat rect
+     *  tombol attach yang terlihat (vis() gaya Studio), Kotlin
+     *  mengetuk via studioTapAt. Klik JS .click() tidak memicu menu
+     *  attach Claude dengan andal (pelajaran v0.1.76). */
     private fun clickAttachButton() {
-        val js = """(function(){var labels=['Add files','Attach files','Upload files','Add content','Attach','Lampirkan','Tambah file','Lampirkan file','Unggah file'];for(var k=0;k<labels.length;k++){var b=document.querySelector('button[aria-label="'+labels[k]+'"]');if(b){b.click();return labels[k];}}var bs=document.querySelectorAll('button');for(var i=0;i<bs.length;i++){var l=bs[i].getAttribute('aria-label')||'';if(/attach|add file|upload|lampir|unggah/i.test(l)){bs[i].click();return l;}}return '';})()"""
-        writePromptStatus("running", "mengklik tombol attach (${pendingPromptFiles?.size ?: 0} file)")
+        val js = """(function(){function vis(b){if(b.offsetParent===null)return false;var r=b.getBoundingClientRect();if(r.width<=0||r.height<=0||r.bottom<=0||r.right<=0||r.top>=window.innerHeight||r.left>=window.innerWidth)return false;var cs=getComputedStyle(b);return cs.visibility!=='hidden'&&cs.display!=='none'&&parseFloat(cs.opacity)>0;}var labels=['Add files','Attach files','Upload files','Add content','Attach','Lampirkan','Tambah file','Lampirkan file','Unggah file'];for(var k=0;k<labels.length;k++){var b=document.querySelector('button[aria-label="'+labels[k]+'"]');if(b&&vis(b)){var r=b.getBoundingClientRect();return (r.left+r.width/2)+'|'+(r.top+r.height/2)+'|'+labels[k];}}var bs=document.querySelectorAll('button');for(var i=0;i<bs.length;i++){var l=bs[i].getAttribute('aria-label')||'';if(/attach|add file|upload|lampir|unggah/i.test(l)&&vis(bs[i])){var r2=bs[i].getBoundingClientRect();return (r2.left+r2.width/2)+'|'+(r2.top+r2.height/2)+'|'+l;}}return '';})()"""
+        writePromptStatus("running", "mencari tombol attach (${pendingPromptFiles?.size ?: 0} file)")
         webView.evaluateJavascript(js) { raw ->
             if (pendingPromptText == null) return@evaluateJavascript
-            val label = raw?.trim()?.removeSurrounding("\"") ?: ""
-            if (label.isBlank()) {
+            val clean = raw?.trim()?.removeSurrounding("\"") ?: ""
+            val parts = clean.split("|")
+            val x = parts.getOrNull(0)?.toFloatOrNull()
+            val y = parts.getOrNull(1)?.toFloatOrNull()
+            val label = if (parts.size > 2) parts.drop(2).joinToString("|") else ""
+            if (x == null || y == null || label.isBlank()) {
                 failPrompt("tombol attach Claude tidak ketemu - cek /prompt-status tombol")
                 return@evaluateJavascript
             }
-            writePromptStatus("running", "tombol attach diklik: $label")
+            writePromptStatus("running", "tombol attach diketuk: $label @$x,$y")
+            studioTapAt(x, y)
             promptHandler.postDelayed({
-                clickAttachMenuItem { clicked ->
+                clickAttachMenuItem {
                     if (pendingPromptText == null) return@clickAttachMenuItem
-                    if (clicked) {
-                        writePromptStatus("running", "item menu unduh diklik")
-                    }
                     waitPromptChooser(20)
                 }
             }, 1500)

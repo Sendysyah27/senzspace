@@ -1205,3 +1205,34 @@ Jangan cuma diagnosa dari kodenya.
   /prompt, /tts, /studio, FileStore, PIN/biometrik, UI, dan
   cara kerja v0.1.77/78 tidak disentuh; foreground service
   baru tidak ditambahkan.
+- API 80 (24 Nov, v0.1.80): ATTACH REAL TAP.
+  (a) Latar: kirim /prompt dengan lampiran gagal sistematis
+  ("tombol attach diklik tapi pemilih file tidak muncul") —
+  menu item KETEMU dan status mencatat "item menu unduh
+  diklik", tapi onShowFileChooser tidak pernah dipanggil:
+  klik JS .click() tidak memicu <input type=file> Claude
+  (kelas yang sama dengan pelajaran klik unduh JS yang mati;
+  handler menu butuh trusted pointer event, atau klik
+  mendarat di parent/backdrop, atau elemen tersembunyi
+  lolos filter offsetParent saja). FileProvider bukan
+  penyebab (file_paths mencakup SenzSpace/).
+  (b) Tap beneran: clickAttachMenuItem + clickAttachButton
+  tidak lagi .click() — JS hanya mengembalikan pusat rect
+  elemen TERLIHAT (vis() gaya Studio: offsetParent + rect
+  di viewport + computed visibility/display/opacity),
+  Kotlin mengetuk via studioTapAt yang sudah ada
+  (dispatchTouchEvent DOWN+UP 120 ms, pola ttsTapAt).
+  Label exact didahulukan atas contains; yang TERDALAM
+  menang. waitPromptChooser(20) + runPromptCheckAttached
+  + cabang serving FileProvider tidak berubah.
+  (c) Diagnosa chooser jujur: catch di cabang
+  pendingPromptFiles onShowFileChooser menulis status
+  "gagal sodorkan file _inbox (<nama>): <pesan>" bila
+  serving gagal — tidak lagi diam.
+  (d) Sidebar sudah-terbuka: runPromptProject cek dulu
+  nama Project / "Projects"/"Proyek" sudah kelihatan —
+  bila ya, langsung runPromptPickProject tanpa klik toggle;
+  pencarian toggle diperluas ke button,[role="button"].
+  Tanpa ubah perilaku: WatchdogWorker, /tts, /studio,
+  FileStore, PIN/biometrik, UI, shed_refused_count (bukan
+  build ini), dan cara kerja v0.1.77/78/79 tidak disentuh.
