@@ -1394,7 +1394,7 @@ abstract class BrowserActivity : AppCompatActivity() {
                 val state: Bundle = savedInstanceState
                 var restored = false
                 try {
-                    restored = webView.restoreState(state)
+                    restored = webView.restoreState(state) != null
                 } catch (_: Exception) {
                     restored = false
                 }
