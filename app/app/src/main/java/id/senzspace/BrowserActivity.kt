@@ -1387,10 +1387,16 @@ abstract class BrowserActivity : AppCompatActivity() {
                     intent.getStringExtra(MainActivity.EXTRA_CLEAR_SUFFIX)
                 )
             } else {
-                val restored = try {
-                    webView.restoreState(savedInstanceState)
+                // State disalin ke val non-null eksplisit supaya
+                // restoreState tidak bergantung pada smart-cast
+                // Bundle? di dalam try-expression; restored diisi
+                // lewat statement agar tipenya pasti Boolean.
+                val state: Bundle = savedInstanceState
+                var restored = false
+                try {
+                    restored = webView.restoreState(state)
                 } catch (_: Exception) {
-                    false
+                    restored = false
                 }
                 if (!restored || isWebViewBlank()) {
                     loadLastUrlOrHome()
