@@ -1161,3 +1161,47 @@ Jangan cuma diagnosa dari kodenya.
   WatchdogWorker, /prompt, /tts, /studio, FileStore,
   PIN/biometrik, UI, dan cara kerja v0.1.77 tidak disentuh;
   largeHeap tidak dipakai.
+- API 79 (23 Nov, v0.1.79): SHED TELEMETRY + ONTRIMMEMORY.
+  (a) Latar: tes live v0.1.78 membuktikan mekanisme shed jalan
+  (last_dom_ms beku, restore segar) tapi telemetrinya buta:
+  shed_count tidak menghitung shed manual (counter cuma di jalur
+  tick guard; POST /guard memanggil sendShedBroadcast langsung
+  dari proses main), guard tidak tahu shed beneran mendarat, dan
+  tidak ada onTrimMemory di mana pun (guard cuma polling RAM
+  tiap 60 dtk).
+  (b) Satu penulis counter: guard-state.json HANYA ditulis proses
+  :watchdog; counter (shedCount, lastShedMs, shedConfirmedCount)
+  HANYA dimutasi tick guard. filesDir sama untuk semua proses
+  (satu UID) — marker file adalah carrier antar-proses yang sah.
+  sendShedBroadcast() selain kirim broadcast JUGA menulis marker
+  pending filesDir/shed-pending-<slot>-<epochMs>.json (atomik
+  tmp+rename); tick guard mengonsumsi marker pending (hapus
+  sesudah dibaca) → shedCount++, lastShedMs = maks(sent_ms).
+  Jalur tick memoryGuard() TIDAK menulis marker pending
+  (writePendingMarker=false) dan tetap menaikkan langsung —
+  kalau dua-duanya jalan, satu shed dihitung ganda.
+  (c) Konfirmasi shed: jalur shed bersama (shedWebViewNow, dipakai
+  onShedBroadcast + onTrimMemory) menulis marker
+  filesDir/shed-<suffix>.json {slot, shed_ms, source} sesudah
+  webView.destroy(). Tick guard membaca marker yang lebih baru
+  dari watermark per-suffix (last_confirmed_shed_ms, dipulihkan
+  dari guard-state.json) → shed_confirmed_count++. Marker
+  konfirmasi TIDAK dihapus guard (bukti terakhir yang dibaca
+  verifikasi live). /status dan GET /guard menampilkan
+  shed_confirmed_count.
+  (d) onTrimMemory di BrowserActivity (AppCompatActivity =
+  ComponentCallbacks2; tiap proses :spaceN punya instance
+  sendiri, jadi callback milik proses itu saja): pada
+  TRIM_MEMORY_RUNNING_CRITICAL / TRIM_MEMORY_COMPLETE, bila
+  Space ini bukan foreground (isForeground, set di
+  onResume/onPause) dan snapshot terakhirnya tidak generating
+  (api-page-<suffix>.json) → jalur shed yang sama
+  (shedWebViewNow: saveState + destroy + marker konfirmasi)
+  seketika, tanpa menunggu tick 60 dtk. Semua Space background
+  non-generating boleh shed bersamaan saat kritis. JANGAN
+  pasang di ApiService (proses main hanya menerima callback
+  trim proses main, tidak berguna untuk Space).
+  Tanpa ubah perilaku: WatchdogWorker, SHED_AVAIL_MB (300),
+  /prompt, /tts, /studio, FileStore, PIN/biometrik, UI, dan
+  cara kerja v0.1.77/78 tidak disentuh; foreground service
+  baru tidak ditambahkan.

@@ -367,7 +367,9 @@ class ApiServer(private val ctx: Context) {
                 // v0.1.78: test hook — paksa shed SATU slot (supaya
                 // live test tidak perlu menunggu RAM benar-benar
                 // kritis). Auth Bearer sama seperti POST lain (dicek
-                // di handle() sebelum route).
+                // di handle() sebelum route). v0.1.79:
+                // sendShedBroadcast juga menulis marker pending —
+                // tick guard menghitungnya ke shed_count (≤1 tick).
                 val req = try {
                     JSONObject(body)
                 } catch (_: Exception) {
@@ -1345,7 +1347,10 @@ class ApiServer(private val ctx: Context) {
      *  mem_avail_mb + mem_low (baca langsung, sama untuk semua
      *  proses), guard_heartbeat_age_sec (file guard-heartbeat;
      *  -1 = guard belum pernah tick), shed_count + last_shed_ms
-     *  (guard-state.json, ditulis tick guardian). */
+     *  (guard-state.json, ditulis tick guardian). v0.1.79:
+     *  shed_confirmed_count (shed yang TERBUKTI mendarat —
+     *  marker shed-<suffix>.json dari Space, bukan cuma
+     *  broadcast terkirim). */
     private fun putGuardFields(obj: JSONObject) {
         val am = ctx.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
         val memInfo = ActivityManager.MemoryInfo()
@@ -1365,10 +1370,12 @@ class ApiServer(private val ctx: Context) {
         obj.put("guard_heartbeat_age_sec", heartbeatAgeSec)
         obj.put("shed_count", guardState?.optInt("shed_count", 0) ?: 0)
         obj.put("last_shed_ms", guardState?.optLong("last_shed_ms", 0L) ?: 0L)
+        obj.put("shed_confirmed_count", guardState?.optInt("shed_confirmed_count", 0) ?: 0)
     }
 
     /** v0.1.78 — state guard (sama dengan field /status di atas)
-     *  + peta fgs per Space. */
+     *  + peta fgs per Space. v0.1.79: ikut shed_confirmed_count
+     *  (lewat putGuardFields). */
     private fun guardJson(): JSONObject {
         val guardState = readGuardState()
         return JSONObject().apply {
@@ -1378,7 +1385,8 @@ class ApiServer(private val ctx: Context) {
     }
 
     /** v0.1.78 — baca guard-state.json (ditulis WatchdogGuardService
-     *  tiap tick): heartbeat_ms, shed_count, last_shed_ms, fgs. */
+     *  tiap tick): heartbeat_ms, shed_count, last_shed_ms, fgs.
+     *  v0.1.79: + shed_confirmed_count, last_confirmed_shed_ms. */
     private fun readGuardState(): JSONObject? {
         return try {
             val f = File(ctx.filesDir, "guard-state.json")

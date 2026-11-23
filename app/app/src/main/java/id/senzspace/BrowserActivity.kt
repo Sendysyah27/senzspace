@@ -4014,7 +4014,10 @@ abstract class BrowserActivity : AppCompatActivity() {
      *  dibuka lagi: onResume melihat flag → recreate() → onCreate
      *  memulihkan state shed (bila ada) atau URL terakhir dari snapshot
      *  (v0.1.77). Abaikan bila Space ini sedang terlihat (balapan
-     *  dengan guard) atau WebView sudah di-shed / belum dibuat. */
+     *  dengan guard) atau WebView sudah di-shed / belum dibuat.
+     *  v0.1.79: badan dipindah ke shedWebViewNow (dipakai juga
+     *  onTrimMemory); fungsi ini tinggal memeriksa slot +
+     *  foreground. */
     private fun onShedBroadcast(intent: android.content.Intent) {
         val slot = intent.getIntExtra(WatchdogGuardService.EXTRA_SHED_SLOT, -1)
         val mySlot = try {
@@ -4027,6 +4030,20 @@ abstract class BrowserActivity : AppCompatActivity() {
         if (slot < 0 || slot != mySlot) return
         if (isForeground) return
         if (!::webView.isInitialized || shedWebViewDestroyed) return
+        shedWebViewNow("broadcast")
+    }
+
+    /** v0.1.79 — jalur shed yang dipakai onShedBroadcast (broadcast
+     *  guard) dan onTrimMemory (tekanan RAM sistem): simpan state
+     *  WebView (jalur v0.1.77), lepas renderer + JS heap (destroy),
+     *  lalu tulis marker konfirmasi shed-<suffix>.json untuk tick
+     *  guard. Activity + proses + KeepAlive tetap hidup; pemulihan
+     *  saat Space dibuka lagi: onResume melihat flag → recreate()
+     *  → onCreate memulihkan state shed atau URL terakhir dari
+     *  snapshot (v0.1.77). Penelepon WAJIB memeriksa dulu: bukan
+     *  foreground, WebView ada + belum di-shed, tidak generating
+     *  (trim). */
+    private fun shedWebViewNow(reason: String) {
         // Simpan state (v0.1.77) sebelum destroy — onCreate berikut
         // memulihkannya bila snapshot URL tidak cukup.
         try {
@@ -4056,10 +4073,64 @@ abstract class BrowserActivity : AppCompatActivity() {
             CookieManager.getInstance().flush()
         } catch (_: Exception) {
         }
+        // v0.1.79: marker konfirmasi untuk tick guard — guard
+        // menghitung shed_confirmed_count dari file ini (JANGAN
+        // dihapus guard; ini bukti terakhir yang dibaca verifikasi
+        // live). Atomik tmp+rename, pola api-token v0.1.77.
+        val shedMs = System.currentTimeMillis()
+        try {
+            val mySlot = try {
+                SpaceRegistry.load(this).firstOrNull {
+                    SpaceRegistry.suffixForSlot(it.slot) == dataDirectorySuffix
+                }?.slot
+            } catch (e: Exception) {
+                null
+            } ?: -1
+            val obj = org.json.JSONObject().apply {
+                put("slot", mySlot)
+                put("shed_ms", shedMs)
+                put("source", reason)
+            }
+            val f = java.io.File(filesDir, "shed-$dataDirectorySuffix.json")
+            val tmp = java.io.File(filesDir, "shed-$dataDirectorySuffix.json.tmp")
+            tmp.writeText(obj.toString())
+            if (!tmp.renameTo(f)) f.writeText(obj.toString())
+        } catch (_: Exception) {
+        }
         android.util.Log.i(
             "SenzWatchdog",
-            "onShedBroadcast: WebView slot $slot di-shed (saveState + destroy)"
+            "shedWebViewNow($reason): WebView $dataDirectorySuffix di-shed (saveState + destroy + marker)"
         )
+    }
+
+    /** v0.1.79 — tekanan RAM sistem: shed mandiri per-Space tanpa
+     *  menunggu tick guard 60 dtk. Tiap proses :spaceN punya
+     *  instance sendiri, jadi callback ini milik proses itu saja.
+     *  Hanya pada RUNNING_CRITICAL / COMPLETE; hanya bila Space
+     *  ini bukan foreground dan snapshot terakhirnya tidak
+     *  generating. Semua Space background non-generating boleh
+     *  shed bersamaan saat kritis — itu respons yang benar. */
+    override fun onTrimMemory(level: Int) {
+        super.onTrimMemory(level)
+        if (level != android.content.ComponentCallbacks2.TRIM_MEMORY_RUNNING_CRITICAL &&
+            level != android.content.ComponentCallbacks2.TRIM_MEMORY_COMPLETE) return
+        if (activityDestroyed) return
+        if (isForeground) return
+        if (!::webView.isInitialized || shedWebViewDestroyed) return
+        if (snapshotGenerating()) return
+        shedWebViewNow("trim")
+    }
+
+    /** v0.1.79 — snapshot terakhir Space ini bilang generating?
+     *  Pola sama seperti WatchdogGuardService.snapshotGenerating. */
+    private fun snapshotGenerating(): Boolean {
+        return try {
+            val f = java.io.File(filesDir, "api-page-$dataDirectorySuffix.json")
+            if (!f.isFile) false
+            else org.json.JSONObject(f.readText()).optBoolean("generating", false)
+        } catch (_: Exception) {
+            false
+        }
     }
 
     /** v0.1.77 — simpan state WebView supaya onCreate bisa

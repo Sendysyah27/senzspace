@@ -111,14 +111,34 @@ class WatchdogGuardService : Service() {
         private const val GUARD_STATE_FILE = "guard-state.json"
 
         /** Kirim perintah shed ke SATU slot (dipakai tick guard +
-         *  POST /guard). */
-        fun sendShedBroadcast(ctx: Context, slot: Int) {
+         *  POST /guard). v0.1.79: selain broadcast, JUGA menulis
+         *  marker pending filesDir/shed-pending-<slot>-<epochMs>.json
+         *  (atomik tmp+rename) supaya tick guard bisa menghitung
+         *  shed yang dikirim dari proses lain (main) — counter
+         *  HANYA dimutasi tick guard (satu penulis). Tick guard
+         *  sendiri (memoryGuard) TIDAK menulis marker
+         *  (writePendingMarker=false) karena menaikkan counter
+         *  langsung — kalau dua-duanya jalan, satu shed dihitung
+         *  ganda. */
+        fun sendShedBroadcast(ctx: Context, slot: Int, writePendingMarker: Boolean = true) {
             try {
                 val intent = Intent(ACTION_SHED_SPACE).apply {
                     setPackage(ctx.packageName)
                     putExtra(EXTRA_SHED_SLOT, slot)
                 }
                 ctx.sendBroadcast(intent)
+                if (writePendingMarker) {
+                    val now = System.currentTimeMillis()
+                    val obj = JSONObject().apply {
+                        put("slot", slot)
+                        put("sent_ms", now)
+                        put("source", "manual")
+                    }
+                    val f = File(ctx.filesDir, "shed-pending-$slot-$now.json")
+                    val tmp = File(ctx.filesDir, "shed-pending-$slot-$now.json.tmp")
+                    tmp.writeText(obj.toString())
+                    if (!tmp.renameTo(f)) f.writeText(obj.toString())
+                }
                 Log.i(TAG, "sendShedBroadcast: slot=$slot")
             } catch (e: Exception) {
                 Log.w(TAG, "sendShedBroadcast gagal: ${e.message}")
@@ -133,6 +153,13 @@ class WatchdogGuardService : Service() {
     // guard-state.json tiap tick supaya bisa dibaca API).
     private var shedCount = 0
     private var lastShedMs = 0L
+
+    // v0.1.79 — shed yang TERBUKTI mendarat (marker konfirmasi
+    // shed-<suffix>.json dari Space sesudah webView.destroy()).
+    // Watermark per suffix supaya marker yang sama tidak dihitung
+    // dua kali (dipulihkan dari guard-state.json).
+    private var shedConfirmedCount = 0
+    private val lastConfirmedShedMsBySuffix = mutableMapOf<String, Long>()
 
     private val checkRunnable = object : Runnable {
         override fun run() {
@@ -284,6 +311,13 @@ class WatchdogGuardService : Service() {
      *  generating → shed NOL, dicatat di log. URL terakhir Space yang
      *  di-shed tersimpan di snapshot (v0.1.77) — /open memulihkannya. */
     private fun memoryGuardTick() {
+        // v0.1.79: konsumsi marker shed dulu (setiap tick, apa pun
+        // kondisi RAM) — shed manual + konfirmasi dari Space.
+        try {
+            consumeShedMarkers()
+        } catch (e: Exception) {
+            Log.w(TAG, "memoryGuard: konsumsi marker shed gagal: ${e.message}")
+        }
         val am = getSystemService(ACTIVITY_SERVICE) as ActivityManager
         val info = ActivityManager.MemoryInfo()
         am.getMemoryInfo(info)
@@ -329,7 +363,11 @@ class WatchdogGuardService : Service() {
             )
             return
         }
-        sendShedBroadcast(this, victimSlot)
+        // v0.1.79: tick guard TIDAK menulis marker pending
+        // (writePendingMarker=false) — counter dinaikkan langsung
+        // di bawah; kalau marker juga ditulis, shed dihitung ganda
+        // (langsung + konsumsi marker).
+        sendShedBroadcast(this, victimSlot, writePendingMarker = false)
         shedCount++
         lastShedMs = System.currentTimeMillis()
         Log.i(
@@ -337,6 +375,73 @@ class WatchdogGuardService : Service() {
             "memoryGuard: shed slot=$victimSlot " +
                 "(avail=${availMb}MB low=${info.lowMemory})"
         )
+    }
+
+    /** v0.1.79 — konsumsi marker shed (satu-satunya tempat counter
+     *  berubah selain kenaikan langsung memoryGuard):
+     *  (1) shed-pending-<slot>-<epochMs>.json — shed yang dikirim
+     *  dari proses lain (POST /guard): hapus sesudah dibaca,
+     *  shedCount++, lastShedMs = maks(sent_ms).
+     *  (2) shed-<suffix>.json — konfirmasi Space sesudah
+     *  webView.destroy(): JANGAN dihapus (bukti terakhir yang
+     *  dibaca verifikasi live); hitung sekali per marker baru
+     *  (watermark per suffix di lastConfirmedShedMsBySuffix). */
+    private fun consumeShedMarkers() {
+        try {
+            val pending = filesDir.listFiles { f ->
+                f.isFile && f.name.startsWith("shed-pending-") &&
+                    f.name.endsWith(".json")
+            } ?: emptyArray()
+            for (f in pending) {
+                var sentMs = 0L
+                try {
+                    sentMs = JSONObject(f.readText()).optLong("sent_ms", 0L)
+                } catch (_: Exception) {
+                }
+                if (sentMs <= 0) {
+                    sentMs = f.name.removePrefix("shed-pending-")
+                        .removeSuffix(".json").substringAfterLast("-")
+                        .toLongOrNull() ?: 0L
+                }
+                try {
+                    f.delete()
+                } catch (_: Exception) {
+                }
+                shedCount++
+                if (sentMs > lastShedMs) lastShedMs = sentMs
+                Log.i(
+                    TAG,
+                    "consumeShedMarkers: shed manual dikonsumsi " +
+                        "(sent_ms=$sentMs, shed_count=$shedCount)"
+                )
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "consumeShedMarkers: pending gagal: ${e.message}")
+        }
+        try {
+            for (slot in 1..10) {
+                val suffix = SpaceRegistry.suffixForSlot(slot)
+                val f = File(filesDir, "shed-$suffix.json")
+                if (!f.isFile) continue
+                val shedMs = try {
+                    JSONObject(f.readText()).optLong("shed_ms", 0L)
+                } catch (_: Exception) {
+                    0L
+                }
+                val seen = lastConfirmedShedMsBySuffix[suffix] ?: 0L
+                if (shedMs > 0 && shedMs > seen) {
+                    shedConfirmedCount++
+                    lastConfirmedShedMsBySuffix[suffix] = shedMs
+                    Log.i(
+                        TAG,
+                        "consumeShedMarkers: shed terkonfirmasi $suffix " +
+                            "(shed_ms=$shedMs, confirmed=$shedConfirmedCount)"
+                    )
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "consumeShedMarkers: konfirmasi gagal: ${e.message}")
+        }
     }
 
     /** Snapshot terakhir Space ini bilang generating? File tidak ada /
@@ -383,8 +488,9 @@ class WatchdogGuardService : Service() {
     /** v0.1.78 — heartbeat + state guard (atomik tmp+rename, pola
      *  api-token v0.1.77): guard-heartbeat = epoch ms tick terakhir
      *  saja; guard-state.json = heartbeat + shed_count + last_shed_ms
-     *  + fgs per Space. Dibaca /status, /spaces, /guard di proses
-     *  utama. */
+     *  + fgs per Space. v0.1.79: + shed_confirmed_count +
+     *  last_confirmed_shed_ms (watermark per suffix). Dibaca
+     *  /status, /spaces, /guard di proses utama. */
     private fun writeGuardState() {
         val now = System.currentTimeMillis()
         try {
@@ -399,6 +505,12 @@ class WatchdogGuardService : Service() {
                 put("heartbeat_ms", now)
                 put("shed_count", shedCount)
                 put("last_shed_ms", lastShedMs)
+                put("shed_confirmed_count", shedConfirmedCount)
+                val confirmed = JSONObject()
+                for ((suffix, ms) in lastConfirmedShedMsBySuffix) {
+                    confirmed.put(suffix, ms)
+                }
+                put("last_confirmed_shed_ms", confirmed)
                 val fgs = JSONObject()
                 for ((suffix, fg) in foregroundServiceMap()) fgs.put(suffix, fg)
                 put("fgs", fgs)
@@ -448,6 +560,15 @@ class WatchdogGuardService : Service() {
                 val obj = JSONObject(f.readText())
                 shedCount = obj.optInt("shed_count", 0)
                 lastShedMs = obj.optLong("last_shed_ms", 0L)
+                shedConfirmedCount = obj.optInt("shed_confirmed_count", 0)
+                val confirmed = obj.optJSONObject("last_confirmed_shed_ms")
+                if (confirmed != null) {
+                    val keys = confirmed.keys()
+                    while (keys.hasNext()) {
+                        val k = keys.next()
+                        lastConfirmedShedMsBySuffix[k] = confirmed.optLong(k, 0L)
+                    }
+                }
             }
         } catch (_: Exception) {
         }
