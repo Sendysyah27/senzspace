@@ -592,6 +592,46 @@ abstract class BrowserActivity : AppCompatActivity() {
     private fun pageStatusFile(): java.io.File =
         java.io.File(filesDir, "api-page-$dataDirectorySuffix.json")
 
+    /** v0.1.77 — WebView dianggap blank bila tidak punya URL (null /
+     *  kosong) atau masih di about:blank. WebView segar (activity
+     *  dibuat ulang sistem) melapor null; about:blank tidak pernah
+     *  halaman Space yang sah. */
+    private fun isWebViewBlank(): Boolean {
+        if (!::webView.isInitialized) return true
+        val u = webView.url
+        return u.isNullOrEmpty() || u == "about:blank"
+    }
+
+    /** v0.1.77 — URL terakhir Space ini dari snapshot halaman
+     *  (api-page-<suffix>.json, ditulis capturePageSnapshot) atau
+     *  homeUrl bila snapshot tidak ada / isinya bukan URL http(s).
+     *  Snapshot bertahan di filesDir walau proses mati — currentUrl
+     *  (memori) tidak. */
+    private fun lastUrlOrHome(): String {
+        try {
+            val f = pageStatusFile()
+            if (f.isFile) {
+                val u = org.json.JSONObject(f.readText()).optString("url", "")
+                if (u.startsWith("http://") || u.startsWith("https://")) return u
+            }
+        } catch (_: Exception) {
+        }
+        return homeUrl
+    }
+
+    /** v0.1.77 — muat URL terakhir Space ini (atau homeUrl).
+     *  reload() adalah no-op saat WebView tanpa URL, jadi pemulihan
+     *  blank HARUS loadUrl eksplisit. currentUrl disetel sesuai URL
+     *  yang dimuat. */
+    private fun loadLastUrlOrHome() {
+        val u = lastUrlOrHome()
+        currentUrl = u
+        try {
+            webView.loadUrl(u)
+        } catch (_: Exception) {
+        }
+    }
+
     private fun capturePageSnapshot() {
         if (!::webView.isInitialized) return
         if (pageSnapRunning) return
@@ -958,7 +998,13 @@ abstract class BrowserActivity : AppCompatActivity() {
         val minimizeBtn = topBarIcon(R.drawable.ic_chevron_down, "Minimize")
         minimizeBtn.setOnClickListener { goToDashboard() }
         val reloadBtn = topBarIcon(R.drawable.ic_refresh, "Muat ulang")
-        reloadBtn.setOnClickListener { if (::webView.isInitialized) webView.reload() }
+        // v0.1.77: reload() no-op saat WebView tanpa URL — bila blank,
+        // muat URL terakhir/homeUrl, bukan reload buta.
+        reloadBtn.setOnClickListener {
+            if (::webView.isInitialized) {
+                if (isWebViewBlank()) loadLastUrlOrHome() else webView.reload()
+            }
+        }
         val homeBtn = topBarIcon(R.drawable.ic_home, "Beranda Space")
         homeBtn.setOnClickListener { if (::webView.isInitialized) webView.loadUrl(homeUrl) }
         // v0.1.31: tombol pindah Space (ganti geser top bar) — buka
@@ -1109,8 +1155,16 @@ abstract class BrowserActivity : AppCompatActivity() {
                         "Renderer Space mati — memuat ulang",
                         Toast.LENGTH_LONG
                     ).show()
+                    // v0.1.77: reload() no-op bila renderer mati sebelum
+                    // halaman commit (URL kosong) — muat URL terakhir
+                    // Space ini; bila ada URL, reload seperti biasa.
+                    // Fallback loadUrl(homeUrl) dipertahankan.
                     try {
-                        view.reload()
+                        if (view.url.isNullOrEmpty() || view.url == "about:blank") {
+                            view.loadUrl(lastUrlOrHome())
+                        } else {
+                            view.reload()
+                        }
                     } catch (e: Exception) {
                         try {
                             view.loadUrl(homeUrl)
@@ -1318,6 +1372,32 @@ abstract class BrowserActivity : AppCompatActivity() {
             }
             intent.getIntExtra(MainActivity.EXTRA_SPLIT_WITH, -1)
                 .takeIf { it > 0 }?.let { pendingSplitSlot = it }
+        } else {
+            // v0.1.77: activity dibuat ulang sistem (tekanan RAM —
+            // LMK) — WebView segar tanpa URL bila state tidak
+            // dipulihkan: blok di atas dilewati karena
+            // savedInstanceState != null. Pulihkan state WebView
+            // (disimpan onSaveInstanceState); bila pulih gagal atau
+            // URL tetap kosong, muat URL terakhir Space ini.
+            // Bersihkan data tetap didahulukan bila intent memintanya
+            // (jangan pulihkan state yang baru dibersihkan).
+            if (intent.getBooleanExtra(MainActivity.EXTRA_CLEAR_DATA, false)) {
+                clearSpaceDataAndLoad(
+                    url,
+                    intent.getStringExtra(MainActivity.EXTRA_CLEAR_SUFFIX)
+                )
+            } else {
+                val restored = try {
+                    webView.restoreState(savedInstanceState)
+                } catch (_: Exception) {
+                    false
+                }
+                if (!restored || isWebViewBlank()) {
+                    loadLastUrlOrHome()
+                } else {
+                    currentUrl = webView.url ?: ""
+                }
+            }
         }
         startLiveCapture()
         // v0.1.38: payload prompt API dari intent (bila ada).
@@ -3862,6 +3942,20 @@ abstract class BrowserActivity : AppCompatActivity() {
         }
     }
 
+    /** v0.1.77 — simpan state WebView supaya onCreate bisa
+     *  memulihkannya bila activity dibuat ulang sistem (tekanan RAM).
+     *  Tanpa ini, blok loadUrl di onCreate dilewati (savedInstanceState
+     *  != null) dan WebView segar tanpa URL → blank selamanya. */
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        if (::webView.isInitialized) {
+            try {
+                webView.saveState(outState)
+            } catch (_: Exception) {
+            }
+        }
+    }
+
     override fun onResume() {
         super.onResume()
         isForeground = true
@@ -3870,6 +3964,17 @@ abstract class BrowserActivity : AppCompatActivity() {
         // timer mati dan "Nyalakan Live" saja tidak menghidupkannya lagi
         // (temuan HP: live tidak aktif lagi setelah dibekukan).
         startLiveCapture()
+        // v0.1.77: jaring pengaman — Space menjadi tampak tapi WebView
+        // tanpa URL (activity dibuat ulang / renderer mati tanpa
+        // handler) → muat URL terakhir. Idempotent: hanya jalan saat
+        // URL kosong, tidak pernah memuat ulang halaman yang ada.
+        // Bersihkan data dikecualikan: clearSpaceDataAndLoad memuat
+        // homeUrl sendiri sesudah menghapus data.
+        if (::webView.isInitialized && isWebViewBlank() &&
+            !intent.getBooleanExtra(MainActivity.EXTRA_CLEAR_DATA, false)
+        ) {
+            loadLastUrlOrHome()
+        }
         LockGate.check(this, lockLauncher)
         refreshDownloadCount()
         // v0.1.21: jalankan permintaan split-screen (sekali saja).

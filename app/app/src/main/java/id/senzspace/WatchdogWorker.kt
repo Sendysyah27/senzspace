@@ -83,25 +83,45 @@ class WatchdogWorker(appContext: Context, params: WorkerParameters) :
         // v0.1.75 (audit #14): kirim Authorization Bearer — /ping
         // ikut dicek token di handle(), jadi tanpa token probe
         // SELALU lapor mati dan guardian startPlain tanpa henti.
+        // v0.1.77: (a) token dibaca lewat ApiToken.readForPing —
+        // dari FILE yang ditulis proses utama tiap token dibuat /
+        // di-regenerate, BUKAN dari SharedPreferences yang di-cache
+        // per proses (:watchdog bisa memegang token basi). readForPing
+        // TIDAK PERNAH membuat token baru — pembuatan token di proses
+        // watchdog adalah sumber 401 selamanya. (b) Log jujur: kelas
+        // exception + stack trace penuh (Log.w 3 argumen — pesan saja
+        // bisa null: "ping gagal: null") dan status line HTTP bila
+        // server menjawab, supaya 401 (token) bisa dibedakan dari
+        // server mati.
         fun isApiAlive(ctx: Context): Boolean {
             var socket: Socket? = null
             return try {
+                val token = ApiToken.readForPing(ctx)
+                if (token.isNullOrEmpty()) {
+                    Log.w(TAG, "isApiAlive: token tidak bisa dibaca (file + prefs kosong) — ping tidak dikirim")
+                    return false
+                }
                 socket = Socket()
                 socket.connect(InetSocketAddress("127.0.0.1", ApiServer.PORT), 2000)
                 socket.soTimeout = 2000
                 val out = socket.getOutputStream()
                 out.write(
                     ("GET /ping HTTP/1.0\r\nHost: 127.0.0.1\r\n" +
-                        "Authorization: Bearer ${ApiToken.getOrCreate(ctx)}\r\n\r\n")
+                        "Authorization: Bearer $token\r\n\r\n")
                         .toByteArray(Charsets.UTF_8)
                 )
                 out.flush()
                 val first = BufferedReader(
                     InputStreamReader(socket.getInputStream(), Charsets.UTF_8)
                 ).readLine() ?: ""
-                first.contains("200")
+                if (first.contains("200")) {
+                    true
+                } else {
+                    Log.w(TAG, "isApiAlive: server menjawab non-200: '$first'")
+                    false
+                }
             } catch (e: Exception) {
-                Log.w(TAG, "isApiAlive: ping gagal: ${e.message}")
+                Log.w(TAG, "isApiAlive: ping gagal (${e.javaClass.simpleName}): ${e.message}", e)
                 false
             } finally {
                 try {

@@ -1,7 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- v0.1.75 (audit #6): token API TIDAK ikut backup — SharedPreferences
      senzspace_ui (api_token) dikecualikan; tanpa token, hasil backup
-     tidak bisa dipakai untuk memanggil API. -->
+     tidak bisa dipakai untuk memanggil API.
+     v0.1.77: cermin token di filesDir (api-token) ikut dikecualikan —
+     alasan yang sama. -->
 <full-backup-content>
     <exclude domain="sharedpref" path="senzspace_ui.xml" />
+    <exclude domain="file" path="api-token" />
 </full-backup-content>

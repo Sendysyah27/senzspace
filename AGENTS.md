@@ -1076,3 +1076,32 @@ Jangan cuma diagnosa dari kodenya.
   tanpa setExpedited, seluruh perbaikan audit v0.1.75, eksekutor
   prompt/TTS/Studio, snapshot/thumbnail, limit detection,
   FileManager UI. Tanpa izin baru.
+- API 77 (23 Nov, v0.1.77): PULIH OTOMATIS WEBVIEW BLANK + PING
+  GUARDIAN JUJUR.
+  (a) WebView blank: onSaveInstanceState menyimpan state WebView
+  (saveState) dan onCreate memulihkannya (restoreState) bila
+  activity dibuat ulang sistem (tekanan RAM — blok loadUrl lama
+  dilewati saat savedInstanceState != null); bila pulih gagal atau
+  URL tetap kosong, muat URL terakhir Space ini (dari snapshot
+  api-page-<suffix>.json, fallback homeUrl) dan set currentUrl.
+  onRenderProcessGone + tombol reload top bar: URL kosong →
+  loadUrl URL terakhir/homeUrl (reload() no-op saat URL kosong),
+  URL ada → reload seperti biasa. onResume: jaring pengaman —
+  Space tampak tapi WebView tanpa URL → muat URL terakhir;
+  idempotent, tidak pernah memuat ulang halaman yang ada.
+  Bersihkan data (EXTRA_CLEAR_DATA) tetap didahulukan atas
+  pemulihan state maupun jaring pengaman onResume.
+  (b) Ping guardian: isApiAlive mencatat kelas exception + stack
+  trace penuh (Log.w 3 argumen) dan status line HTTP bila server
+  menjawab (401 bisa dibedakan dari server mati); token tidak bisa
+  dibaca → ping gagal dengan alasan di log. Token lintas-proses:
+  ApiToken menulis cermin token ke file internal api-token
+  (filesDir, atomik lewat tmp + rename) tiap getOrCreate /
+  regenerate; readForPing baca file dari disk tiap tick (fallback
+  prefs + pulihkan cermin), TIDAK PERNAH membuat token baru;
+  MODE_MULTI_PROCESS tidak dipakai. File api-token dikecualikan
+  dari backup (backup_rules.xml). Pola ping tetap socket mentah,
+  timeout 2000 ms, tick guardian 60 dtk tidak berubah.
+  Tanpa ubah perilaku: eksekutor prompt/TTS/Studio, snapshot/
+  thumbnail, limit detection, FileManager, BootReceiver,
+  SpaceRegistry, rute API lain, TRAP_HOSTS tidak disentuh.

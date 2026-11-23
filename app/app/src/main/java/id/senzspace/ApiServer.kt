@@ -31,6 +31,35 @@ object ApiToken {
     private const val PREFS = "senzspace_ui"
     private const val KEY = "api_token"
 
+    // v0.1.77: cermin token di file internal (filesDir — direktori data
+    // yang sama untuk semua proses app, MODE_PRIVATE seperti
+    // SharedPreferences). SharedPreferences di-cache PER PROSES:
+    // proses :watchdog bisa memegang token basi sesudah token
+    // di-regenerate di proses utama (pemuatan ulang prefs dari disk
+    // tidak dijamin tiap baca). File dibaca ulang dari disk tiap
+    // ping → token yang dibaca watchdog SELALU sama dengan yang dicek
+    // ApiServer.check di proses utama. JANGAN MODE_MULTI_PROCESS
+    // (deprecated, tidak andal).
+    private const val TOKEN_FILE = "api-token"
+
+    private fun tokenFile(ctx: Context): File =
+        File(ctx.filesDir, TOKEN_FILE)
+
+    // Tulis cermin file — atomik lewat tmp + rename supaya pembaca
+    // lintas-proses tidak pernah membaca token terpotong. Best effort:
+    // gagal tulis tidak menggagalkan token; prefs tetap sumber
+    // kebenaran pembuatan.
+    private fun writeTokenFile(ctx: Context, token: String) {
+        try {
+            val tmp = File(ctx.filesDir, "$TOKEN_FILE.tmp")
+            tmp.writeText(token)
+            if (!tmp.renameTo(tokenFile(ctx))) {
+                tokenFile(ctx).writeText(token)
+            }
+        } catch (_: Exception) {
+        }
+    }
+
     fun isEnabled(ctx: Context): Boolean =
         ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             .getBoolean("api_enabled", true)
@@ -43,9 +72,13 @@ object ApiToken {
     fun getOrCreate(ctx: Context): String {
         val prefs = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         val existing = prefs.getString(KEY, null)
-        if (!existing.isNullOrEmpty()) return existing
+        if (!existing.isNullOrEmpty()) {
+            writeTokenFile(ctx, existing)
+            return existing
+        }
         val token = UUID.randomUUID().toString()
         prefs.edit().putString(KEY, token).apply()
+        writeTokenFile(ctx, token)
         return token
     }
 
@@ -53,7 +86,33 @@ object ApiToken {
         val token = UUID.randomUUID().toString()
         ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             .edit().putString(KEY, token).apply()
+        writeTokenFile(ctx, token)
         return token
+    }
+
+    // v0.1.77: baca token untuk ping lintas-proses — TIDAK PERNAH
+    // membuat token baru (pembuatan token di proses watchdog adalah
+    // sumber 401 selamanya: token buatannya menimpa / berbeda dari
+    // token proses utama). Urutan: file (selalu segar dari disk) →
+    // prefs (fallback; sekalian pulihkan cermin file) → null bila
+    // tidak ada di mana pun (pemanggil mencatat alasannya).
+    fun readForPing(ctx: Context): String? {
+        try {
+            val f = tokenFile(ctx)
+            if (f.isFile) {
+                val t = f.readText().trim()
+                if (t.isNotEmpty()) return t
+            }
+        } catch (_: Exception) {
+        }
+        val fromPrefs = try {
+            ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                .getString(KEY, null)
+        } catch (_: Exception) {
+            null
+        }
+        if (!fromPrefs.isNullOrEmpty()) writeTokenFile(ctx, fromPrefs)
+        return fromPrefs
     }
 
     fun check(ctx: Context, authHeader: String?): Boolean {
