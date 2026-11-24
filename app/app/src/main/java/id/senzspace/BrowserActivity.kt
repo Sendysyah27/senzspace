@@ -47,6 +47,8 @@ abstract class BrowserActivity : AppCompatActivity() {
     protected abstract val dataDirectorySuffix: String
 
     companion object {
+        private const val TAG = "SenzSpace"
+
         /** Split-screen (v0.1.21): slot Space yang harus dibuka
          *  berdampingan begitu Space peminta tampil. Satu tembakan —
          *  dibersihkan setelah dipakai supaya resume berikutnya tidak
