@@ -1342,3 +1342,64 @@ Jangan cuma diagnosa dari kodenya.
   langkah TTS Style/Speaker/Run, runTtsCreateDialog, watchdog,
   shed_refused_count (pindah v0.1.83), cacat sidebar-toggle attach
   (/new — pindah v0.1.83).
+- API 83 (24 Nov, v0.1.83): TTS — DIAGNOSE ANTI-/docs + REKAM
+  LANGSUNG TANPA EVENT UNDUH + ENDPOINT /tts-record.
+  (a) Latar: tes live v0.1.82 (24 Nov 14:12-14:36) — suntikan core
+  TERBUKTI jalan ('core: installed' + 'trap: installed' di
+  generate-speech), tapi (F1) halaman mental ke /docs — 4x kirim
+  TTS gagal di level rute (pindah 5-10 dtk sesudah kirim; STABIL
+  180 dtk idle + 30 dtk sesudah open biasa; :aistudio HIDUP saat
+  gagal; kode eksekutor tidak menavigasi; diagnose jatuh ke alur
+  model v0.1.41 yang mati di UI baru); (F2) tombol unduh UI baru
+  MATI — tap beneran eksekutor (189x2110, posisi terkonfirmasi
+  screenshot) + tap ADB di titik sama -> NOL baris log, aistudio
+  kosong, tidak ada dialog simpan (tombol tidak memicu event
+  unduh; downloadBlob tidak pernah dipanggil).
+  (b) Diagnose anti-/docs (A): runTtsDiagnose mengembalikan 2
+  kolom baru — location.pathname + hrs (tombol Run settings
+  TERLIHAT = bukti Playground lama). Sesudah 5 retry habis:
+  hrs=1 -> runTtsModelFlow (satu-satunya pemanggil yang sah);
+  di /docs atau di luar halaman TTS -> loadUrl beranda
+  (https://aistudio.google.com/) + diagnose ulang (siklus
+  dihitung ttsDiagnoseCycles, status 'halaman /docs — kembali
+  ke beranda TTS (siklus N)'); di generate-speech tapi kartu
+  belum ke-render -> retry terus sampai watchdog. Anggaran
+  watchdog TIDAK di-reset (3 mnt ke editor / 10 mnt total).
+  (c) Rekam langsung (B): waitTtsFile, 15 dtk sesudah tap unduh
+  tanpa file baru (triesLeft<=3, sekali saja) -> startDirectRecord
+  (nama standar 'Generated Audio <M d, yyyy - h:mma>.webm').
+  directRecordJs MANDIRI (salinan senzTryRecorder tanpa URL blob):
+  findAudio rekursif (document + semua shadow root) -> captureStream
+  + MediaRecorder (audio/webm;codecs=opus) -> onBlobData (jalan
+  simpan sama). senzTryRecorder TIDAK bisa dipakai langsung — var
+  lokal di dalam IIFE downloadBlob. __senzBlobDone di-reset false
+  di awal JS (unduhan sukses sebelumnya di sesi yang sama bisa
+  meninggalkan flag true dan membuang rekaman); perlindungan
+  ganda-simpan tetap jalan (yang selesai duluan menang). Batas
+  tetap (durasi+15 dtk, cap 5 mnt; deadline waitTtsFile
+  diperpanjang). Gagal keras (tidak ada <audio>/stream/perekam/
+  play ditolak) -> failTts jujur SEKARANG (bukan tunggu percobaan
+  habis); waitTtsFile menerima .webm. onBlobFallbackStart (bridge)
+  menulis status rekam bila ttsRecordManual.
+  (d) Endpoint rekam manual (C): POST /tts-record {"slot":7,
+  "file":"<opsional>"} -> 202 ASINKRON {"recording":true, "file",
+  "status":"queued"} (rekaman butuh durasi+15 dtk; HTTP tidak
+  menunggu SIMPAN) + GET /tts-record-status (baca
+  api-ttsrecord-<suffix>.json: status/detail/updated/file/bytes;
+  "done" sesudah SIMPAN). HANYA slot AI Studio (cek host
+  aistudio.google.com di ApiServer; slot lain -> 400). Nama
+  disanitasi + dipaksa .webm (MediaRecorder = WebM, bukan WAV);
+  default 'tts-record-<slot>-<epoch>.webm'. Alur: SpaceLauncher
+  (EXTRA_API_TTS_RECORD_FILE) -> consumeApiTtsRecord (onCreate +
+  onNewIntent; hapus extra sesudah baca) -> maybeStartTtsRecord
+  (onPageFinished + langsung bila halaman sudah termuat,
+  progress 100; jeda 3 dtk untuk render SPA) -> startDirectRecord
+  (manual=true, tanpa pendingTtsScript). watchPickup kind
+  "ttsrecord" (60 dtk gagal-jujur). saveDownloadedBytes menulis
+  status done bila ttsRecordManual.
+  Tanpa ubah perilaku: WatchdogWorker, suntikan core/trap v0.1.82
+  (ensureBlobCoreInjected, heartbeat, walkRoots, postSelf, fetch
+  frame utama), eksekutor PROMPT (v0.1.80), eksekutor STUDIO, jalur
+  UNDUH-WEB http(s), downloadDataUrl, langkah TTS Style/Speaker/
+  Run, runTtsCreateDialog, watchdog, shed_refused_count (pindah
+  v0.1.84), cacat sidebar-toggle attach (/new — pindah v0.1.84).

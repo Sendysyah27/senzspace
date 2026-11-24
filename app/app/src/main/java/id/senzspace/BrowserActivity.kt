@@ -229,6 +229,13 @@ abstract class BrowserActivity : AppCompatActivity() {
     private var ttsCreateAttempts: Int = 0
     private var ttsWatchdogFired: Boolean = false
     private var ttsFallbackDeadlineMs: Long = 0
+    // v0.1.83: hitung siklus diagnose anti-/docs (A1) + rekam langsung
+    // tanpa event unduh (B1) + endpoint rekam manual (C1).
+    private var ttsDirectRecordStarted: Boolean = false
+    private var ttsDiagnoseCycles: Int = 0
+    private var ttsRecordManual: Boolean = false
+    private var ttsRecordFileName: String = ""
+    private var ttsRecordPendingFile: String? = null
     // v0.1.81 (B3): penghitung diagnostik unduh blob — dibawa ke
     // pesan gagal supaya ketahuan di mana rantai putus.
     private var blobDlIframes: Int = 0
@@ -1185,6 +1192,8 @@ abstract class BrowserActivity : AppCompatActivity() {
                     maybeRunApiPrompt()
                     // v0.1.39: sama untuk TTS API.
                     maybeRunApiTts()
+                    // v0.1.83: sama untuk rekam manual (/tts-record).
+                    maybeStartTtsRecord()
                     // v0.1.60: sama untuk eksekutor Studio.
                     maybeRunApiStudio()
                     // v0.1.52: halaman selesai - baca keadaan halaman
@@ -1507,6 +1516,8 @@ abstract class BrowserActivity : AppCompatActivity() {
         consumeApiPrompt(intent)
         // v0.1.39: payload TTS API dari intent (bila ada).
         consumeApiTts(intent)
+        // v0.1.83: perintah rekam manual /tts-record dari intent.
+        consumeApiTtsRecord(intent)
         // v0.1.60: payload eksekutor Studio dari intent (bila ada).
         consumeApiStudio(intent)
         // v0.1.52: URL navigasi API dari intent (bila ada).
@@ -2104,6 +2115,9 @@ abstract class BrowserActivity : AppCompatActivity() {
         ttsCreateAttempts = 0
         ttsWatchdogFired = false
         ttsFallbackDeadlineMs = 0
+        // v0.1.83: reset hitung siklus diagnose + flag rekam langsung.
+        ttsDirectRecordStarted = false
+        ttsDiagnoseCycles = 0
         ttsHandler.removeCallbacks(ttsWatchdogRunnable)
         ttsHandler.postDelayed(ttsWatchdogRunnable, 60000)
         writeTtsStatus("running", "mencari halaman TTS AI Studio")
@@ -2111,16 +2125,22 @@ abstract class BrowserActivity : AppCompatActivity() {
     }
 
     /** Langkah 1 (v0.1.41): kenali halaman AI Studio.
-     *  Balik "ta|run|dl|model|speaker|create|taLabels|btnLabels":
+     *  Balik "ta|run|dl|model|speaker|create|taLabels|btnLabels|path|hrs":
      *  ta = kolom isian terlihat, speaker = ada dropdown
      *  "Speaker 1" (editor dialog TTS), create = ada tombol
-     *  "Create new dialog" (halaman utama TTS).
+     *  "Create new dialog" (halaman utama TTS), path =
+     *  location.pathname (bukti halaman /docs), hrs = tombol Run
+     *  settings TERLIHAT (bukti halaman Playground lama).
      *  Keputusan: editor -> Style; ada Create -> klik itu;
-     *  selain itu -> alur pilih model (Run settings). */
+     *  selain itu -> v0.1.83 (A1/A2): alur model HANYA bila hrs=1
+     *  (Playground lama terbukti); bila di /docs atau di luar
+     *  halaman TTS -> navigasi pulang ke beranda lalu diagnose
+     *  ulang; bila di generate-speech tapi kartu belum ke-render
+     *  (SPA lambat) -> retry terus sampai watchdog habis. */
     private fun runTtsDiagnose(triesLeft: Int) {
         if (pendingTtsScript == null) return
         if (checkTtsWatchdog()) return
-        val js = """(function(){var tas=[...document.querySelectorAll('textarea,[contenteditable],input,[role="textbox"]')].filter(function(t){return t.offsetParent!==null;});var taLabels=tas.map(function(t){return (t.getAttribute('aria-label')||t.getAttribute('placeholder')||'textarea').replace(/[|,]/g,' ');});var run=0,dl=0,model='';var bs=[...document.querySelectorAll('button')].filter(function(b){return b.offsetParent!==null;});var btnLabels=[];for(var i=0;i<bs.length;i++){var l=(bs[i].getAttribute('aria-label')||'').trim();var tx=(bs[i].textContent||'').trim();if(l)btnLabels.push(l.replace(/[|,]/g,' '));else if(tx&&tx.length<40)btnLabels.push(tx.replace(/[|,]/g,' '));if(!run&&(l==='Run'||l==='Jalankan'||tx==='Run'||tx==='Jalankan'))run=1;if(!dl&&(l==='Download'||l==='Unduh'||tx==='Download'||tx==='Unduh'))dl=1;if(!model&&/gemini/i.test(tx))model=tx.replace(/[|,]/g,' ').slice(0,60);}var bodyTxt=document.body?document.body.innerText||'':'';var speaker=bodyTxt.indexOf('Speaker 1')>=0?'1':'0';var createEl=0;var cands=[...document.querySelectorAll('button,[role="button"],a,div')].filter(function(e){return e.offsetParent!==null;});for(var ci=0;ci<cands.length;ci++){var ct=(cands[ci].textContent||'').trim();if(ct==='Create new dialog'||ct==='Buat dialog baru'){createEl=1;break;}}var create=(bodyTxt.indexOf('Create new dialog')>=0||bodyTxt.indexOf('Buat dialog baru')>=0||createEl===1)?'1':'0';return tas.length+'|'+run+'|'+dl+'|'+model+'|'+speaker+'|'+create+'|'+taLabels.join(',')+'|'+btnLabels.join(',');})()"""
+        val js = """(function(){var tas=[...document.querySelectorAll('textarea,[contenteditable],input,[role="textbox"]')].filter(function(t){return t.offsetParent!==null;});var taLabels=tas.map(function(t){return (t.getAttribute('aria-label')||t.getAttribute('placeholder')||'textarea').replace(/[|,]/g,' ');});var run=0,dl=0,model='';var bs=[...document.querySelectorAll('button')].filter(function(b){return b.offsetParent!==null;});var btnLabels=[];for(var i=0;i<bs.length;i++){var l=(bs[i].getAttribute('aria-label')||'').trim();var tx=(bs[i].textContent||'').trim();if(l)btnLabels.push(l.replace(/[|,]/g,' '));else if(tx&&tx.length<40)btnLabels.push(tx.replace(/[|,]/g,' '));if(!run&&(l==='Run'||l==='Jalankan'||tx==='Run'||tx==='Jalankan'))run=1;if(!dl&&(l==='Download'||l==='Unduh'||tx==='Download'||tx==='Unduh'))dl=1;if(!model&&/gemini/i.test(tx))model=tx.replace(/[|,]/g,' ').slice(0,60);}var bodyTxt=document.body?document.body.innerText||'':'';var speaker=bodyTxt.indexOf('Speaker 1')>=0?'1':'0';var createEl=0;var cands=[...document.querySelectorAll('button,[role="button"],a,div')].filter(function(e){return e.offsetParent!==null;});for(var ci=0;ci<cands.length;ci++){var ct=(cands[ci].textContent||'').trim();if(ct==='Create new dialog'||ct==='Buat dialog baru'){createEl=1;break;}}var create=(bodyTxt.indexOf('Create new dialog')>=0||bodyTxt.indexOf('Buat dialog baru')>=0||createEl===1)?'1':'0';var hrs=0;try{var rb=document.querySelector('button[aria-label="Toggle run settings panel"]');if(rb&&rb.offsetParent!==null)hrs=1;else{for(var k=0;k<bs.length;k++){var al=(bs[k].getAttribute('aria-label')||'').toLowerCase();if(al.indexOf('run settings')>=0||al.indexOf('pengaturan run')>=0){hrs=1;break;}}}}catch(e){}return tas.length+'|'+run+'|'+dl+'|'+model+'|'+speaker+'|'+create+'|'+taLabels.join(',')+'|'+btnLabels.join(',')+'|'+location.pathname+'|'+hrs;})()"""
         webView.evaluateJavascript(js) { raw ->
             val clean = raw?.trim()?.removeSurrounding("\"") ?: ""
             val parts = clean.split("|")
@@ -2128,6 +2148,9 @@ abstract class BrowserActivity : AppCompatActivity() {
             val modelText = parts.getOrNull(3) ?: ""
             val speakerFlag = parts.getOrNull(4) ?: "0"
             val createFlag = parts.getOrNull(5) ?: "0"
+            // v0.1.83 (A1): path halaman + bukti Playground lama.
+            val urlPath = parts.getOrNull(8) ?: ""
+            val hasRunSettings = parts.getOrNull(9) == "1"
             if (modelText.isNotBlank()) ttsActiveModel = modelText
             if (speakerFlag == "1" && taCount > 0) {
                 // v0.1.81: editor ketemu — anggaran watchdog jadi 10 mnt.
@@ -2147,12 +2170,37 @@ abstract class BrowserActivity : AppCompatActivity() {
                 writeTtsStatus("running", "mencari halaman TTS AI Studio (percobaan ${6 - triesLeft}/5)")
                 ttsHandler.postDelayed({ runTtsDiagnose(triesLeft - 1) }, 2000)
             } else {
-                // Bukan editor / bukan halaman utama TTS (mis. halaman
-                // preview suara 22:24, atau Playground chat). Alur
-                // Alur asli: Run settings
-                // -> kartu model -> Starred -> model TTS -> dialog.
-                writeTtsStatus("running", "menuju pemilihan model TTS (Run settings)")
-                runTtsModelFlow()
+                // v0.1.83 (A1/A2): 5 retry habis tanpa editor/kartu.
+                // Alur model (v0.1.41, UI Playground lama) HANYA bila
+                // tombol Run settings terbukti ada — di UI baru alur
+                // itu jalan buntu (bukti live 24 Nov: 4x gagal di
+                // /docs, "tombol Run settings tidak ketemu").
+                if (hasRunSettings) {
+                    writeTtsStatus("running", "menuju pemilihan model TTS (Run settings)")
+                    runTtsModelFlow()
+                    return@evaluateJavascript
+                }
+                ttsDiagnoseCycles++
+                val onDocs = urlPath.contains("/docs")
+                val onTtsPage = urlPath == "/" || urlPath == "/generate-speech" ||
+                    urlPath.startsWith("/generate-speech")
+                if (onDocs || !onTtsPage) {
+                    // Halaman mental ke /docs (atau ke halaman AI
+                    // Studio lain yang bukan TTS) — navigasi pulang
+                    // ke beranda lalu diagnose ulang. Anggaran
+                    // watchdog TIDAK di-reset: checkTtsWatchdog di
+                    // atas yang menghentikan siklus bila 3 mnt habis.
+                    val where = if (onDocs) "halaman /docs" else "halaman bukan TTS ($urlPath)"
+                    writeTtsStatus("running", "$where — kembali ke beranda TTS (siklus $ttsDiagnoseCycles)")
+                    if (::webView.isInitialized) webView.loadUrl("https://aistudio.google.com/")
+                    ttsHandler.postDelayed({ runTtsDiagnose(5) }, 4000)
+                } else {
+                    // generate-speech tapi kartu belum ke-render (SPA
+                    // lambat, 1-6 K/s) — retry terus sampai watchdog
+                    // habis, JANGAN pindah ke alur model.
+                    writeTtsStatus("running", "menunggu render halaman TTS (siklus $ttsDiagnoseCycles)")
+                    ttsHandler.postDelayed({ runTtsDiagnose(5) }, 2000)
+                }
             }
         }
     }
@@ -2162,7 +2210,10 @@ abstract class BrowserActivity : AppCompatActivity() {
      *  2) klik kartu model aktif -> 3) tab Starred -> klik entri
      *  model TTS -> 4) klik "Create new dialog" -> diagnose ulang.
      *  Hamburger kiri ("Open navigation menu") TIDAK dipakai:
-     *  menunya tidak berisi entri TTS. */
+     *  menunya tidak berisi entri TTS.
+     *  v0.1.83 (A1): HANYA dipanggil bila runTtsDiagnose sudah
+     *  membuktikan tombol Run settings TERLIHAT (hrs=1) — alur
+     *  ini khusus Playground lama, bukan jalan buntu UI baru. */
     private fun runTtsModelFlow() {
         if (pendingTtsScript == null) return
         if (checkTtsWatchdog()) return
@@ -2872,7 +2923,8 @@ abstract class BrowserActivity : AppCompatActivity() {
             f.isFile && f.name !in ttsFilesBefore &&
                 (f.name.endsWith(".wav", ignoreCase = true) ||
                     f.name.endsWith(".mp3", ignoreCase = true) ||
-                    f.name.endsWith(".ogg", ignoreCase = true))
+                    f.name.endsWith(".ogg", ignoreCase = true) ||
+                    f.name.endsWith(".webm", ignoreCase = true))
         }
         if (fresh != null) {
             ttsRunning = false
@@ -2887,6 +2939,16 @@ abstract class BrowserActivity : AppCompatActivity() {
             // (real-time, durasi audio) — terus tunggu tanpa
             // menghabiskan triesLeft.
             ttsHandler.postDelayed({ waitTtsFile(triesLeft) }, 5000)
+        } else if (triesLeft <= 3 && !ttsDirectRecordStarted) {
+            // v0.1.83 (B1): 15 dtk berlalu tanpa file baru SETELAH
+            // tap unduh — di UI baru tombol unduh player MATI
+            // (tidak memicu event unduh; downloadBlob tidak pernah
+            // dipanggil; bukti live 24 Nov). Jangan tunggu event
+            // yang tidak datang: rekam langsung dari player.
+            ttsDirectRecordStarted = true
+            writeTtsStatus("running", "tombol unduh tidak memicu unduhan — merekam ulang audio dari player (langsung)")
+            startDirectRecord(ttsDirectRecordFileName(), manual = false)
+            ttsHandler.postDelayed({ waitTtsFile(triesLeft - 1) }, 5000)
         } else if (triesLeft <= 0) {
             if (!ttsDownloadRetried) {
                 // v0.1.51: tap pertama belum memunculkan file — tap
@@ -2907,6 +2969,186 @@ abstract class BrowserActivity : AppCompatActivity() {
             ttsHandler.postDelayed({ waitTtsFile(triesLeft - 1) }, 5000)
         }
     }
+    // ============ REKAM LANGSUNG + ENDPOINT /tts-record (v0.1.83) ============
+
+    private fun ttsRecordStatusFile(): java.io.File =
+        java.io.File(filesDir, "api-ttsrecord-$dataDirectorySuffix.json")
+
+    private fun writeTtsRecordStatus(state: String, message: String, file: String = "", bytes: Long = 0) {
+        try {
+            val json = org.json.JSONObject().apply {
+                // Skema SAMA dengan api-tts-*.json (status/detail/
+                // updated) supaya /tts-record-status dibaca pembaca
+                // yang sama; file + bytes tambahan bila ada.
+                put("status", state)
+                put("detail", message)
+                put("updated", System.currentTimeMillis())
+                if (file.isNotEmpty()) put("file", file)
+                if (bytes > 0) put("bytes", bytes)
+            }
+            ttsRecordStatusFile().writeText(json.toString())
+        } catch (e: Exception) {
+            android.util.Log.w(TAG, "gagal tulis status tts-record: ${e.message}")
+        }
+    }
+
+    /** Nama standar jalur unduh TTS (dipakai juga rekam langsung
+     *  di tengah run TTS): "Generated Audio <M d, yyyy - h:mma>"
+     *  + .webm. */
+    private fun ttsDirectRecordFileName(): String {
+        val fmt = java.text.SimpleDateFormat("MMMM d, yyyy - h:mma", java.util.Locale.US)
+        return "Generated Audio ${fmt.format(java.util.Date())}.webm"
+    }
+
+    /** JS rekam langsung (B1): cari <audio> SECARA REKURSIF di
+     *  document + semua shadow root (findAudio v0.1.82), lalu
+     *  captureStream + MediaRecorder — SALINAN MANDIRI dari
+     *  senzTryRecorder (downloadBlob), TANPA butuh URL blob dan
+     *  TANPA event unduh: senzTryRecorder itu var lokal di dalam
+     *  IIFE downloadBlob, TIDAK bisa dipanggil dari evaluate
+     *  terpisah. Hasil dikirim via SenzBlob.onBlobData (jalan
+     *  simpan yang sama dengan downloadBlob).
+     *  window.__senzBlobDone di-reset ke false di awal: bila ada
+     *  unduhan sukses sebelumnya di sesi halaman yang sama, flag
+     *  itu masih true dan onstop recorder akan membuang rekaman
+     *  tanpa suara. Perlindungan ganda-simpan tetap jalan: siapa
+     *  yang selesai duluan menandai done=true, yang kalah dibuang.
+     *  __NAME_JSON__ diganti org.json.JSONObject.quote(fileName).
+     *  Balik string: "started" bila perekam jalan; selain itu
+     *  alasan gagal ("no-audio" / "no-stream" / "no-recorder" /
+     *  "play-denied" / "rec-start-fail"). */
+    private fun directRecordJs(fileName: String): String {
+        val nameJson = org.json.JSONObject.quote(fileName)
+        return """(function(){
+            function findAudio(root){
+                if(!root)return null;
+                if(root.tagName==='AUDIO')return root;
+                var a=root.querySelector?root.querySelector('audio'):null;
+                if(a)return a;
+                var els=root.querySelectorAll?root.querySelectorAll('*'):null;
+                if(els){for(var i=0;i<els.length;i++){var el=els[i];if(el.shadowRoot){var f=findAudio(el.shadowRoot);if(f)return f;}}}
+                if(root.shadowRoot)return findAudio(root.shadowRoot);
+                return null;
+            }
+            var au=findAudio(document);
+            if(!au){return 'no-audio';}
+            var dur=0;
+            try{dur=au.duration||0;}catch(e){}
+            if(!dur||!isFinite(dur))dur=60;
+            try{window.SenzBlob.onBlobDiag('fallback: rekam langsung durasi='+Math.ceil(dur)+' dtk');}catch(e){}
+            try{window.SenzBlob.onBlobFallbackStart(String(Math.ceil(dur)));}catch(e){}
+            window.__senzBlobDone=false;
+            var stream=null;
+            try{stream=au.captureStream?au.captureStream():(au.mozCaptureStream?au.mozCaptureStream():null);}catch(e){}
+            if(!stream){try{window.SenzBlob.onBlobDiag('fallback: rekam langsung — captureStream tidak tersedia');}catch(e){}return 'no-stream';}
+            var mime='';
+            try{if(window.MediaRecorder&&MediaRecorder.isTypeSupported('audio/webm;codecs=opus'))mime='audio/webm;codecs=opus';}catch(e){}
+            var rec=null;
+            try{rec=mime?new MediaRecorder(stream,{mimeType:mime}):new MediaRecorder(stream);}catch(e){return 'no-recorder';}
+            var chunks=[];var stopped=false;var dead=false;
+            rec.ondataavailable=function(e){if(e.data&&e.data.size)chunks.push(e.data);};
+            rec.onstop=function(){if(dead)return;try{
+                var b=new Blob(chunks,{type:rec.mimeType||'audio/webm'});
+                var r=new FileReader();
+                r.onloadend=function(){if(dead)return;if(window.__senzBlobDone)return;window.__senzBlobDone=true;var s=r.result||'';var i=s.indexOf(',');window.SenzBlob.onBlobData(i>=0?s.substring(i+1):s,__NAME_JSON__);};
+                r.onerror=function(){try{window.SenzBlob.onBlobError('fallback: reader-error (langsung)');}catch(e){}};
+                r.readAsDataURL(b);}catch(e){try{window.SenzBlob.onBlobError('fallback: '+(e.message||e)+' (langsung)');}catch(e2){}};};
+            rec.onerror=function(){if(dead)return;dead=true;try{window.SenzBlob.onBlobError('fallback: recorder-error (langsung)');}catch(e){}};
+            var maxMs=Math.min(300000,(dur+15)*1000);
+            var stopOnce=function(){if(stopped)return;stopped=true;try{rec.stop();}catch(e){}try{au.pause();}catch(e){}};
+            try{au.onended=function(){stopOnce();};}catch(e){}
+            setTimeout(stopOnce,maxMs);
+            try{au.currentTime=0;}catch(e){}
+            var p=null;
+            try{p=au.play();}catch(e){dead=true;return 'play-denied';}
+            if(p&&p.catch){p.catch(function(e){if(dead)return;dead=true;try{rec.stop();}catch(e2){}});}
+            try{rec.start(1000);}catch(e){return 'rec-start-fail';}
+            return 'started';
+        })()""".replace("__NAME_JSON__", nameJson)
+    }
+
+    /** Pemicu rekam langsung. manual=true: dari endpoint
+     *  /tts-record (boleh tanpa pendingTtsScript); manual=false:
+     *  dari waitTtsFile di tengah run TTS. */
+    private fun startDirectRecord(fileName: String, manual: Boolean) {
+        ttsRecordManual = manual
+        ttsRecordFileName = fileName
+        ttsRecordPendingFile = fileName
+        if (manual) writeTtsRecordStatus("running", "merekam ulang audio dari player", fileName)
+        webView.evaluateJavascript(directRecordJs(fileName)) { raw ->
+            val r = raw?.trim()?.removeSurrounding("\"") ?: ""
+            if (r == "started") {
+                // onBlobData / onBlobFallbackStart yang meneruskan
+                // (simpan + done). Tidak ada yang dilakukan di sini.
+                return@evaluateJavascript
+            }
+            val reason = when (r) {
+                "no-audio" -> "tidak ada <audio> di halaman"
+                "no-stream" -> "captureStream tidak tersedia"
+                "no-recorder" -> "MediaRecorder tidak bisa dibuat"
+                "play-denied" -> "play audio ditolak halaman"
+                "rec-start-fail" -> "rec.start gagal"
+                else -> "rekam langsung gagal ($r)"
+            }
+            val msg = "fallback: $reason (langsung)"
+            logBlobDiag(msg)
+            if (manual) {
+                ttsRecordManual = false
+                writeTtsRecordStatus("failed", reason)
+            } else {
+                // Run TTS: gagal jujur SEKARANG (menunggu percobaan
+                // waitTtsFile sia-sia — perekam sudah pasti tidak
+                // jalan). failTts membersihkan pendingTtsScript
+                // sehingga waitTtsFile yang sudah terjadwal langsung
+                // kembali tanpa aksi.
+                failTts("$msg — file VO tidak tersimpan")
+            }
+        }
+    }
+
+    /** Ambil perintah rekam manual dari intent (MainActivity
+     *  EXTRA_API_TTS_RECORD_FILE). Dipanggil di onCreate +
+     *  onNewIntent — TANPA payload TTS, TANPA pendingTtsScript.
+     *  Bila halaman AI Studio SUDAH termuat (onNewIntent ke Space
+     *  yang sedang aktif, progress 100) -> rekam sekarang.
+     *  Bila halaman belum termuat (activity baru / restore) ->
+     *  biarkan tertunda; onPageFinished memanggil
+     *  maybeStartTtsRecord(). */
+    private fun consumeApiTtsRecord(intent: Intent?) {
+        val recFile = intent?.getStringExtra(MainActivity.EXTRA_API_TTS_RECORD_FILE) ?: return
+        intent.removeExtra(MainActivity.EXTRA_API_TTS_RECORD_FILE)
+        // Hanya Space AI Studio (suffix "aistudio"); slot lain sudah
+        // ditolak 400 di ApiServer — ini pertahanan lapis kedua.
+        if (dataDirectorySuffix != "aistudio") {
+            writeTtsRecordStatus("failed", "Space $dataDirectorySuffix bukan AI Studio")
+            return
+        }
+        ttsRecordPendingFile = recFile
+        if (pendingTtsScript == null && ::webView.isInitialized) {
+            val cur = try { webView.url ?: "" } catch (e: Exception) { "" }
+            if (cur.contains("aistudio.google.com") && webView.progress >= 100) {
+                maybeStartTtsRecord()
+            }
+        }
+    }
+
+    /** Jalankan rekam manual bila ada perintah tertunda DAN halaman
+     *  AI Studio sudah termuat. Dipanggil dari consumeApiTtsRecord
+     *  dan onPageFinished (di samping maybeRunApiTts). Jeda 3 dtk
+     *  memberi waktu render SPA (player/audio belum tentu ada
+     *  saat onPageFinished). */
+    private fun maybeStartTtsRecord() {
+        val recFile = ttsRecordPendingFile ?: return
+        if (!::webView.isInitialized) return
+        // Hanya Space AI Studio (suffix "aistudio"); host dicek di
+        // ApiServer juga.
+        if (dataDirectorySuffix != "aistudio") return
+        val cur = try { webView.url ?: "" } catch (e: Exception) { "" }
+        if (!cur.contains("aistudio.google.com")) return
+        ttsRecordPendingFile = null
+        ttsHandler.postDelayed({ startDirectRecord(recFile, manual = true) }, 3000)
+    }
+
     // ================= AKHIR TTS API =================
 
 
@@ -4372,6 +4614,8 @@ abstract class BrowserActivity : AppCompatActivity() {
         consumeApiPrompt(intent)
         // v0.1.39: payload TTS API susulan.
         consumeApiTts(intent)
+        // v0.1.83: perintah rekam manual /tts-record susulan.
+        consumeApiTtsRecord(intent)
         // v0.1.60: payload eksekutor Studio susulan.
         consumeApiStudio(intent)
         // v0.1.52: URL navigasi API susulan.
@@ -4892,14 +5136,21 @@ abstract class BrowserActivity : AppCompatActivity() {
         /** v0.1.81 (B4): fallback rekam-ulang mulai — perpanjang
          *  tunggu file TTS selama durasi audio + margin (maks 5 mnt)
          *  supaya waitTtsFile tidak fail di tengah rekaman. Hanya
-         *  berlaku saat run TTS aktif. */
+         *  berlaku saat run TTS aktif.
+         *  v0.1.83 (C1): rekam manual (/tts-record) juga memakai
+         *  jalur ini — tenggat ditulis + status rekam diperbarui,
+         *  walau pendingTtsScript null. */
         @android.webkit.JavascriptInterface
         fun onBlobFallbackStart(durationSec: String) {
             if (!isBridgeOriginAllowed()) return
-            if (pendingTtsScript == null) return
             val dur = durationSec.toIntOrNull() ?: 60
             val waitMs = minOf(300000L, (dur + 30L) * 1000L)
             ttsFallbackDeadlineMs = System.currentTimeMillis() + waitMs
+            if (ttsRecordManual) {
+                writeTtsRecordStatus("running", "merekam ulang audio dari player (durasi ${dur} dtk)", ttsRecordFileName)
+                return
+            }
+            if (pendingTtsScript == null) return
             writeTtsStatus("running", "mengunduh via rekam ulang audio (fallback, ~${dur} dtk)")
         }
 
@@ -5296,6 +5547,17 @@ abstract class BrowserActivity : AppCompatActivity() {
                 val dest = FileStore.uniqueFile(dir, fileName)
                 java.io.FileOutputStream(dest).use { it.write(bytes) }
                 logBlobDiag("SIMPAN: ${dest.name} (${dest.length()} B)")
+                // v0.1.83 (C1): rekam manual selesai — tulis status
+                // done (nama + ukuran) supaya GET /tts-record-status
+                // bisa menjawab sesudah SIMPAN. Mode manual hanya
+                // dimasuki startDirectRecord(manual=true), jadi
+                // simpanan apa pun di jendela ini ADALAH rekamannya
+                // (uniqueFile boleh menambah suffix pada nama).
+                if (ttsRecordManual) {
+                    ttsRecordManual = false
+                    ttsFallbackDeadlineMs = 0
+                    writeTtsRecordStatus("done", "rekaman tersimpan: ${dest.name}", dest.name, dest.length())
+                }
                 runOnUiThread {
                     Toast.makeText(
                         this,

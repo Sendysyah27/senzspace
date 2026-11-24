@@ -23,6 +23,7 @@ object SpaceLauncher {
         ttsModel: String? = null,
         ttsUrl: String? = null,
         ttsSpeaker: String? = null,
+        ttsRecordFile: String? = null,
         navigateUrl: String? = null,
         studioAction: String? = null,
         studioFile: String? = null,
@@ -73,6 +74,11 @@ object SpaceLauncher {
                     putExtra(MainActivity.EXTRA_API_TTS_SPEAKER, ttsSpeaker)
                 }
             }
+            // v0.1.83: perintah rekam manual /tts-record (tanpa
+            // payload TTS — boleh jalan walau tidak ada naskah).
+            if (ttsRecordFile != null) {
+                putExtra(MainActivity.EXTRA_API_TTS_RECORD_FILE, ttsRecordFile)
+            }
             // v0.1.52: URL navigasi API (POST /navigate).
             if (navigateUrl != null) {
                 putExtra(MainActivity.EXTRA_API_NAVIGATE_URL, navigateUrl)
@@ -115,6 +121,7 @@ object SpaceLauncher {
         ttsModel: String? = null,
         ttsUrl: String? = null,
         ttsSpeaker: String? = null,
+        ttsRecordFile: String? = null,
         navigateUrl: String? = null,
         studioAction: String? = null,
         studioFile: String? = null,
@@ -129,7 +136,8 @@ object SpaceLauncher {
                 promptUrl = promptUrl, promptProject = promptProject,
                 ttsScript = ttsScript, ttsVoice = ttsVoice,
                 ttsModel = ttsModel, ttsUrl = ttsUrl,
-                ttsSpeaker = ttsSpeaker, navigateUrl = navigateUrl,
+                ttsSpeaker = ttsSpeaker, ttsRecordFile = ttsRecordFile,
+                navigateUrl = navigateUrl,
                 studioAction = studioAction, studioFile = studioFile,
                 studioTitle = studioTitle,
                 studioDescription = studioDescription,

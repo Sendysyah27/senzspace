@@ -60,6 +60,8 @@ class MainActivity : AppCompatActivity() {
         const val EXTRA_API_TTS_URL = "extra_api_tts_url"
         // v0.1.41: nama voice TTS (mis. "Sadaltager", Favorites).
         const val EXTRA_API_TTS_SPEAKER = "extra_api_tts_speaker"
+        // v0.1.83: nama file rekam manual /tts-record (WebM).
+        const val EXTRA_API_TTS_RECORD_FILE = "extra_api_tts_record_file"
         // v0.1.52: URL yang dimuat di Space (POST /navigate) — host
         // HARUS sama dengan situs Space itu (dicek ApiServer).
         const val EXTRA_API_NAVIGATE_URL = "extra_api_navigate_url"

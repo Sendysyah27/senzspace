@@ -771,6 +771,90 @@ class ApiServer(private val ctx: Context) {
                     sendJson(client, 200, JSONObject().put("status", "unreadable"))
                 }
             }
+            method == "POST" && path == "/tts-record" -> {
+                // v0.1.83: rekam manual audio yang SEDANG di player AI
+                // Studio tanpa regenerasi — untuk audio yang terjebak
+                // di player karena tombol unduh UI baru mati.
+                // Payload lewat intent extra
+                // (EXTRA_API_TTS_RECORD_FILE); BrowserActivity
+                // (proses Space) merekam via MediaRecorder (WebM)
+                // lalu menulis status ke
+                // api-ttsrecord-<suffix>.json (baca via
+                // /tts-record-status). Jawaban 202 ASINKRON: rekaman
+                // butuh durasi audio + 15 dtk — HTTP tidak menunggu
+                // SIMPAN; nama + ukuran final ada di status "done".
+                val req = try {
+                    JSONObject(body)
+                } catch (_: Exception) {
+                    sendJson(client, 400, JSONObject().put("error", "body bukan JSON"))
+                    return
+                }
+                val slot = req.optInt("slot", 7)
+                val entry = SpaceRegistry.load(ctx).firstOrNull { it.slot == slot }
+                if (entry == null) {
+                    sendJson(client, 404, JSONObject().put("error", "no Space on slot $slot"))
+                    return
+                }
+                // HANYA slot AI Studio (berbasis host, bukan nomor
+                // slot) — slot lain dijawab 400 jujur.
+                val ownHost = try {
+                    android.net.Uri.parse(entry.url).host ?: ""
+                } catch (_: Exception) {
+                    ""
+                }
+                if (ownHost != "aistudio.google.com") {
+                    sendJson(client, 400, JSONObject().put("error", "slot $slot bukan AI Studio (host: $ownHost)"))
+                    return
+                }
+                val file = sanitizeRecordFileName(req.optString("file", ""), slot)
+                val suffix = SpaceRegistry.suffixForSlot(slot)
+                val queuedAt = writeTtsRecordStatus(suffix, "queued", "menunggu Space tampil", file)
+                val visible = appHasVisibleWindow()
+                val overlay = Settings.canDrawOverlays(ctx)
+                SpaceLauncher.open(ctx, entry, ttsRecordFile = file)
+                watchPickup(suffix, "ttsrecord", queuedAt, overlay)
+                if (visible || overlay) {
+                    sendJson(client, 202, JSONObject().apply {
+                        put("recording", true)
+                        put("slot", entry.slot)
+                        put("file", file)
+                        put("visible", true)
+                        if (overlay && !visible) put("via", "overlay")
+                        put("status", "queued")
+                        put("note", "rekaman berjalan di Space — cek /tts-record-status untuk nama + ukuran final")
+                    })
+                } else {
+                    postOpenNotification(entry)
+                    sendJson(client, 202, JSONObject().apply {
+                        put("recording", true)
+                        put("slot", entry.slot)
+                        put("file", file)
+                        put("visible", false)
+                        put("needs_tap", true)
+                        put("status", "queued")
+                        put("note", "Tugas sedang berjalan di background — hasilnya dilaporkan setelah selesai (ketuk notifikasi kalau mau lihat)")
+                    })
+                }
+            }
+            method == "GET" && path == "/tts-record-status" -> {
+                val slot = query["slot"]?.toIntOrNull() ?: 7
+                val entry = SpaceRegistry.load(ctx).firstOrNull { it.slot == slot }
+                if (entry == null) {
+                    sendJson(client, 404, JSONObject().put("error", "no Space on slot $slot"))
+                    return
+                }
+                val suffix = SpaceRegistry.suffixForSlot(slot)
+                val f = java.io.File(ctx.filesDir, "api-ttsrecord-$suffix.json")
+                if (!f.exists()) {
+                    sendJson(client, 200, JSONObject().put("status", "none"))
+                    return
+                }
+                try {
+                    sendJson(client, 200, JSONObject(f.readText()))
+                } catch (_: Exception) {
+                    sendJson(client, 200, JSONObject().put("status", "unreadable"))
+                }
+            }
             method == "POST" && path == "/studio" -> {
                 // v0.1.60: eksekutor YouTube Studio — baca dasbor /
                 // daftar Content / upload + jadwalkan video. HANYA atas
@@ -1132,6 +1216,7 @@ class ApiServer(private val ctx: Context) {
             val fileName = when (kind) {
                 "prompt" -> "api-prompt-$suffix.json"
                 "tts" -> "api-tts-$suffix.json"
+                "ttsrecord" -> "api-ttsrecord-$suffix.json"
                 else -> "api-studio-$suffix.json"
             }
             val file = java.io.File(ctx.filesDir, fileName)
@@ -1175,6 +1260,37 @@ class ApiServer(private val ctx: Context) {
         } catch (_: Exception) {
         }
         return now
+    }
+
+    /** v0.1.83: status rekam manual (api-ttsrecord-<suffix>.json).
+     *  Skema sama dengan api-tts-*.json; "file" = nama rekaman yang
+     *  diminta (final bisa bersuffix bila nama sudah ada). */
+    private fun writeTtsRecordStatus(suffix: String, status: String, detail: String, file: String = ""): Long {
+        val now = System.currentTimeMillis()
+        try {
+            val obj = JSONObject().apply {
+                put("status", status)
+                put("detail", detail)
+                put("updated", now)
+                if (file.isNotEmpty()) put("file", file)
+            }
+            java.io.File(ctx.filesDir, "api-ttsrecord-$suffix.json")
+                .writeText(obj.toString())
+        } catch (_: Exception) {
+        }
+        return now
+    }
+
+    /** v0.1.83: sanitasi nama rekaman — buang direktori, paksa
+     *  ekstensi .webm (rekaman MediaRecorder), default
+     *  "tts-record-<slot>-<epoch>.webm". Cerminan
+     *  BrowserActivity.sanitizeRecordFileName (API boundary). */
+    private fun sanitizeRecordFileName(raw: String, slot: Int): String {
+        val base = raw.trim().substringAfterLast('/').substringAfterLast('\\')
+        if (base.isEmpty()) return "tts-record-$slot-${System.currentTimeMillis()}.webm"
+        val noExt = base.substringBeforeLast('.', base)
+            .replace(Regex("[^A-Za-z0-9._ -]"), "_").ifEmpty { "tts-record-$slot" }
+        return "$noExt.webm"
     }
 
     /** Selesaikan space + path relatif ke satu File di dalam folder
