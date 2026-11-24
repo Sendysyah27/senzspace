@@ -1236,3 +1236,51 @@ Jangan cuma diagnosa dari kodenya.
   Tanpa ubah perilaku: WatchdogWorker, /tts, /studio,
   FileStore, PIN/biometrik, UI, shed_refused_count (bukan
   build ini), dan cara kerja v0.1.77/78/79 tidak disentuh.
+- API 81 (24 Nov, v0.1.81): TTS LANDING PAGE + UNDUH BLOB:NULL.
+  (a) Latar: halaman generate-speech AI Studio kini landing page
+  ('Create new dialog' + carousel suara), bukan dialog TTS langsung;
+  eksekutor stall di 'mencari halaman TTS AI Studio' sampai dialog
+  dibuka manual (tap layar). Audio hasil generate berupa
+  blob:null/<uuid> (iframe sandboxed, origin opaque) — XHR dari frame
+  utama selalu gagal status=0 (same-origin policy); cache base64
+  hook createObjectURL miss (hit=false) dan postMessage tidak dijawab
+  (tidak ada 'core: req') karena perangkap tidak pernah jalan di
+  iframe pemilik blob.
+  (b) Kartu dialog diketuk beneran: runTtsCreateDialog tidak lagi JS
+  .click() — JS hanya mengembalikan pusat rect kartu TERLIHAT (vis()
+  gaya Studio; exact-text didahulukan, contains fallback, yang
+  TERDALAM menang), Kotlin mengetuk via ttsTapAt yang sudah ada
+  (kali webView.scale seperti runTtsDownload). Maks 3 ketuk, lalu
+  fail dengan dump inventaris. runTtsDiagnose juga memindai elemen
+  kartu 'Create new dialog' (bukan cuma innerText) untuk mengenali
+  landing page.
+  (c) Anti-stall: cabang retry diagnose menulis status tiap percobaan;
+  watchdog global (ttsStartMs; 3 menit ke editor, 10 menit total
+  sesudah editor ketemu; ditangguhkan selama fallback rekam-ulang)
+  dicek di tiap langkah rantai + tick berkala 60 dtk (bila callback
+  evaluateJavascript berhenti kembali); kedaluwarsa -> fail via dump
+  inventaris (status timeout ditulis dulu secara sinkron).
+  (d) Fetch-di-konteks-pemilik: handler pesan senz-get-blob di tiap
+  frame, bila cache miss, mencoba fetch(url) di frame itu sendiri
+  (frame pemilik blob BISA fetch — same-origin) lalu membalas base64
+  via postMessage; diag 'core: fetch-try/fetch-ok/fetch-gagal'.
+  Perangkap kini jalan di SETIAP frame (iframe bersarang), hook
+  attachShadow (observe + pindai shadow root yang ada), hook
+  insertAdjacentHTML / setter innerHTML / Document.write/writeln,
+  dan __senzTrapRescan (pindai ulang semua iframe, termasuk di shadow
+  root, saat unduh; diag 'dl scan: iframes=<n> trapped=<m>').
+  Koleksi iframe saat unduh sadar-shadow-DOM.
+  (e) Diagnostik gagal jujur: onBlobDiag menghitung iframe ditanya /
+  menjawab 'core: req' / fetch-try; onBlobError membawa hitungan itu
+  (disimpan lastBlobError, dibawa ke detail gagal waitTtsFile).
+  (f) Fallback MediaRecorder (hanya bila semua jalur gagal): cari
+  <audio> di frame utama yang src-nya == blob URL -> captureStream
+  + MediaRecorder -> putar -> rekam sampai ended (maks durasi+15 dtk,
+  cap 5 menit) -> base64 -> onBlobData; onBlobFallbackStart
+  memperpanjang tunggu waitTtsFile selama durasi+30 dtk (cap 5 menit)
+  dan menangguhkan watchdog; play ditolak -> XHR terakhir.
+  Tanpa ubah perilaku: WatchdogWorker, eksekutor PROMPT (v0.1.80),
+  eksekutor STUDIO, jalur UNDUH-WEB http(s), downloadDataUrl,
+  langkah TTS Style/Speaker/Run (kecuali Create-dialog + diagnose +
+  watchdog), shed_refused_count (bukan build ini; ditunda v0.1.82),
+  dan cara kerja v0.1.77/78/79/80 tidak disentuh.

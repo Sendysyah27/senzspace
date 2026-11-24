@@ -222,6 +222,57 @@ abstract class BrowserActivity : AppCompatActivity() {
     // sebelum percobaan 1), + apakah tap unduh sudah diulang sekali.
     private var ttsStyleAttempt: Int = 0
     private var ttsDownloadRetried: Boolean = false
+    // v0.1.81: watchdog anti-stall TTS + hitung percobaan kartu dialog
+    // + tenggat fallback rekam-ulang audio.
+    private var ttsStartMs: Long = 0
+    private var ttsEditorFound: Boolean = false
+    private var ttsCreateAttempts: Int = 0
+    private var ttsWatchdogFired: Boolean = false
+    private var ttsFallbackDeadlineMs: Long = 0
+    // v0.1.81 (B3): penghitung diagnostik unduh blob — dibawa ke
+    // pesan gagal supaya ketahuan di mana rantai putus.
+    private var blobDlIframes: Int = 0
+    private var blobDlCoreReqs: Int = 0
+    private var blobDlFetchTried: Boolean = false
+    private var blobDlFetchOk: Boolean = false
+    private var lastBlobError: String = ""
+    private val ttsWatchdogRunnable = Runnable { checkTtsWatchdogTick() }
+
+    /** v0.1.81 watchdog anti-stall (A3): anggaran 3 menit untuk
+     *  mencapai editor, 10 menit total sesudah editor ketemu;
+     *  ditangguhkan selama fallback rekam-ulang audio berjalan.
+     *  Bila kedaluwarsa -> fail via dump inventaris (status ditulis
+     *  dulu secara sinkron supaya beku langsung kelihatan walau
+     *  callback dump tidak pernah kembali). Kembalikan true bila
+     *  sudah fail (atau sudah pernah fail karena watchdog). */
+    private fun checkTtsWatchdog(): Boolean {
+        if (pendingTtsScript == null || !ttsRunning) return false
+        if (ttsWatchdogFired) return true
+        val now = System.currentTimeMillis()
+        if (ttsFallbackDeadlineMs > 0 && now < ttsFallbackDeadlineMs) return false
+        if (ttsStartMs <= 0) return false
+        val budgetMs = if (ttsEditorFound) 10 * 60 * 1000L else 3 * 60 * 1000L
+        if (now - ttsStartMs > budgetMs) {
+            ttsWatchdogFired = true
+            writeTtsStatus(
+                "running",
+                "TTS timeout ${if (ttsEditorFound) 10 else 3} menit di halaman $currentUrl - mengumpulkan inventaris halaman"
+            )
+            runTtsDumpInventory("TTS timeout ${if (ttsEditorFound) 10 else 3} menit di halaman $currentUrl")
+            return true
+        }
+        return false
+    }
+
+    /** Tick watchdog berkala (A3): penangkap beku bila callback
+     *  evaluateJavascript berhenti kembali sama sekali — rantai
+     *  langkah tidak bisa memeriksa dirinya sendiri. Berhenti
+     *  sendiri bila run sudah selesai/gagal. */
+    private fun checkTtsWatchdogTick() {
+        if (pendingTtsScript == null || !ttsRunning) return
+        if (checkTtsWatchdog()) return
+        ttsHandler.postDelayed(ttsWatchdogRunnable, 60000)
+    }
     private val ttsHandler = Handler(Looper.getMainLooper())
     /** v0.1.60 - payload eksekutor YouTube Studio (POST /studio).
      *  Aksi: dashboard (ringkasan channel), videos (daftar Content),
@@ -1996,6 +2047,9 @@ abstract class BrowserActivity : AppCompatActivity() {
         ttsRunning = false
         pendingTtsScript = null
         pendingTtsSpeaker = null
+        // v0.1.81: matikan watchdog + tenggat fallback saat run berakhir.
+        ttsFallbackDeadlineMs = 0
+        ttsHandler.removeCallbacks(ttsWatchdogRunnable)
         writeTtsStatus("failed", detail)
     }
 
@@ -2040,6 +2094,14 @@ abstract class BrowserActivity : AppCompatActivity() {
             return
         }
         ttsRunning = true
+        // v0.1.81 (A3): mulai anggaran watchdog anti-stall.
+        ttsStartMs = System.currentTimeMillis()
+        ttsEditorFound = false
+        ttsCreateAttempts = 0
+        ttsWatchdogFired = false
+        ttsFallbackDeadlineMs = 0
+        ttsHandler.removeCallbacks(ttsWatchdogRunnable)
+        ttsHandler.postDelayed(ttsWatchdogRunnable, 60000)
         writeTtsStatus("running", "mencari halaman TTS AI Studio")
         runTtsDiagnose(5)
     }
@@ -2053,7 +2115,8 @@ abstract class BrowserActivity : AppCompatActivity() {
      *  selain itu -> alur pilih model (Run settings). */
     private fun runTtsDiagnose(triesLeft: Int) {
         if (pendingTtsScript == null) return
-        val js = """(function(){var tas=[...document.querySelectorAll('textarea,[contenteditable],input,[role="textbox"]')].filter(function(t){return t.offsetParent!==null;});var taLabels=tas.map(function(t){return (t.getAttribute('aria-label')||t.getAttribute('placeholder')||'textarea').replace(/[|,]/g,' ');});var run=0,dl=0,model='';var bs=[...document.querySelectorAll('button')].filter(function(b){return b.offsetParent!==null;});var btnLabels=[];for(var i=0;i<bs.length;i++){var l=(bs[i].getAttribute('aria-label')||'').trim();var tx=(bs[i].textContent||'').trim();if(l)btnLabels.push(l.replace(/[|,]/g,' '));else if(tx&&tx.length<40)btnLabels.push(tx.replace(/[|,]/g,' '));if(!run&&(l==='Run'||l==='Jalankan'||tx==='Run'||tx==='Jalankan'))run=1;if(!dl&&(l==='Download'||l==='Unduh'||tx==='Download'||tx==='Unduh'))dl=1;if(!model&&/gemini/i.test(tx))model=tx.replace(/[|,]/g,' ').slice(0,60);}var bodyTxt=document.body?document.body.innerText||'':'';var speaker=bodyTxt.indexOf('Speaker 1')>=0?'1':'0';var create=(bodyTxt.indexOf('Create new dialog')>=0||bodyTxt.indexOf('Buat dialog baru')>=0)?'1':'0';return tas.length+'|'+run+'|'+dl+'|'+model+'|'+speaker+'|'+create+'|'+taLabels.join(',')+'|'+btnLabels.join(',');})()"""
+        if (checkTtsWatchdog()) return
+        val js = """(function(){var tas=[...document.querySelectorAll('textarea,[contenteditable],input,[role="textbox"]')].filter(function(t){return t.offsetParent!==null;});var taLabels=tas.map(function(t){return (t.getAttribute('aria-label')||t.getAttribute('placeholder')||'textarea').replace(/[|,]/g,' ');});var run=0,dl=0,model='';var bs=[...document.querySelectorAll('button')].filter(function(b){return b.offsetParent!==null;});var btnLabels=[];for(var i=0;i<bs.length;i++){var l=(bs[i].getAttribute('aria-label')||'').trim();var tx=(bs[i].textContent||'').trim();if(l)btnLabels.push(l.replace(/[|,]/g,' '));else if(tx&&tx.length<40)btnLabels.push(tx.replace(/[|,]/g,' '));if(!run&&(l==='Run'||l==='Jalankan'||tx==='Run'||tx==='Jalankan'))run=1;if(!dl&&(l==='Download'||l==='Unduh'||tx==='Download'||tx==='Unduh'))dl=1;if(!model&&/gemini/i.test(tx))model=tx.replace(/[|,]/g,' ').slice(0,60);}var bodyTxt=document.body?document.body.innerText||'':'';var speaker=bodyTxt.indexOf('Speaker 1')>=0?'1':'0';var createEl=0;var cands=[...document.querySelectorAll('button,[role="button"],a,div')].filter(function(e){return e.offsetParent!==null;});for(var ci=0;ci<cands.length;ci++){var ct=(cands[ci].textContent||'').trim();if(ct==='Create new dialog'||ct==='Buat dialog baru'){createEl=1;break;}}var create=(bodyTxt.indexOf('Create new dialog')>=0||bodyTxt.indexOf('Buat dialog baru')>=0||createEl===1)?'1':'0';return tas.length+'|'+run+'|'+dl+'|'+model+'|'+speaker+'|'+create+'|'+taLabels.join(',')+'|'+btnLabels.join(',');})()"""
         webView.evaluateJavascript(js) { raw ->
             val clean = raw?.trim()?.removeSurrounding("\"") ?: ""
             val parts = clean.split("|")
@@ -2063,6 +2126,9 @@ abstract class BrowserActivity : AppCompatActivity() {
             val createFlag = parts.getOrNull(5) ?: "0"
             if (modelText.isNotBlank()) ttsActiveModel = modelText
             if (speakerFlag == "1" && taCount > 0) {
+                // v0.1.81: editor ketemu — anggaran watchdog jadi 10 mnt.
+                ttsEditorFound = true
+                ttsCreateAttempts = 0
                 writeTtsStatus(
                     "running",
                     "editor dialog TTS ketemu (kolom: ${parts.getOrElse(6) { "" }}; model aktif: $modelText)"
@@ -2072,6 +2138,9 @@ abstract class BrowserActivity : AppCompatActivity() {
                 writeTtsStatus("running", "halaman TTS ketemu - membuka dialog baru")
                 runTtsCreateDialog()
             } else if (triesLeft > 1) {
+                // v0.1.81 (A3): tulis status tiap percobaan supaya
+                // beku langsung kelihatan (dulu retry ini diam).
+                writeTtsStatus("running", "mencari halaman TTS AI Studio (percobaan ${6 - triesLeft}/5)")
                 ttsHandler.postDelayed({ runTtsDiagnose(triesLeft - 1) }, 2000)
             } else {
                 // Bukan editor / bukan halaman utama TTS (mis. halaman
@@ -2092,6 +2161,7 @@ abstract class BrowserActivity : AppCompatActivity() {
      *  menunya tidak berisi entri TTS. */
     private fun runTtsModelFlow() {
         if (pendingTtsScript == null) return
+        if (checkTtsWatchdog()) return
         val js = """(function(){var b=document.querySelector('button[aria-label="Toggle run settings panel"]');if(!b){var bs=[...document.querySelectorAll('button')];for(var i=0;i<bs.length;i++){var l=(bs[i].getAttribute('aria-label')||'').toLowerCase();if(l.indexOf('run settings')>=0||l.indexOf('pengaturan run')>=0){b=bs[i];break;}}}if(!b)return '0';b.click();return '1';})()"""
         webView.evaluateJavascript(js) { raw ->
             val clean = raw?.trim()?.removeSurrounding("\"") ?: ""
@@ -2109,6 +2179,7 @@ abstract class BrowserActivity : AppCompatActivity() {
      *  teksnya mengandung nama/id itu. */
     private fun runTtsPickModelCard() {
         if (pendingTtsScript == null) return
+        if (checkTtsWatchdog()) return
         val activeQuoted = org.json.JSONObject.quote(ttsActiveModel)
         val js = """(function(){var want=$activeQuoted;var els=[...document.querySelectorAll('*')].filter(function(e){return e.offsetParent!==null&&e.children.length===0;});var best=null,bestLen=1e9;for(var i=0;i<els.length;i++){var t=(els[i].textContent||'').trim();if(!t)continue;var hit=(want&&t.toLowerCase().indexOf(want.toLowerCase())>=0)||/gemini-[0-9]/i.test(t);if(hit&&t.length<bestLen){best=els[i];bestLen=t.length;}}if(!best)return '0';best.click();return best.textContent.trim().slice(0,60);})()"""
         webView.evaluateJavascript(js) { raw ->
@@ -2126,6 +2197,7 @@ abstract class BrowserActivity : AppCompatActivity() {
      *  entri model TTS (default "Gemini 3.8 Flash Lite TTS"). */
     private fun runTtsPickModelEntry() {
         if (pendingTtsScript == null) return
+        if (checkTtsWatchdog()) return
         val want = pendingTtsModel ?: "Gemini 3.8 Flash Lite TTS"
         val quoted = org.json.JSONObject.quote(want)
         val js = """(function(){var want=$quoted.toLowerCase();var tabs=[...document.querySelectorAll('button')].filter(function(b){return b.offsetParent!==null;});for(var i=0;i<tabs.length;i++){var tt=(tabs[i].textContent||'').trim();if(tt==='Starred'||tt==='Berbintang'){tabs[i].click();break;}}var els=[...document.querySelectorAll('*')].filter(function(e){return e.offsetParent!==null&&e.children.length===0;});var best=null,bestLen=1e9;for(var j=0;j<els.length;j++){var t=(els[j].textContent||'').trim();if(t.toLowerCase().indexOf(want)>=0&&t.length<bestLen){best=els[j];bestLen=t.length;}}if(!best)return '0';best.click();return best.textContent.trim().slice(0,60);})()"""
@@ -2143,18 +2215,38 @@ abstract class BrowserActivity : AppCompatActivity() {
         }, 1000)
     }
 
-    /** Langkah 4: klik "Create new dialog", lalu diagnose ulang
-     *  (editor dialog harus muncul: ada "Speaker 1" + kolom). */
+    /** Langkah 4 (v0.1.81): KETUK BENERAN kartu "Create new dialog",
+     *  lalu diagnose ulang (editor dialog harus muncul: ada
+     *  "Speaker 1" + kolom). Klik JS .click() TIDAK menavigasi kartu
+     *  ini (kelas yang sama dengan attach prompt v0.1.80 — tap ADB
+     *  manual 24 Nov membuktikan tap beneran yang membuka dialog).
+     *  JS hanya mengembalikan pusat rect elemen TERLIHAT (vis() gaya
+     *  Studio); Kotlin mengetuk via ttsTapAt yang sudah ada
+     *  (dispatchTouchEvent DOWN+UP 120 ms, kali webView.scale seperti
+     *  runTtsDownload). Maks 3 ketuk; sesudah itu fail dengan dump. */
     private fun runTtsCreateDialog() {
         if (pendingTtsScript == null) return
-        val js = """(function(){var els=[...document.querySelectorAll('button,[role="button"],a,div')].filter(function(e){return e.offsetParent!==null;});for(var i=0;i<els.length;i++){var ct=(els[i].textContent||'').trim();if(ct==='Create new dialog'||ct==='Buat dialog baru'){els[i].click();return '1';}}return '0';})()"""
+        if (checkTtsWatchdog()) return
+        ttsCreateAttempts++
+        if (ttsCreateAttempts > 3) {
+            runTtsDumpInventory("kartu 'Create new dialog' sudah diketuk 3x tapi dialog tidak terbuka")
+            return
+        }
+        val js = """(function(){var vis=function(e){var r=e.getBoundingClientRect();if(e.offsetParent===null)return false;if(r.width<=0||r.height<=0)return false;if(r.bottom<0||r.top>window.innerHeight||r.right<0||r.left>window.innerWidth)return false;var cs=getComputedStyle(e);return cs.visibility!=='hidden'&&cs.display!=='none'&&parseFloat(cs.opacity||'1')>0;};var els=[...document.querySelectorAll('button,[role="button"],a,div')].filter(vis);var best=null,bestDepth=-1;for(var i=0;i<els.length;i++){var t=(els[i].textContent||'').trim();if(t==='Create new dialog'||t==='Buat dialog baru'){var d=0;var p=els[i];while(p){d++;p=p.parentElement;}if(d>bestDepth){best=els[i];bestDepth=d;}}}if(best){var r=best.getBoundingClientRect();return (r.left+r.width/2)+'|'+(r.top+r.height/2)+'|'+(best.textContent||'').trim().slice(0,40);}var els2=els.filter(function(e){var t=(e.textContent||'').trim();return t.length<60&&(t.toLowerCase().indexOf('create new dialog')>=0||t.toLowerCase().indexOf('buat dialog baru')>=0);});if(els2.length===0)return '0';var b2=els2[els2.length-1];var r2=b2.getBoundingClientRect();return (r2.left+r2.width/2)+'|'+(r2.top+r2.height/2)+'|'+(b2.textContent||'').trim().slice(0,40);})()"""
         webView.evaluateJavascript(js) { raw ->
             val clean = raw?.trim()?.removeSurrounding("\"") ?: ""
-            if (clean == "1") {
-                ttsHandler.postDelayed({ runTtsDiagnose(5) }, 2000)
-            } else {
+            val parts = clean.split("|")
+            if (parts.size < 3 || parts[0] == "0") {
                 runTtsDumpInventory("tombol 'Create new dialog' tidak ketemu setelah pilih model")
+                return@evaluateJavascript
             }
+            val scale = webView.scale
+            val cx = (parts[0].toFloatOrNull() ?: 0f) * scale
+            val cy = (parts[1].toFloatOrNull() ?: 0f) * scale
+            val label = parts.getOrNull(2) ?: ""
+            writeTtsStatus("running", "kartu dialog baru diketuk: $label @${cx.toInt()},${cy.toInt()} (percobaan $ttsCreateAttempts/3)")
+            ttsTapAt(cx, cy)
+            ttsHandler.postDelayed({ runTtsDiagnose(5) }, 2000)
         }
     }
 
@@ -2191,6 +2283,7 @@ abstract class BrowserActivity : AppCompatActivity() {
      *  (poll 10x1 dtk) + selektor diperluas (button -> role=button
      *  -> elemen daun teks "Style"). */
     private fun runTtsStyle() {
+        if (checkTtsWatchdog()) return
         val voice = pendingTtsVoice ?: return runTtsSpeaker()
         val probe = voice.take(11) // "Very bright" — penanda isi menempel
         ttsStyleAttempt = 0
@@ -2606,6 +2699,7 @@ abstract class BrowserActivity : AppCompatActivity() {
 
     /** Langkah 6: pilih VOICE (nama) - klik dropdown "Speaker 1". */
     private fun runTtsSpeaker() {
+        if (checkTtsWatchdog()) return
         writeTtsStatus("running", "membuka pilihan Speaker")
         val js = """(function(){var bs=[...document.querySelectorAll('button')].filter(function(b){return b.offsetParent!==null;});for(var i=0;i<bs.length;i++){var sp=(bs[i].textContent||'');if(sp.indexOf('Speaker 1')>=0||sp.indexOf('Pembicara 1')>=0){bs[i].click();return '1';}}return '0';})()"""
         webView.evaluateJavascript(js) { raw ->
@@ -2660,6 +2754,7 @@ abstract class BrowserActivity : AppCompatActivity() {
 
     /** Langkah 4: isi naskah. */
     private fun runTtsScript() {
+        if (checkTtsWatchdog()) return
         val script = pendingTtsScript ?: return
         writeTtsStatus("running", "mengisi naskah")
         webView.evaluateJavascript(ttsFillJs("script", script)) { raw ->
@@ -2674,6 +2769,7 @@ abstract class BrowserActivity : AppCompatActivity() {
 
     /** Langkah 5: klik Run, catat isi folder aistudio sebelum generate. */
     private fun runTtsRun() {
+        if (checkTtsWatchdog()) return
         val js = """(function(){var bs=[...document.querySelectorAll('button')].filter(function(b){return b.offsetParent!==null;});for(var i=0;i<bs.length;i++){var l=(bs[i].getAttribute('aria-label')||'').trim();var tx=(bs[i].textContent||'').trim();if(l==='Run'||l==='Jalankan'||tx==='Run'||tx==='Jalankan'){if(bs[i].disabled)return 'disabled';bs[i].click();return '1';}}return '0';})()"""
         writeTtsStatus("running", "menekan Run")
         webView.evaluateJavascript(js) { raw ->
@@ -2707,6 +2803,7 @@ abstract class BrowserActivity : AppCompatActivity() {
      *  siap diputar). */
     private fun waitTtsDone(triesLeft: Int) {
         if (pendingTtsScript == null) return
+        if (checkTtsWatchdog()) return
         val js = """(function(){var dl=0,ready=0;var bs=[...document.querySelectorAll('button')].filter(function(b){return b.offsetParent!==null;});for(var i=0;i<bs.length;i++){var l=(bs[i].getAttribute('aria-label')||'').trim();var tx=(bs[i].textContent||'').trim();if(l==='Download'||l==='Unduh'||tx==='Download'||tx==='Unduh'){dl=1;break;}}var aus=document.querySelectorAll('audio');for(var j=0;j<aus.length;j++){var a=aus[j];if((a.src||a.querySelector('source'))&&a.readyState===4&&a.duration>0){ready=1;break;}}return dl+'|'+ready;})()"""
         webView.evaluateJavascript(js) { raw ->
             val clean = raw?.trim()?.removeSurrounding("\"") ?: ""
@@ -2737,6 +2834,7 @@ abstract class BrowserActivity : AppCompatActivity() {
      *  bila gagal, bukti ada di blob-debug.txt + ttsDownloadInfo
      *  + dump kandidat (ttsDownloadCandidates). */
     private fun runTtsDownload() {
+        if (checkTtsWatchdog()) return
         closeSpeakerSheet { _ ->
             webView.evaluateJavascript(ttsDownloadButtonRectJs()) { raw ->
                 val clean = raw?.trim()?.removeSurrounding("\"") ?: ""
@@ -2760,6 +2858,7 @@ abstract class BrowserActivity : AppCompatActivity() {
 
     private fun waitTtsFile(triesLeft: Int) {
         if (pendingTtsScript == null) return
+        if (checkTtsWatchdog()) return
         val now = try {
             FileStore.listFiles(this, "aistudio")
         } catch (_: Exception) {
@@ -2774,8 +2873,16 @@ abstract class BrowserActivity : AppCompatActivity() {
         if (fresh != null) {
             ttsRunning = false
             pendingTtsScript = null
+            // v0.1.81: matikan watchdog + tenggat fallback saat done.
+            ttsFallbackDeadlineMs = 0
+            ttsHandler.removeCallbacks(ttsWatchdogRunnable)
             val styleNote = if (ttsStyleAttempt == 0) "Style sudah menempel" else "Style percobaan $ttsStyleAttempt"
             writeTtsStatus("done", "VO tersimpan: ${fresh.name} (${fresh.length()} byte) ($styleNote)")
+        } else if (ttsFallbackDeadlineMs > 0 && System.currentTimeMillis() < ttsFallbackDeadlineMs) {
+            // v0.1.81 (B4): fallback rekam-ulang audio sedang berjalan
+            // (real-time, durasi audio) — terus tunggu tanpa
+            // menghabiskan triesLeft.
+            ttsHandler.postDelayed({ waitTtsFile(triesLeft) }, 5000)
         } else if (triesLeft <= 0) {
             if (!ttsDownloadRetried) {
                 // v0.1.51: tap pertama belum memunculkan file — tap
@@ -2787,8 +2894,10 @@ abstract class BrowserActivity : AppCompatActivity() {
             } else {
                 // v0.1.69: detail gagal membawa dump kandidat tombol
                 // unduh supaya ketahuan tombol mana yang ditap.
+                // v0.1.81 (B3): + diagnosa blob terakhir.
                 val dumpNote = if (ttsDownloadCandidates.isNotBlank()) " Kandidat unduh: $ttsDownloadCandidates" else ""
-                failTts("${ttsDownloadInfo.ifBlank { "tombol unduh ditap" }} tapi file VO tidak muncul di folder aistudio (cek _log-blob/blob-debug.txt).$dumpNote")
+                val blobNote = if (lastBlobError.isNotBlank()) " Diagnosa blob: $lastBlobError" else ""
+                failTts("${ttsDownloadInfo.ifBlank { "tombol unduh ditap" }} tapi file VO tidak muncul di folder aistudio (cek _log-blob/blob-debug.txt).$dumpNote$blobNote")
             }
         } else {
             ttsHandler.postDelayed({ waitTtsFile(triesLeft - 1) }, 5000)
@@ -4581,20 +4690,31 @@ abstract class BrowserActivity : AppCompatActivity() {
         return null
     }
 
-    /** Ambil isi blob (v0.1.17): 1) cache frame utama (Claude,
-     *  blob:https://...), 2) tanya semua iframe via postMessage
-     *  (AI Studio, blob:null/... — cache hidup di iframe pembuat,
-     *  dipasang lewat injeksi dokumen), 3) kalau 6 detik tidak ada
-     *  jawaban, XHR terakhir, lalu gagal. Bendera __senzBlobDone
-     *  mencegah simpan ganda bila dua jalur sama-sama berhasil. */
+    /** Ambil isi blob (v0.1.17, diperbaiki v0.1.81): 1) cache frame
+     *  utama (Claude, blob:https://...), 2) tanya semua iframe via
+     *  postMessage (AI Studio, blob:null/... — cache hidup di iframe
+     *  pembuat, dipasang lewat injeksi dokumen; tiap frame yang
+     *  menerima JUGA mencoba fetch(url) di konteksnya sendiri —
+     *  frame pemilik blob BISA fetch karena same-origin), 3) fallback
+     *  rekam-ulang via MediaRecorder dari <audio> di frame utama,
+     *  4) XHR terakhir, lalu gagal. Bendera __senzBlobDone mencegah
+     *  simpan ganda bila dua jalur sama-sama berhasil. */
     private fun downloadBlob(dlUrl: String, fileName: String) {
         if (!::webView.isInitialized) return
         pendingBlobFileName = fileName
+        // v0.1.81 (B3): penghitung diagnostik baru per unduhan.
+        blobDlIframes = 0
+        blobDlCoreReqs = 0
+        blobDlFetchTried = false
+        blobDlFetchOk = false
+        lastBlobError = ""
         val escaped = dlUrl.replace("\\", "\\\\").replace("'", "\\'")
         val js = "(function(){try{" +
             "var url='$escaped';" +
             "window.__senzPendingBlobUrl=url;" +
             "window.__senzBlobDone=false;" +
+            "window.__senzXhrTried=false;" +
+            "window.__senzFallbackErr='';" +
             "var name='';" +
             "try{name=(window.__senzBlobName&&window.__senzBlobName(url))||'';}catch(e){}" +
             "if(!name){try{var as=document.querySelectorAll('a[download]');" +
@@ -4603,19 +4723,17 @@ abstract class BrowserActivity : AppCompatActivity() {
             "{name=as[ai].getAttribute('download');break;}}}catch(e){}}" +
             "var cached='';" +
             "try{cached=(window.__senzBlobGet&&window.__senzBlobGet(url))||'';}catch(e){}" +
-            "try{window.SenzBlob.onBlobDiag('dl url='+url.slice(0,60)+',iframes='+document.querySelectorAll('iframe').length+',hit='+(cached!==''));}catch(e){}" +
+            "var senzAllIframes=function(){var out=[];var walk=function(root){try{var els=root.querySelectorAll('iframe');for(var i=0;i<els.length;i++)out.push(els[i]);var all=root.querySelectorAll('*');for(var j=0;j<all.length;j++){var sr=null;try{sr=all[j].shadowRoot;}catch(e){}if(sr)walk(sr);}}catch(e){}};walk(document);return out;};" +
+            "var fs0=senzAllIframes();" +
+            "try{window.SenzBlob.onBlobDiag('dl url='+url.slice(0,60)+',iframes='+fs0.length+',hit='+(cached!==''));}catch(e){}" +
+            "try{if(window.__senzTrapRescan){var sc=window.__senzTrapRescan();try{window.SenzBlob.onBlobDiag('dl scan: '+sc);}catch(e){}}}catch(e){}" +
             "if(cached){window.__senzBlobDone=true;window.SenzBlob.onBlobData(cached,name);return;}" +
-            "var fs=document.querySelectorAll('iframe');" +
-            "for(var i=0;i<fs.length;i++){" +
-            "try{fs[i].contentWindow.postMessage({type:'senz-get-blob',url:url},'*');}catch(e){}}" +
-            "setTimeout(function(){try{" +
+            "var postAll=function(){var fs=senzAllIframes();for(var i=0;i<fs.length;i++){try{fs[i].contentWindow.postMessage({type:'senz-get-blob',url:url},'*');}catch(e){}}};" +
+            "postAll();" +
+            "setTimeout(function(){try{if(window.__senzBlobDone)return;postAll();}catch(e){}},3000);" +
+            "var senzTryXhr=function(){try{" +
             "if(window.__senzBlobDone)return;" +
-            "var fs2=document.querySelectorAll('iframe');" +
-            "for(var i2=0;i2<fs2.length;i2++){" +
-            "try{fs2[i2].contentWindow.postMessage({type:'senz-get-blob',url:url},'*');}catch(e){}}" +
-            "}catch(e){}},3000);" +
-            "setTimeout(function(){try{" +
-            "if(window.__senzBlobDone)return;" +
+            "if(window.__senzXhrTried)return;window.__senzXhrTried=true;" +
             "var xhr=new XMLHttpRequest();" +
             "xhr.open('GET',url,true);" +
             "xhr.responseType='blob';" +
@@ -4626,9 +4744,42 @@ abstract class BrowserActivity : AppCompatActivity() {
             "window.SenzBlob.onBlobData(i>=0?s.substring(i+1):s,name);};" +
             "r.onerror=function(){window.SenzBlob.onBlobError('reader-error');};" +
             "r.readAsDataURL(xhr.response);};" +
-            "xhr.onerror=function(){window.SenzBlob.onBlobError('xhr-error status='+xhr.status);};" +
+            "xhr.onerror=function(){var fb=window.__senzFallbackErr||'';window.SenzBlob.onBlobError('xhr-error status='+xhr.status+(fb?(' (fallback gagal: '+fb+')'):''));};" +
             "xhr.ontimeout=function(){window.SenzBlob.onBlobError('xhr-timeout');};" +
-            "xhr.send();}catch(e){window.SenzBlob.onBlobError('js-exception '+e.message);}},15000);" +
+            "xhr.send();}catch(e){window.SenzBlob.onBlobError('js-exception '+e.message);}};" +
+            "var senzTryRecorder=function(){try{" +
+            "var aus=document.querySelectorAll('audio');var a=null;" +
+            "for(var ai2=0;ai2<aus.length;ai2++){if(aus[ai2].src===url){a=aus[ai2];break;}}" +
+            "if(!a){try{window.SenzBlob.onBlobDiag('fallback: tidak ada <audio> untuk url ini');}catch(e){}senzTryXhr();return;}" +
+            "var dur=(a.duration&&isFinite(a.duration))?a.duration:60;" +
+            "try{window.SenzBlob.onBlobDiag('fallback: rekam ulang audio durasi='+Math.ceil(dur)+' dtk');}catch(e){}" +
+            "try{window.SenzBlob.onBlobFallbackStart(String(Math.ceil(dur)));}catch(e){}" +
+            "var stream=null;" +
+            "try{stream=a.captureStream?a.captureStream():(a.mozCaptureStream?a.mozCaptureStream():null);}catch(e){}" +
+            "if(!stream){window.__senzFallbackErr='captureStream tidak tersedia';senzTryXhr();return;}" +
+            "var mime='';" +
+            "try{if(window.MediaRecorder&&MediaRecorder.isTypeSupported('audio/webm;codecs=opus'))mime='audio/webm;codecs=opus';}catch(e){}" +
+            "var rec=null;var dead=false;" +
+            "try{rec=mime?new MediaRecorder(stream,{mimeType:mime}):new MediaRecorder(stream);}catch(e){window.__senzFallbackErr='MediaRecorder tidak bisa dibuat ('+(e.message||e)+')';senzTryXhr();return;}" +
+            "var chunks=[];var stopped=false;" +
+            "rec.ondataavailable=function(e){if(e.data&&e.data.size)chunks.push(e.data);};" +
+            "rec.onstop=function(){if(dead)return;try{" +
+            "var b=new Blob(chunks,{type:rec.mimeType||'audio/webm'});" +
+            "var r=new FileReader();" +
+            "r.onloadend=function(){if(dead)return;if(window.__senzBlobDone)return;window.__senzBlobDone=true;var s=r.result||'';var i=s.indexOf(',');window.SenzBlob.onBlobData(i>=0?s.substring(i+1):s,name);};" +
+            "r.onerror=function(){window.SenzBlob.onBlobError('fallback: reader-error');};" +
+            "r.readAsDataURL(b);}catch(e){window.SenzBlob.onBlobError('fallback: '+(e.message||e));}};" +
+            "rec.onerror=function(){if(dead)return;window.__senzFallbackErr='recorder-error';senzTryXhr();};" +
+            "var maxMs=Math.min(300000,(dur+15)*1000);" +
+            "var stopOnce=function(){if(stopped)return;stopped=true;try{rec.stop();}catch(e){}try{a.pause();}catch(e){}};" +
+            "try{a.onended=function(){stopOnce();};}catch(e){}" +
+            "setTimeout(stopOnce,maxMs);" +
+            "try{a.currentTime=0;}catch(e){}" +
+            "var p=null;try{p=a.play();}catch(e){dead=true;window.__senzFallbackErr='play ditolak ('+(e.message||e)+')';senzTryXhr();return;}" +
+            "if(p&&p.catch){p.catch(function(e){if(dead)return;dead=true;try{rec.stop();}catch(e){}window.__senzFallbackErr='play ditolak ('+(e.message||e)+')';senzTryXhr();});}" +
+            "try{rec.start(1000);}catch(e){if(!dead){window.__senzFallbackErr='rec.start gagal ('+(e.message||e)+')';senzTryXhr();}}" +
+            "}catch(e){window.SenzBlob.onBlobError('fallback: js '+(e.message||e));}};" +
+            "setTimeout(function(){try{if(window.__senzBlobDone)return;senzTryRecorder();}catch(e){window.SenzBlob.onBlobError('js-exception '+e.message);}},15000);" +
             "}catch(e){window.SenzBlob.onBlobError('js-exception '+e.message);}})();"
         try {
             webView.evaluateJavascript(js, null)
@@ -4692,13 +4843,48 @@ abstract class BrowserActivity : AppCompatActivity() {
         @android.webkit.JavascriptInterface
         fun onBlobDiag(info: String) {
             if (!isBridgeOriginAllowed()) return
+            // v0.1.81 (B3): hitung jawaban frame untuk diagnosa gagal.
+            try {
+                if (info.startsWith("dl url=")) {
+                    blobDlIframes = Regex("iframes=(\\d+)").find(info)?.groupValues?.getOrNull(1)?.toIntOrNull() ?: 0
+                    blobDlCoreReqs = 0
+                    blobDlFetchTried = false
+                    blobDlFetchOk = false
+                } else if (info.startsWith("core: req ")) {
+                    blobDlCoreReqs++
+                } else if (info.startsWith("core: fetch-try")) {
+                    blobDlFetchTried = true
+                } else if (info.startsWith("core: fetch-ok")) {
+                    blobDlFetchOk = true
+                }
+            } catch (_: Exception) {
+            }
             logBlobDiag(info)
+        }
+
+        /** v0.1.81 (B4): fallback rekam-ulang mulai — perpanjang
+         *  tunggu file TTS selama durasi audio + margin (maks 5 mnt)
+         *  supaya waitTtsFile tidak fail di tengah rekaman. Hanya
+         *  berlaku saat run TTS aktif. */
+        @android.webkit.JavascriptInterface
+        fun onBlobFallbackStart(durationSec: String) {
+            if (!isBridgeOriginAllowed()) return
+            if (pendingTtsScript == null) return
+            val dur = durationSec.toIntOrNull() ?: 60
+            val waitMs = minOf(300000L, (dur + 30L) * 1000L)
+            ttsFallbackDeadlineMs = System.currentTimeMillis() + waitMs
+            writeTtsStatus("running", "mengunduh via rekam ulang audio (fallback, ~${dur} dtk)")
         }
 
         @android.webkit.JavascriptInterface
         fun onBlobError(reason: String) {
             if (!isBridgeOriginAllowed()) return
-            logBlobDiag("GAGAL: $reason")
+            // v0.1.81 (B3): kegagalan membawa rantai diagnosa —
+            // berapa iframe ditanya, berapa menjawab, apakah ada
+            // frame yang mencoba fetch di konteksnya sendiri.
+            val diag = "iframe ditanya: $blobDlIframes, menjawab core: req: $blobDlCoreReqs, fetch-try: ${if (blobDlFetchTried) "ya" else "tidak"}${if (blobDlFetchOk) " (fetch-ok)" else ""}"
+            lastBlobError = "$reason ($diag)"
+            logBlobDiag("GAGAL: $reason ($diag)")
             runOnUiThread {
                 Toast.makeText(
                     this@BrowserActivity,
@@ -4729,7 +4915,13 @@ abstract class BrowserActivity : AppCompatActivity() {
      *  lewat jaringan (srcdoc/about:blank, dibuat saat generate).
      *  Perangkap ini menangkap iframe itu saat dimasukkan ke DOM /
      *  saat srcdoc di-set, lalu menyisipkan skrip yang sama ke
-     *  dalamnya. */
+     *  dalamnya.
+     *  v0.1.81: perangkap jalan di SETIAP frame (iframe bersarang),
+     *  hook attachShadow (shadow DOM), insertAdjacentHTML/innerHTML/
+     *  Document.write, + __senzTrapRescan (pindai ulang saat unduh).
+     *  Core: bila cache miss, frame mencoba fetch(url) di konteksnya
+     *  sendiri (frame pemilik blob bisa — same-origin) + fallback
+     *  MediaRecorder dari <audio> di frame utama. */
     private fun blobInjectScript(): String {
         val core = "(function(){try{" +
             "if(window.__senzBlobCache)return;" +
@@ -4737,6 +4929,7 @@ abstract class BrowserActivity : AppCompatActivity() {
             "window.__senzBlobNames={};" +
             "window.__senzBlobDone=false;" +
             "window.__senzPendingReqs={};" +
+            "window.__senzFetchTried={};" +
             "window.__senzReplyBlob=function(u){" +
             "var d=window.__senzBlobGet(u)||'';if(!d)return;" +
             "var nm=window.__senzBlobName(u)||'';" +
@@ -4782,7 +4975,24 @@ abstract class BrowserActivity : AppCompatActivity() {
             "try{if(window.SenzBlob)window.SenzBlob.onBlobDiag('core: req '+m.url.slice(-8)+' cache='+(window.__senzBlobGet(m.url)?'ada':'kosong'));}catch(e){}" +
             "if(window.__senzBlobGet(m.url)){window.__senzReplyBlob(m.url);}" +
             "else{window.__senzPendingReqs[m.url]=true;" +
-            "setTimeout(function(){try{delete window.__senzPendingReqs[m.url];}catch(e){}},20000);}" +
+            "setTimeout(function(){try{delete window.__senzPendingReqs[m.url];}catch(e){}},20000);" +
+            "try{" +
+            "if(!window.__senzFetchTried[m.url]){window.__senzFetchTried[m.url]=true;" +
+            "try{if(window.SenzBlob)window.SenzBlob.onBlobDiag('core: fetch-try '+m.url.slice(-8));}catch(e){}" +
+            "fetch(m.url).then(function(r){" +
+            "if(!r.ok){try{if(window.SenzBlob)window.SenzBlob.onBlobDiag('core: fetch-gagal http '+r.status);}catch(e){}return null;}" +
+            "return r.blob();}).then(function(b){" +
+            "if(!b)return;" +
+            "var rr=new FileReader();" +
+            "rr.onloadend=function(){var s=rr.result||'';var i=s.indexOf(',');var d=i>=0?s.substring(i+1):s;" +
+            "try{window.__senzBlobCache[m.url]=d;}catch(e){}" +
+            "try{if(window.SenzBlob)window.SenzBlob.onBlobDiag('core: fetch-ok '+m.url.slice(-8));}catch(e){}" +
+            "window.__senzReplyBlob(m.url);};" +
+            "rr.onerror=function(){try{if(window.SenzBlob)window.SenzBlob.onBlobDiag('core: fetch-gagal reader');}catch(e){}};" +
+            "rr.readAsDataURL(b);}).catch(function(e){" +
+            "try{if(window.SenzBlob)window.SenzBlob.onBlobDiag('core: fetch-gagal '+(e&&e.message?e.message:e));}catch(e){}" +
+            "});}}catch(e){try{if(window.SenzBlob)window.SenzBlob.onBlobDiag('core: fetch-gagal js '+e.message);}catch(e){}}" +
+            "}" +
             "try{var fs=document.querySelectorAll('iframe');" +
             "for(var i=0;i<fs.length;i++){try{fs[i].contentWindow.postMessage(m,'*');}catch(e){}}}catch(e){}" +
             "}else if(m&&m.type==='senz-blob-data'){" +
@@ -4794,13 +5004,16 @@ abstract class BrowserActivity : AppCompatActivity() {
             "else if(m.data){try{window.parent.postMessage(m,'*');}catch(e){}}" +
             "}}catch(e){}});" +
             "}catch(e){}})();"
-        // Perangkap iframe (v0.1.18) — HANYA di frame utama. Menangkap
+        // Perangkap iframe (v0.1.18, diperluas v0.1.81) — jalan di
+        // SETIAP frame (bukan hanya frame utama, supaya iframe
+        // bersarang tertangkap frame induknya sendiri). Menangkap
         // iframe srcdoc / data:text/html saat dimasukkan ke DOM atau
         // saat srcdoc/src di-set, lalu menyisipkan CORE yang sama ke
         // dalamnya. Tulis '<scr'+'ipt>' (bukan literal '</script>')
         // supaya tidak memutus tag <script> injeksi ini sendiri.
         val trap = "(function(){try{" +
-            "if(window.parent!==window)return;" +
+            "if(window.__senzTrapInstalled)return;" +
+            "window.__senzTrapInstalled=true;" +
             "var CORE=" + org.json.JSONObject.quote(core) + ";" +
             "var wrap=function(h){try{" +
             "if(!h||h.indexOf('__senzBlobCache')!==-1)return h;" +
@@ -4849,10 +5062,34 @@ abstract class BrowserActivity : AppCompatActivity() {
             "try{var _d2=Object.getOwnPropertyDescriptor(HTMLIFrameElement.prototype,'src');" +
             "if(_d2&&_d2.set){var _s2=_d2.set;" +
             "Object.defineProperty(HTMLIFrameElement.prototype,'src',{configurable:true,enumerable:_d2.enumerable,get:_d2.get,set:function(v){try{v=rewriteDataSrc(String(v));}catch(e){}return _s2.call(this,v);}});}}catch(e){}" +
-            "try{var _obs=new MutationObserver(function(muts){" +
+            "var observeRoot=function(root){try{" +
+            "var _o=new MutationObserver(function(muts){" +
             "for(var i=0;i<muts.length;i++){var m=muts[i];" +
             "for(var j=0;j<m.addedNodes.length;j++)trapNode(m.addedNodes[j]);}});" +
-            "_obs.observe(document.documentElement||document,{childList:true,subtree:true});}catch(e){}" +
+            "_o.observe(root,{childList:true,subtree:true});}catch(e){}};" +
+            "try{observeRoot(document.documentElement||document);}catch(e){}" +
+            "try{if(Element.prototype.attachShadow){var _as=Element.prototype.attachShadow;" +
+            "Element.prototype.attachShadow=function(init){var sr=_as.call(this,init);try{observeRoot(sr);}catch(e){}try{trapNode(sr);}catch(e){}return sr;};}}catch(e){}" +
+            "try{var _all=document.querySelectorAll('*');" +
+            "for(var _si=0;_si<_all.length;_si++){var _sr=null;try{_sr=_all[_si].shadowRoot;}catch(e){}" +
+            "if(_sr){try{observeRoot(_sr);}catch(e){}try{trapNode(_sr);}catch(e){}}}}catch(e){}" +
+            "try{var _iah=Element.prototype.insertAdjacentHTML;" +
+            "Element.prototype.insertAdjacentHTML=function(pos,html){var r=_iah.call(this,pos,html);try{trapNode(this);}catch(e){}return r;};}catch(e){}" +
+            "try{var _ihD=Object.getOwnPropertyDescriptor(Element.prototype,'innerHTML');" +
+            "if(_ihD&&_ihD.set){var _ihS=_ihD.set;" +
+            "Object.defineProperty(Element.prototype,'innerHTML',{configurable:true,enumerable:_ihD.enumerable,get:_ihD.get,set:function(v){var r=_ihS.call(this,v);try{trapNode(this);}catch(e){}return r;}});}}catch(e){}" +
+            "try{var _dw=Document.prototype.write;Document.prototype.write=function(){var r=_dw.apply(this,arguments);try{trapNode(document);}catch(e){}return r;};" +
+            "var _dwl=Document.prototype.writeln;Document.prototype.writeln=function(){var r=_dwl.apply(this,arguments);try{trapNode(document);}catch(e){}return r;};}catch(e){}" +
+            "window.__senzTrapRescan=function(){try{" +
+            "var n=0;var m=0;" +
+            "var scan=function(root){" +
+            "try{var fs=root.querySelectorAll('iframe');for(var i=0;i<fs.length;i++){n++;var b=fs[i].__senzTrapped;try{trapOne(fs[i]);}catch(e){}if(fs[i].__senzTrapped&&!b)m++;}}catch(e){}" +
+            "try{var all=root.querySelectorAll('*');for(var j=0;j<all.length;j++){var sr=null;try{sr=all[j].shadowRoot;}catch(e){}if(sr)scan(sr);}}catch(e){}" +
+            "};" +
+            "try{trapNode(document.documentElement||document);}catch(e){}" +
+            "scan(document);" +
+            "return 'iframes='+n+' trapped='+m;" +
+            "}catch(e){return 'iframes=? trapped=?';}};" +
             "try{trapNode(document.documentElement||document);}catch(e){}" +
             "}catch(e){}})();"
         return core + trap
