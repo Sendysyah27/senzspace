@@ -1284,3 +1284,61 @@ Jangan cuma diagnosa dari kodenya.
   langkah TTS Style/Speaker/Run (kecuali Create-dialog + diagnose +
   watchdog), shed_refused_count (bukan build ini; ditunda v0.1.82),
   dan cara kerja v0.1.77/78/79/80 tidak disentuh.
+- API 82 (24 Nov, v0.1.82): TTS BLOB:NULL — CORE TIDAK JALAN DI
+  HALAMAN BARU + AUDIO DI SHADOW DOM.
+  (a) Latar: tes live v0.1.81 (24 Nov 13:21) — landing page LULUS
+  (dialog kebuka sendiri), tapi unduh blob:null MASIH GAGAL:
+  'Diagnosa blob: xhr-error status=0 (iframe ditanya: 2, menjawab
+  core: req: 0, fetch-try: tidak)'; fallback 'tidak ada <audio>
+  untuk url ini'. TIDAK ADA baris 'dl scan'/'TRAP' di log 849 baris
+  — __senzTrapRescan tidak terdefinisi di frame utama saat unduh
+  (perangkap tidak terpasang), hit=false padahal blob dibuat 6 menit
+  SESUDAH injeksi ke '/'. Pembanding 21 Nov (UI lama): mekanisme
+  sama BERHASIL 2x (core: req cache=kosong -> cache=ada -> SIMPAN
+  WAV). INJECT sesudah install HANYA '/' + bscframe + generate_204
+  (rute /generate-speech itu SPA client-side, dokumen sama).
+  (b) Heartbeat pemasangan (A1): core memanggil
+  'core: installed <url>' dan trap 'trap: installed <url>
+  frames=<n>' saat terpasang — bila baris ini tidak ada di log
+  berikut, injeksi tidak mengeksekusi (diagnosis pasti, bukan
+  tebakan). Gerbang origin jembatan (isBridgeOriginAllowed) memakai
+  URL frame utama, jadi diag dari iframe sandboxed pun diterima.
+  (c) Suntikan via evaluateJavascript (A2, jalur utama baru):
+  onPageFinished frame utama (hanya host TRAP_HOSTS) memanggil
+  ensureBlobCoreInjected(url) SEBELUM rantai executor
+  (maybeRunApiPrompt/Tts/Studio) — evaluateJavascript tidak tunduk
+  CSP halaman, jadi core+trap PASTI ada di frame utama. Idempoten
+  (guard __senzBlobCache/__senzTrapInstalled); evaluateJavascript
+  dieksekusi berurutan, jadi suntikan jalan sebelum JS executor.
+  Injeksi jaringan (shouldInterceptRequest) dipertahankan. A3:
+  akar injeksi jaringan tidak bisa ditentukan dari kode saja
+  (kandidat: CSP halaman baru memblokir skrip hasil injeksi —
+  fallback <script src> tanpa nonce bila ekstraksi nonce gagal —
+  atau trap melempar saat install); A2 menutupnya, heartbeat (b)
+  yang membuktikan di log.
+  (d) Shadow DOM rekursif (B): walkRoots(root, fn) mengunjungi root
+  + semua shadow root turunan (rekursif); trapNode memakai walkRoots
+  (bungkus srcdoc iframe di shadow root, SEBELUM blob dibuat);
+  pemindaian saat trap terpasang observe + trap tiap shadow root;
+  __senzTrapRescan melaporkan 'dl scan: iframes=<n> trapped=<m>
+  shadowRoots=<k>'. senzAllIframes saat unduh sudah rekursif sejak
+  v0.1.81 (tidak diubah).
+  (e) Fallback MediaRecorder baca shadow DOM (C): senzTryRecorder
+  mencari <audio src==url> via findAudio rekursif (DOM + semua
+  shadow root); bila ketemu di shadow root, diag '... di shadow
+  DOM' ikut di baris durasi; bila ketemu tapi captureStream/play/
+  MediaRecorder/rec.start gagal, diag 'fallback: audio ketemu di
+  shadow DOM tapi <alasan>' sebelum XHR terakhir. Batas tidak
+  berubah (durasi+15 dtk, cap 5 menit; deadline waitTtsFile).
+  (f) Fetch frame utama (D): downloadBlob, sesudah ronde postMessage
+  ke iframe, juga window.postMessage senz-get-blob ke DIRI SENDIRI
+  (postSelf, ronde 1 + ronde +3 dtk) — handler core frame utama
+  mencoba fetch(url) di konteksnya (diag 'core: fetch-try/
+  fetch-ok/fetch-gagal'); menutup kasus blob dibuat JS frame utama
+  tapi hook ketinggalan. Untuk blob:null ini akan gagal — tidak
+  apa, jalurnya murah.
+  Tanpa ubah perilaku: WatchdogWorker, eksekutor PROMPT (v0.1.80),
+  eksekutor STUDIO, jalur UNDUH-WEB http(s), downloadDataUrl,
+  langkah TTS Style/Speaker/Run, runTtsCreateDialog, watchdog,
+  shed_refused_count (pindah v0.1.83), cacat sidebar-toggle attach
+  (/new — pindah v0.1.83).

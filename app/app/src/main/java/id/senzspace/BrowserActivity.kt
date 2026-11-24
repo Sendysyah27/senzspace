@@ -1173,6 +1173,10 @@ abstract class BrowserActivity : AppCompatActivity() {
                     // Multi Live v2: pasang pengamat DOM + tangkap langsung
                     // bila halaman selesai dimuat saat Space di belakang.
                     injectLiveObserver()
+                    // v0.1.82 (A2): suntik core+trap blob via
+                    // evaluateJavascript (tidak tunduk CSP) — SEBELUM
+                    // executor bekerja di bawah.
+                    ensureBlobCoreInjected(url)
                     // v0.1.16: penangkap blob (cache/inject) DIHAPUS — blob
                     // null-origin tidak bisa ditangkap dari frame utama.
                     if (!isForeground) captureLiveThumbnail()
@@ -4699,6 +4703,27 @@ abstract class BrowserActivity : AppCompatActivity() {
      *  rekam-ulang via MediaRecorder dari <audio> di frame utama,
      *  4) XHR terakhir, lalu gagal. Bendera __senzBlobDone mencegah
      *  simpan ganda bila dua jalur sama-sama berhasil. */
+    /** v0.1.82 (A2): suntik core+trap blob via evaluateJavascript saat
+     *  halaman selesai dimuat. evaluateJavascript TIDAK tunduk pada CSP
+     *  halaman — jadi core+trap PASTI ada di frame utama apapun CSP-nya
+     *  (belt-and-braces di samping injeksi jaringan shouldInterceptRequest,
+     *  yang buktinya tidak jalan di halaman AI Studio baru: tidak ada
+     *  baris 'dl scan'/'TRAP' di log 24 Nov 13:21). Idempoten (guard
+     *  __senzBlobCache/__senzTrapInstalled di JS) — aman tiap
+     *  onPageFinished. Hanya host trap (Claude/AI Studio). Dipanggil
+     *  SEBELUM rantai executor (maybeRunApi*) supaya core sudah ada
+     *  saat executor bekerja; evaluateJavascript dieksekusi berurutan,
+     *  jadi suntikan ini jalan sebelum evaluateJavascript executor. */
+    private fun ensureBlobCoreInjected(url: String) {
+        if (!::webView.isInitialized) return
+        try {
+            val host = android.net.Uri.parse(url).host ?: return
+            if (!isTrapHost(host)) return
+            webView.evaluateJavascript(blobInjectScript(), null)
+        } catch (_: Exception) {
+        }
+    }
+
     private fun downloadBlob(dlUrl: String, fileName: String) {
         if (!::webView.isInitialized) return
         pendingBlobFileName = fileName
@@ -4729,8 +4754,9 @@ abstract class BrowserActivity : AppCompatActivity() {
             "try{if(window.__senzTrapRescan){var sc=window.__senzTrapRescan();try{window.SenzBlob.onBlobDiag('dl scan: '+sc);}catch(e){}}}catch(e){}" +
             "if(cached){window.__senzBlobDone=true;window.SenzBlob.onBlobData(cached,name);return;}" +
             "var postAll=function(){var fs=senzAllIframes();for(var i=0;i<fs.length;i++){try{fs[i].contentWindow.postMessage({type:'senz-get-blob',url:url},'*');}catch(e){}}};" +
-            "postAll();" +
-            "setTimeout(function(){try{if(window.__senzBlobDone)return;postAll();}catch(e){}},3000);" +
+            "var postSelf=function(){try{window.postMessage({type:'senz-get-blob',url:url},'*');}catch(e){}};" +
+            "postAll();postSelf();" +
+            "setTimeout(function(){try{if(window.__senzBlobDone)return;postAll();postSelf();}catch(e){}},3000);" +
             "var senzTryXhr=function(){try{" +
             "if(window.__senzBlobDone)return;" +
             "if(window.__senzXhrTried)return;window.__senzXhrTried=true;" +
@@ -4748,19 +4774,20 @@ abstract class BrowserActivity : AppCompatActivity() {
             "xhr.ontimeout=function(){window.SenzBlob.onBlobError('xhr-timeout');};" +
             "xhr.send();}catch(e){window.SenzBlob.onBlobError('js-exception '+e.message);}};" +
             "var senzTryRecorder=function(){try{" +
-            "var aus=document.querySelectorAll('audio');var a=null;" +
-            "for(var ai2=0;ai2<aus.length;ai2++){if(aus[ai2].src===url){a=aus[ai2];break;}}" +
+            "var findAudio=function(root){try{var aus=root.querySelectorAll('audio');for(var ai2=0;ai2<aus.length;ai2++){if(aus[ai2].src===url)return {el:aus[ai2],sh:(root!==document)};}}catch(e){}try{var all=root.querySelectorAll('*');for(var j=0;j<all.length;j++){var sr=null;try{sr=all[j].shadowRoot;}catch(e){}if(sr){var r=findAudio(sr);if(r)return r;}}}catch(e){}return null;};" +
+            "var found=findAudio(document);var a=found?found.el:null;var audioInShadow=found?found.sh:false;" +
+            "var shadowFail=function(rs){try{if(audioInShadow&&window.SenzBlob)window.SenzBlob.onBlobDiag('fallback: audio ketemu di shadow DOM tapi '+rs);}catch(e){}};" +
             "if(!a){try{window.SenzBlob.onBlobDiag('fallback: tidak ada <audio> untuk url ini');}catch(e){}senzTryXhr();return;}" +
             "var dur=(a.duration&&isFinite(a.duration))?a.duration:60;" +
-            "try{window.SenzBlob.onBlobDiag('fallback: rekam ulang audio durasi='+Math.ceil(dur)+' dtk');}catch(e){}" +
+            "try{window.SenzBlob.onBlobDiag('fallback: rekam ulang audio durasi='+Math.ceil(dur)+' dtk'+(audioInShadow?' di shadow DOM':''));}catch(e){}" +
             "try{window.SenzBlob.onBlobFallbackStart(String(Math.ceil(dur)));}catch(e){}" +
             "var stream=null;" +
             "try{stream=a.captureStream?a.captureStream():(a.mozCaptureStream?a.mozCaptureStream():null);}catch(e){}" +
-            "if(!stream){window.__senzFallbackErr='captureStream tidak tersedia';senzTryXhr();return;}" +
+            "if(!stream){shadowFail('captureStream tidak tersedia');window.__senzFallbackErr='captureStream tidak tersedia';senzTryXhr();return;}" +
             "var mime='';" +
             "try{if(window.MediaRecorder&&MediaRecorder.isTypeSupported('audio/webm;codecs=opus'))mime='audio/webm;codecs=opus';}catch(e){}" +
             "var rec=null;var dead=false;" +
-            "try{rec=mime?new MediaRecorder(stream,{mimeType:mime}):new MediaRecorder(stream);}catch(e){window.__senzFallbackErr='MediaRecorder tidak bisa dibuat ('+(e.message||e)+')';senzTryXhr();return;}" +
+            "try{rec=mime?new MediaRecorder(stream,{mimeType:mime}):new MediaRecorder(stream);}catch(e){shadowFail('MediaRecorder tidak bisa dibuat');window.__senzFallbackErr='MediaRecorder tidak bisa dibuat ('+(e.message||e)+')';senzTryXhr();return;}" +
             "var chunks=[];var stopped=false;" +
             "rec.ondataavailable=function(e){if(e.data&&e.data.size)chunks.push(e.data);};" +
             "rec.onstop=function(){if(dead)return;try{" +
@@ -4775,9 +4802,9 @@ abstract class BrowserActivity : AppCompatActivity() {
             "try{a.onended=function(){stopOnce();};}catch(e){}" +
             "setTimeout(stopOnce,maxMs);" +
             "try{a.currentTime=0;}catch(e){}" +
-            "var p=null;try{p=a.play();}catch(e){dead=true;window.__senzFallbackErr='play ditolak ('+(e.message||e)+')';senzTryXhr();return;}" +
-            "if(p&&p.catch){p.catch(function(e){if(dead)return;dead=true;try{rec.stop();}catch(e){}window.__senzFallbackErr='play ditolak ('+(e.message||e)+')';senzTryXhr();});}" +
-            "try{rec.start(1000);}catch(e){if(!dead){window.__senzFallbackErr='rec.start gagal ('+(e.message||e)+')';senzTryXhr();}}" +
+            "var p=null;try{p=a.play();}catch(e){dead=true;shadowFail('play ditolak');window.__senzFallbackErr='play ditolak ('+(e.message||e)+')';senzTryXhr();return;}" +
+            "if(p&&p.catch){p.catch(function(e){if(dead)return;dead=true;try{rec.stop();}catch(e){}shadowFail('play ditolak');window.__senzFallbackErr='play ditolak ('+(e.message||e)+')';senzTryXhr();});}" +
+            "try{rec.start(1000);}catch(e){if(!dead){shadowFail('rec.start gagal');window.__senzFallbackErr='rec.start gagal ('+(e.message||e)+')';senzTryXhr();}}" +
             "}catch(e){window.SenzBlob.onBlobError('fallback: js '+(e.message||e));}};" +
             "setTimeout(function(){try{if(window.__senzBlobDone)return;senzTryRecorder();}catch(e){window.SenzBlob.onBlobError('js-exception '+e.message);}},15000);" +
             "}catch(e){window.SenzBlob.onBlobError('js-exception '+e.message);}})();"
@@ -4921,7 +4948,16 @@ abstract class BrowserActivity : AppCompatActivity() {
      *  Document.write, + __senzTrapRescan (pindai ulang saat unduh).
      *  Core: bila cache miss, frame mencoba fetch(url) di konteksnya
      *  sendiri (frame pemilik blob bisa — same-origin) + fallback
-     *  MediaRecorder dari <audio> di frame utama. */
+     *  MediaRecorder dari <audio> di frame utama.
+     *  v0.1.82: heartbeat 'core: installed'/'trap: installed' saat
+     *  terpasang (diagnosis pasti bila injeksi tidak mengeksekusi);
+     *  trapNode + rescan menembus shadow DOM REKURSIF (walkRoots),
+     *  rescan melaporkan shadowRoots; downloadBlob mencoba juga
+     *  fetch di konteks frame utama (postSelf); fallback MediaRecorder
+     *  mencari <audio> di shadow root (rekursif) + diag bila ketemu
+     *  tapi captureStream/play ditolak. Suntikan utama kini JUGA via
+     *  evaluateJavascript di onPageFinished (ensureBlobCoreInjected,
+     *  tidak tunduk CSP) — injeksi jaringan dipertahankan. */
     private fun blobInjectScript(): String {
         val core = "(function(){try{" +
             "if(window.__senzBlobCache)return;" +
@@ -4930,6 +4966,7 @@ abstract class BrowserActivity : AppCompatActivity() {
             "window.__senzBlobDone=false;" +
             "window.__senzPendingReqs={};" +
             "window.__senzFetchTried={};" +
+            "try{if(window.SenzBlob)window.SenzBlob.onBlobDiag('core: installed '+location.href);}catch(e){}" +
             "window.__senzReplyBlob=function(u){" +
             "var d=window.__senzBlobGet(u)||'';if(!d)return;" +
             "var nm=window.__senzBlobName(u)||'';" +
@@ -5019,6 +5056,7 @@ abstract class BrowserActivity : AppCompatActivity() {
             "if(!h||h.indexOf('__senzBlobCache')!==-1)return h;" +
             "return h+'<scr'+'ipt>'+CORE+'</scr'+'ipt>';}catch(e){return h;}};" +
             "var diag=function(m){try{if(window.SenzBlob)window.SenzBlob.onBlobDiag(m);}catch(e){}};" +
+            "try{diag('trap: installed '+location.href+' frames='+(document.querySelectorAll?document.querySelectorAll('iframe').length:0));}catch(e){}" +
             "var rewriteDataSrc=function(s){try{" +
             "if(!s||s.indexOf('data:text/html')!==0)return s;" +
             "var comma=s.indexOf(',');if(comma<0)return s;" +
@@ -5038,11 +5076,15 @@ abstract class BrowserActivity : AppCompatActivity() {
             "var s='';try{s=f.getAttribute('src')||'';}catch(e){}" +
             "var rs=rewriteDataSrc(s);if(rs!==s){f.setAttribute('src',rs);}" +
             "}catch(e){}};" +
+            "var walkRoots=function(root,fn){try{fn(root);}catch(e){}try{var all=root.querySelectorAll('*');for(var j=0;j<all.length;j++){var sr=null;try{sr=all[j].shadowRoot;}catch(e){}if(sr)walkRoots(sr,fn);}}catch(e){}};" +
             "var trapNode=function(n){try{" +
             "if(!n)return;" +
-            "if(n.tagName==='IFRAME')trapOne(n);" +
-            "if(n.querySelectorAll){var fs=n.querySelectorAll('iframe');" +
+            "var trapIn=function(root){try{" +
+            "if(root.tagName==='IFRAME')trapOne(root);" +
+            "if(root.querySelectorAll){var fs=root.querySelectorAll('iframe');" +
             "for(var i=0;i<fs.length;i++)trapOne(fs[i]);}" +
+            "}catch(e){}};" +
+            "walkRoots(n,trapIn);" +
             "}catch(e){}};" +
             "var _append=Node.prototype.appendChild;" +
             "Node.prototype.appendChild=function(n){try{trapNode(n);}catch(e){}return _append.call(this,n);};" +
@@ -5070,9 +5112,8 @@ abstract class BrowserActivity : AppCompatActivity() {
             "try{observeRoot(document.documentElement||document);}catch(e){}" +
             "try{if(Element.prototype.attachShadow){var _as=Element.prototype.attachShadow;" +
             "Element.prototype.attachShadow=function(init){var sr=_as.call(this,init);try{observeRoot(sr);}catch(e){}try{trapNode(sr);}catch(e){}return sr;};}}catch(e){}" +
-            "try{var _all=document.querySelectorAll('*');" +
-            "for(var _si=0;_si<_all.length;_si++){var _sr=null;try{_sr=_all[_si].shadowRoot;}catch(e){}" +
-            "if(_sr){try{observeRoot(_sr);}catch(e){}try{trapNode(_sr);}catch(e){}}}}catch(e){}" +
+            "try{var _de=document.documentElement||document;" +
+            "walkRoots(_de,function(rt){try{if(rt!==_de)observeRoot(rt);}catch(e){}try{trapNode(rt);}catch(e){}});}catch(e){}" +
             "try{var _iah=Element.prototype.insertAdjacentHTML;" +
             "Element.prototype.insertAdjacentHTML=function(pos,html){var r=_iah.call(this,pos,html);try{trapNode(this);}catch(e){}return r;};}catch(e){}" +
             "try{var _ihD=Object.getOwnPropertyDescriptor(Element.prototype,'innerHTML');" +
@@ -5081,15 +5122,15 @@ abstract class BrowserActivity : AppCompatActivity() {
             "try{var _dw=Document.prototype.write;Document.prototype.write=function(){var r=_dw.apply(this,arguments);try{trapNode(document);}catch(e){}return r;};" +
             "var _dwl=Document.prototype.writeln;Document.prototype.writeln=function(){var r=_dwl.apply(this,arguments);try{trapNode(document);}catch(e){}return r;};}catch(e){}" +
             "window.__senzTrapRescan=function(){try{" +
-            "var n=0;var m=0;" +
+            "var n=0;var m=0;var k=0;" +
             "var scan=function(root){" +
             "try{var fs=root.querySelectorAll('iframe');for(var i=0;i<fs.length;i++){n++;var b=fs[i].__senzTrapped;try{trapOne(fs[i]);}catch(e){}if(fs[i].__senzTrapped&&!b)m++;}}catch(e){}" +
-            "try{var all=root.querySelectorAll('*');for(var j=0;j<all.length;j++){var sr=null;try{sr=all[j].shadowRoot;}catch(e){}if(sr)scan(sr);}}catch(e){}" +
+            "try{var all=root.querySelectorAll('*');for(var j=0;j<all.length;j++){var sr=null;try{sr=all[j].shadowRoot;}catch(e){}if(sr){k++;scan(sr);}}}catch(e){}" +
             "};" +
             "try{trapNode(document.documentElement||document);}catch(e){}" +
             "scan(document);" +
-            "return 'iframes='+n+' trapped='+m;" +
-            "}catch(e){return 'iframes=? trapped=?';}};" +
+            "return 'iframes='+n+' trapped='+m+' shadowRoots='+k;" +
+            "}catch(e){return 'iframes=? trapped=? shadowRoots=?';}};" +
             "try{trapNode(document.documentElement||document);}catch(e){}" +
             "}catch(e){}})();"
         return core + trap
