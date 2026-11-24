@@ -238,6 +238,17 @@ abstract class BrowserActivity : AppCompatActivity() {
     private var ttsRecordManual: Boolean = false
     private var ttsRecordFileName: String = ""
     private var ttsRecordPendingFile: String? = null
+    // v0.1.84: verdict gate rekam langsung — diisi bridge
+    // onBlobRecordDone (async, dari onstop JS). File HANYA boleh
+    // "done" bila verdict "ok"; "empty"/"short" -> gagal jujur.
+    // Di-reset tiap startDirectRecord supaya verdict basi tidak
+    // memberkati file rekam berikutnya.
+    private var ttsRecordGateVerdict: String = ""
+    private var ttsRecordGateDetail: String = ""
+    private var ttsRecordGateCapturedSec: Double = 0.0
+    private var ttsRecordGateDurationSec: Double = 0.0
+    private var ttsRecordGateChunks: Int = 0
+    private var ttsRecordGateBytes: Long = 0
     // v0.1.81 (B3): penghitung diagnostik unduh blob — dibawa ke
     // pesan gagal supaya ketahuan di mana rantai putus.
     private var blobDlIframes: Int = 0
@@ -2935,7 +2946,22 @@ abstract class BrowserActivity : AppCompatActivity() {
             ttsFallbackDeadlineMs = 0
             ttsHandler.removeCallbacks(ttsWatchdogRunnable)
             val styleNote = if (ttsStyleAttempt == 0) "Style sudah menempel" else "Style percobaan $ttsStyleAttempt"
-            writeTtsStatus("done", "VO tersimpan: ${fresh.name} (${fresh.length()} byte) ($styleNote)")
+            // v0.1.84 (C): file .webm HANYA datang dari rekam
+            // langsung — unduhan AI Studio asli .wav. File rekam
+            // HANYA boleh "done" bila gate lolos; 0-byte / verdict
+            // gagal / verdict tidak diterima -> gagal jujur, jangan
+            // pernah "done" palsu (bukti live v0.1.83: file 0-byte
+            // dilaporkan done).
+            val fromRecorder = fresh.name.endsWith(".webm", ignoreCase = true)
+            if (fromRecorder && fresh.length() == 0L) {
+                failTts("fallback: rekaman kosong (0 byte) — file VO tidak tersimpan")
+            } else if (fromRecorder && ttsRecordGateVerdict != "ok") {
+                val detail = if (ttsRecordGateVerdict.isNotEmpty()) ttsRecordGateDetail else "rekaman tidak lengkap (verdict tidak diterima)"
+                failTts("fallback: $detail — file VO tidak tersimpan")
+            } else {
+                val gateNote = if (fromRecorder) " (${ttsRecordGateDetail})" else ""
+                writeTtsStatus("done", "VO tersimpan: ${fresh.name} (${fresh.length()} byte)$gateNote ($styleNote)")
+            }
         } else if (ttsFallbackDeadlineMs > 0 && System.currentTimeMillis() < ttsFallbackDeadlineMs) {
             // v0.1.81 (B4): fallback rekam-ulang audio sedang berjalan
             // (real-time, durasi audio) — terus tunggu tanpa
@@ -3002,26 +3028,47 @@ abstract class BrowserActivity : AppCompatActivity() {
         return "Generated Audio ${fmt.format(java.util.Date())}.webm"
     }
 
-    /** JS rekam langsung (B1): cari <audio> SECARA REKURSIF di
-     *  document + semua shadow root (findAudio v0.1.82), lalu
-     *  captureStream + MediaRecorder — SALINAN MANDIRI dari
-     *  senzTryRecorder (downloadBlob), TANPA butuh URL blob dan
-     *  TANPA event unduh: senzTryRecorder itu var lokal di dalam
-     *  IIFE downloadBlob, TIDAK bisa dipanggil dari evaluate
-     *  terpisah. Hasil dikirim via SenzBlob.onBlobData (jalan
-     *  simpan yang sama dengan downloadBlob).
-     *  window.__senzBlobDone di-reset ke false di awal: bila ada
-     *  unduhan sukses sebelumnya di sesi halaman yang sama, flag
-     *  itu masih true dan onstop recorder akan membuang rekaman
-     *  tanpa suara. Perlindungan ganda-simpan tetap jalan: siapa
-     *  yang selesai duluan menandai done=true, yang kalah dibuang.
-     *  __NAME_JSON__ diganti org.json.JSONObject.quote(fileName).
-     *  Balik string: "started" bila perekam jalan; selain itu
-     *  alasan gagal ("no-audio" / "no-stream" / "no-recorder" /
-     *  "play-denied" / "rec-start-fail"). */
+    /** JS rekam langsung (v0.1.84, tulis ulang dari v0.1.83):
+     *  ASINKRON — mengembalikan 'pending' (bukan 'started'):
+     *  rantai metadata -> play -> rekam berjalan lewat
+     *  setTimeout/setInterval dan melaporkan hasil via bridge
+     *  onBlobFallbackStart (rekam mulai) / onBlobRecordFail (gagal)
+     *  / onBlobRecordDone (verdict gate saat stop). 'no-audio' /
+     *  'no-src' tetap sinkron (elemen tidak ketemu / tanpa src).
+     *  (A) STABLE ELEMENT: findAudio rekursif (document + semua
+     *  shadow root, v0.1.82) menemukan elemen SPA, lalu dibuat
+     *  elemen <audio> BARU di main frame (document.body, hidden,
+     *  DI LUAR tree React SPA) dengan src = blob URL yang sama —
+     *  SPA tidak bisa mengganti / me-pause elemen ini (bukti live
+     *  v0.1.83: rekam dari elemen SPA cuma menangkap 10,3 dtk dari
+     *  68 dtk). Bila stable-element gagal load (error event, mis.
+     *  blob cross-origin iframe sandbox) -> fallback ke elemen SPA
+     *  dengan monitor yang sama.
+     *  (D) TUNGGU METADATA: polling readyState>=1 + durasi finite
+     *  >0 tiap 250 ms, timeout 10 dtk -> 'metadata-timeout'
+     *  (bukti live v0.1.83: rekam in-run baca durasi 1 dtk karena
+     *  metadata belum ke-load -> file 0-byte). play() diverifikasi
+     *  (tidak paused + currentTime maju dalam 3 dtk) -> bila
+     *  ditolak / tidak main -> 'play-denied' / 'not-playing'.
+     *  (B) MONITOR tiap 1 dtk ke blob-debug
+     *  ('record-monitor: t=.. ct=.. paused=.. ended=..
+     *  attached=.. chunks=.. bytes=..'); pause yang belum ended ->
+     *  play() lagi ('re-play'); elemen SPA ter-detach ->
+     *  'spa-detached' (gagal jujur, jangan simpan pendek diam-diam).
+     *  (C) GATE di onstop: verdict 'ok' hanya bila bytes>0 DAN
+     *  (ended ATAU currentTime>=durasi-1 ATAU wall>=durasi);
+     *  'empty' (0 byte) / 'short' -> onBlobRecordDone saja, TANPA
+     *  onBlobData (tidak ada file yang boleh jadi "done").
+     *  window.__senzBlobDone di-reset false saat rekam mulai
+     *  (unduhan sukses sebelumnya di sesi yang sama bisa
+     *  meninggalkan flag true dan membuang rekaman);
+     *  perlindungan ganda-simpan tetap jalan (yang selesai
+     *  duluan menang). __NAME_JSON__ diganti
+     *  org.json.JSONObject.quote(fileName). */
     private fun directRecordJs(fileName: String): String {
         val nameJson = org.json.JSONObject.quote(fileName)
         return """(function(){
+            function diag(s){try{window.SenzBlob.onBlobDiag(s);}catch(e){}}
             function findAudio(root){
                 if(!root)return null;
                 if(root.tagName==='AUDIO')return root;
@@ -3032,40 +3079,121 @@ abstract class BrowserActivity : AppCompatActivity() {
                 if(root.shadowRoot)return findAudio(root.shadowRoot);
                 return null;
             }
-            var au=findAudio(document);
-            if(!au){return 'no-audio';}
-            var dur=0;
-            try{dur=au.duration||0;}catch(e){}
-            if(!dur||!isFinite(dur))dur=60;
-            try{window.SenzBlob.onBlobDiag('fallback: rekam langsung durasi='+Math.ceil(dur)+' dtk');}catch(e){}
-            try{window.SenzBlob.onBlobFallbackStart(String(Math.ceil(dur)));}catch(e){}
-            window.__senzBlobDone=false;
-            var stream=null;
-            try{stream=au.captureStream?au.captureStream():(au.mozCaptureStream?au.mozCaptureStream():null);}catch(e){}
-            if(!stream){try{window.SenzBlob.onBlobDiag('fallback: rekam langsung — captureStream tidak tersedia');}catch(e){}return 'no-stream';}
-            var mime='';
-            try{if(window.MediaRecorder&&MediaRecorder.isTypeSupported('audio/webm;codecs=opus'))mime='audio/webm;codecs=opus';}catch(e){}
-            var rec=null;
-            try{rec=mime?new MediaRecorder(stream,{mimeType:mime}):new MediaRecorder(stream);}catch(e){return 'no-recorder';}
-            var chunks=[];var stopped=false;var dead=false;
-            rec.ondataavailable=function(e){if(e.data&&e.data.size)chunks.push(e.data);};
-            rec.onstop=function(){if(dead)return;try{
-                var b=new Blob(chunks,{type:rec.mimeType||'audio/webm'});
-                var r=new FileReader();
-                r.onloadend=function(){if(dead)return;if(window.__senzBlobDone)return;window.__senzBlobDone=true;var s=r.result||'';var i=s.indexOf(',');window.SenzBlob.onBlobData(i>=0?s.substring(i+1):s,__NAME_JSON__);};
-                r.onerror=function(){try{window.SenzBlob.onBlobError('fallback: reader-error (langsung)');}catch(e){}};
-                r.readAsDataURL(b);}catch(e){try{window.SenzBlob.onBlobError('fallback: '+(e.message||e)+' (langsung)');}catch(e2){}};};
-            rec.onerror=function(){if(dead)return;dead=true;try{window.SenzBlob.onBlobError('fallback: recorder-error (langsung)');}catch(e){}};
-            var maxMs=Math.min(300000,(dur+15)*1000);
-            var stopOnce=function(){if(stopped)return;stopped=true;try{rec.stop();}catch(e){}try{au.pause();}catch(e){}};
-            try{au.onended=function(){stopOnce();};}catch(e){}
-            setTimeout(stopOnce,maxMs);
-            try{au.currentTime=0;}catch(e){}
-            var p=null;
-            try{p=au.play();}catch(e){dead=true;return 'play-denied';}
-            if(p&&p.catch){p.catch(function(e){if(dead)return;dead=true;try{rec.stop();}catch(e2){}});}
-            try{rec.start(1000);}catch(e){return 'rec-start-fail';}
-            return 'started';
+            var spa=findAudio(document);
+            if(!spa){return 'no-audio';}
+            var spaSrc='';
+            try{spaSrc=spa.currentSrc||spa.src||'';}catch(e){}
+            var spaDur=0;
+            try{spaDur=spa.duration||0;}catch(e){}
+            var spaHost='';
+            try{spaHost=spaSrc.split('/')[2]||'';}catch(e){}
+            diag('record: elemen SPA host='+spaHost+' dur='+(isFinite(spaDur)?spaDur.toFixed(1):'NaN'));
+            if(!spaSrc){return 'no-src';}
+            var au=null;var stable=false;var rec=null;var dead=false;var stopped=false;var started=false;
+            var dur=0;var chunks=[];var chunkBytes=0;var startWall=0;var monTimer=null;var recStarted=false;
+            function failAsync(reason){
+                if(dead)return;dead=true;
+                if(monTimer){clearInterval(monTimer);monTimer=null;}
+                try{if(rec&&rec.state!=='inactive'){rec.stop();}}catch(e){}
+                try{window.SenzBlob.onBlobRecordFail(reason);}catch(e){}
+            }
+            function startRec(d){
+                if(dead||started)return;started=true;dur=d;recStarted=true;
+                diag('record: metadata ok dur='+d.toFixed(1)+' stable='+(stable?'ya':'tidak'));
+                window.__senzBlobDone=false;
+                var stream=null;
+                try{stream=au.captureStream?au.captureStream():(au.mozCaptureStream?au.mozCaptureStream():null);}catch(e){}
+                if(!stream){failAsync('no-stream');return;}
+                var mime='';
+                try{if(window.MediaRecorder&&MediaRecorder.isTypeSupported('audio/webm;codecs=opus'))mime='audio/webm;codecs=opus';}catch(e){}
+                try{rec=mime?new MediaRecorder(stream,{mimeType:mime}):new MediaRecorder(stream);}catch(e){failAsync('no-recorder');return;}
+                startWall=Date.now();
+                rec.ondataavailable=function(e){if(e.data&&e.data.size){chunks.push(e.data);chunkBytes+=e.data.size;}};
+                rec.onerror=function(){failAsync('recorder-error');};
+                rec.onstop=function(){
+                    if(dead)return;
+                    try{
+                        var ct=0;try{ct=au.currentTime||0;}catch(e){}
+                        var ended=false;try{ended=!!au.ended;}catch(e){}
+                        var b=new Blob(chunks,{type:rec.mimeType||'audio/webm'});
+                        var ok=b.size>0&&(ended||ct>=dur-1||(Date.now()-startWall)/1000>=dur);
+                        var verdict=ok?'ok':(b.size===0?'empty':'short');
+                        try{window.SenzBlob.onBlobRecordDone(String(Math.round(ct*10)/10),String(Math.round(dur*10)/10),String(chunks.length),String(b.size),verdict);}catch(e){}
+                        if(!ok){return;}
+                        var r=new FileReader();
+                        r.onloadend=function(){if(dead)return;if(window.__senzBlobDone)return;window.__senzBlobDone=true;var s=r.result||'';var i=s.indexOf(',');window.SenzBlob.onBlobData(i>=0?s.substring(i+1):s,__NAME_JSON__);};
+                        r.onerror=function(){try{window.SenzBlob.onBlobError('fallback: reader-error (langsung)');}catch(e){}};
+                        r.readAsDataURL(b);
+                    }catch(e){try{window.SenzBlob.onBlobError('fallback: '+(e.message||e)+' (langsung)');}catch(e2){}}
+                };
+                var maxMs=Math.min(300000,(dur+15)*1000);
+                var stopOnce=function(){if(stopped)return;stopped=true;try{rec.stop();}catch(e){}try{au.pause();}catch(e){}};
+                try{au.onended=function(){stopOnce();};}catch(e){}
+                setTimeout(stopOnce,maxMs);
+                monTimer=setInterval(function(){
+                    if(dead||stopped){if(monTimer){clearInterval(monTimer);monTimer=null;}return;}
+                    var ct=0,paused=true,ended=false,attached=false;
+                    try{ct=au.currentTime||0;}catch(e){}
+                    try{paused=!!au.paused;}catch(e){}
+                    try{ended=!!au.ended;}catch(e){}
+                    try{attached=document.contains(au);}catch(e){}
+                    diag('record-monitor: t='+Math.round((Date.now()-startWall)/1000)+'s ct='+ct.toFixed(1)+' paused='+paused+' ended='+ended+' attached='+attached+' chunks='+chunks.length+' bytes='+chunkBytes);
+                    if(!attached&&!stable){failAsync('spa-detached');return;}
+                    if(paused&&!ended){try{var pp=au.play();if(pp&&pp.catch){pp.catch(function(){});}}catch(e){}diag('record: re-play ct='+ct.toFixed(1));}
+                    if(ended){stopOnce();}
+                },1000);
+                try{au.currentTime=0;}catch(e){}
+                var p=null;
+                try{p=au.play();}catch(e){failAsync('play-denied');return;}
+                if(p&&p.catch){p.catch(function(e){failAsync('play-denied');});}
+                setTimeout(function(){
+                    if(dead||stopped)return;
+                    var ct=0,paused=true,ended=false;
+                    try{ct=au.currentTime||0;}catch(e){}
+                    try{paused=!!au.paused;}catch(e){}
+                    try{ended=!!au.ended;}catch(e){}
+                    if(ended)return;
+                    if(paused||ct<=0){failAsync('not-playing');return;}
+                    diag('record: main terverifikasi ct='+ct.toFixed(1));
+                },3000);
+                try{rec.start(1000);}catch(e){failAsync('rec-start-fail');return;}
+                diag('fallback: rekam langsung durasi='+Math.ceil(dur)+' dtk');
+                try{window.SenzBlob.onBlobFallbackStart(String(Math.ceil(dur)));}catch(e){}
+            }
+            var waited=0;
+            function metaPoll(){
+                if(dead||started)return;
+                var d=0,rs=0;
+                try{d=au.duration||0;}catch(e){}
+                try{rs=au.readyState||0;}catch(e){}
+                if(isFinite(d)&&d>0&&rs>=1){startRec(d);return;}
+                waited+=250;
+                if(waited>=10000){failAsync('metadata-timeout');return;}
+                setTimeout(metaPoll,250);
+            }
+            try{
+                var old=document.getElementById('senz-stable-audio');
+                if(old){try{old.pause();}catch(e){}try{old.remove();}catch(e){}}
+                var el=document.createElement('audio');
+                el.id='senz-stable-audio';
+                el.style.cssText='display:none;position:absolute;left:-9999px;top:0;width:1px;height:1px;';
+                el.preload='auto';
+                el.src=spaSrc;
+                el.addEventListener('error',function(){
+                    if(dead||recStarted||!stable)return;
+                    diag('fallback: stable-element error, pakai elemen SPA');
+                    try{el.remove();}catch(e){}
+                    au=spa;stable=false;waited=0;metaPoll();
+                });
+                if(document.body){document.body.appendChild(el);}else{document.documentElement.appendChild(el);}
+                au=el;stable=true;
+                diag('record: stable-element dibuat');
+            }catch(e){
+                diag('fallback: rekam dari elemen SPA (stable-element gagal: '+(e.message||e)+')');
+                au=spa;stable=false;
+            }
+            metaPoll();
+            return 'pending';
         })()""".replace("__NAME_JSON__", nameJson)
     }
 
@@ -3076,16 +3204,28 @@ abstract class BrowserActivity : AppCompatActivity() {
         ttsRecordManual = manual
         ttsRecordFileName = fileName
         ttsRecordPendingFile = fileName
+        // v0.1.84: reset verdict gate tiap rekam — verdict basi
+        // tidak boleh memberkati file rekam berikutnya.
+        ttsRecordGateVerdict = ""
+        ttsRecordGateDetail = ""
+        ttsRecordGateCapturedSec = 0.0
+        ttsRecordGateDurationSec = 0.0
+        ttsRecordGateChunks = 0
+        ttsRecordGateBytes = 0
         if (manual) writeTtsRecordStatus("running", "merekam ulang audio dari player", fileName)
         webView.evaluateJavascript(directRecordJs(fileName)) { raw ->
             val r = raw?.trim()?.removeSurrounding("\"") ?: ""
-            if (r == "started") {
-                // onBlobData / onBlobFallbackStart yang meneruskan
-                // (simpan + done). Tidak ada yang dilakukan di sini.
+            if (r == "started" || r == "pending") {
+                // v0.1.84: 'pending' = rantai async (metadata ->
+                // play -> rekam) berjalan; hasil dilaporkan via
+                // bridge onBlobFallbackStart (mulai) /
+                // onBlobRecordFail (gagal) / onBlobRecordDone
+                // (verdict gate). Tidak ada yang dilakukan di sini.
                 return@evaluateJavascript
             }
             val reason = when (r) {
                 "no-audio" -> "tidak ada <audio> di halaman"
+                "no-src" -> "elemen audio tanpa src"
                 "no-stream" -> "captureStream tidak tersedia"
                 "no-recorder" -> "MediaRecorder tidak bisa dibuat"
                 "play-denied" -> "play audio ditolak halaman"
@@ -5156,6 +5296,68 @@ abstract class BrowserActivity : AppCompatActivity() {
             writeTtsStatus("running", "mengunduh via rekam ulang audio (fallback, ~${dur} dtk)")
         }
 
+        /** v0.1.84: rekam langsung gagal (async — metadata / play /
+         *  recorder / monitor, dari failAsync di directRecordJs).
+         *  manual=true: status rekam failed; manual=false: failTts
+         *  (failTts membersihkan pendingTtsScript sehingga
+         *  waitTtsFile yang sudah terjadwal langsung kembali). */
+        @android.webkit.JavascriptInterface
+        fun onBlobRecordFail(reason: String) {
+            if (!isBridgeOriginAllowed()) return
+            val msg = when (reason) {
+                "metadata-timeout" -> "metadata audio tidak ke-load (10 dtk)"
+                "play-denied" -> "play audio ditolak halaman"
+                "not-playing" -> "audio tidak kunjung main (play tidak jalan)"
+                "no-stream" -> "captureStream tidak tersedia"
+                "no-recorder" -> "MediaRecorder tidak bisa dibuat"
+                "rec-start-fail" -> "rec.start gagal"
+                "recorder-error" -> "MediaRecorder error saat rekam"
+                "spa-detached" -> "elemen audio SPA diganti saat rekam"
+                else -> "rekam langsung gagal ($reason)"
+            }
+            logBlobDiag("record: gagal — $msg")
+            if (ttsRecordManual) {
+                ttsRecordManual = false
+                ttsFallbackDeadlineMs = 0
+                writeTtsRecordStatus("failed", msg)
+            } else if (pendingTtsScript != null) {
+                failTts("fallback: $msg — file VO tidak tersimpan")
+            }
+        }
+
+        /** v0.1.84: verdict gate rekam langsung (async, dari onstop
+         *  JS — dipanggil SEBELUM onBlobData, jadi verdict selalu
+         *  tersedia saat file ditulis). 'ok' -> file boleh "done";
+         *  'empty'/'short' -> gagal jujur SEKARANG (JS tidak
+         *  mengirim onBlobData, jadi tidak ada file; fail di sini
+         *  supaya status tidak menggantung "running"). Detail
+         *  selalu mencantumkan detik tertangkap vs durasi audio. */
+        @android.webkit.JavascriptInterface
+        fun onBlobRecordDone(capturedSec: String, durationSec: String, chunks: String, bytes: String, verdict: String) {
+            if (!isBridgeOriginAllowed()) return
+            ttsRecordGateCapturedSec = capturedSec.toDoubleOrNull() ?: 0.0
+            ttsRecordGateDurationSec = durationSec.toDoubleOrNull() ?: 0.0
+            ttsRecordGateChunks = chunks.toIntOrNull() ?: 0
+            ttsRecordGateBytes = bytes.toLongOrNull() ?: 0
+            ttsRecordGateVerdict = verdict
+            val cap = "%.1f".format(java.util.Locale.US, ttsRecordGateCapturedSec)
+            val dur = "%.1f".format(java.util.Locale.US, ttsRecordGateDurationSec)
+            ttsRecordGateDetail = when (verdict) {
+                "ok" -> "tertangkap $cap dtk dari $dur dtk (${ttsRecordGateChunks} chunk, ${ttsRecordGateBytes} byte)"
+                "empty" -> "rekaman kosong (0 byte)"
+                else -> "rekaman tidak lengkap: tertangkap $cap dtk dari $dur dtk (currentTime terakhir $cap dtk, ${ttsRecordGateChunks} chunk)"
+            }
+            logBlobDiag("record-gate: $verdict — ${ttsRecordGateDetail}")
+            if (verdict == "ok") return
+            if (ttsRecordManual) {
+                ttsRecordManual = false
+                ttsFallbackDeadlineMs = 0
+                writeTtsRecordStatus("failed", ttsRecordGateDetail)
+            } else if (pendingTtsScript != null) {
+                failTts("fallback: ${ttsRecordGateDetail} — file VO tidak tersimpan")
+            }
+        }
+
         @android.webkit.JavascriptInterface
         fun onBlobError(reason: String) {
             if (!isBridgeOriginAllowed()) return
@@ -5165,6 +5367,14 @@ abstract class BrowserActivity : AppCompatActivity() {
             val diag = "iframe ditanya: $blobDlIframes, menjawab core: req: $blobDlCoreReqs, fetch-try: ${if (blobDlFetchTried) "ya" else "tidak"}${if (blobDlFetchOk) " (fetch-ok)" else ""}"
             lastBlobError = "$reason ($diag)"
             logBlobDiag("GAGAL: $reason ($diag)")
+            // v0.1.84: bila error datang dari rekam manual (mis.
+            // FileReader gagal sesudah gate ok), jangan biarkan
+            // status menggantung "running" — gagal jujur.
+            if (ttsRecordManual) {
+                ttsRecordManual = false
+                ttsFallbackDeadlineMs = 0
+                writeTtsRecordStatus("failed", reason)
+            }
             runOnUiThread {
                 Toast.makeText(
                     this@BrowserActivity,
@@ -5555,10 +5765,20 @@ abstract class BrowserActivity : AppCompatActivity() {
                 // dimasuki startDirectRecord(manual=true), jadi
                 // simpanan apa pun di jendela ini ADALAH rekamannya
                 // (uniqueFile boleh menambah suffix pada nama).
+                // v0.1.84 (C): "done" HANYA bila gate lolos
+                // (verdict "ok" dari onBlobRecordDone, selalu
+                // diterima sebelum onBlobData). Verdict gagal /
+                // tidak diterima -> "failed" (jangan pernah "done"
+                // palsu seperti file 0-byte v0.1.83).
                 if (ttsRecordManual) {
                     ttsRecordManual = false
                     ttsFallbackDeadlineMs = 0
-                    writeTtsRecordStatus("done", "rekaman tersimpan: ${dest.name}", dest.name, dest.length())
+                    if (ttsRecordGateVerdict == "ok") {
+                        writeTtsRecordStatus("done", "rekaman tersimpan: ${dest.name} (${ttsRecordGateDetail})", dest.name, dest.length())
+                    } else {
+                        val detail = if (ttsRecordGateVerdict.isNotEmpty()) ttsRecordGateDetail else "rekaman tidak lengkap (verdict tidak diterima)"
+                        writeTtsRecordStatus("failed", detail, dest.name, dest.length())
+                    }
                 }
                 runOnUiThread {
                     Toast.makeText(

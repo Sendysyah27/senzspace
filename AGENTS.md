@@ -1403,3 +1403,45 @@ Jangan cuma diagnosa dari kodenya.
   UNDUH-WEB http(s), downloadDataUrl, langkah TTS Style/Speaker/
   Run, runTtsCreateDialog, watchdog, shed_refused_count (pindah
   v0.1.84), cacat sidebar-toggle attach (/new — pindah v0.1.84).
+- API 84 (24 Nov, v0.1.84): TTS — REKAM LANGSUNG UTUH (STABLE
+  ELEMENT + TUNGGU METADATA + GATE).
+  (a) Latar: rekam langsung v0.1.83 terbukti jalan tapi tidak utuh —
+  (F1) in-run: rekam mulai 1 dtk sesudah generate, durasi kebaca
+  1 dtk (metadata belum ke-load) -> file 0-byte tapi status "done"
+  palsu; (F2) manual /tts-record: durasi kebaca 69 dtk, file WebM
+  166.457 B suara asli, tapi cuma 10,3 dtk dari 68 dtk (elemen
+  berhenti memberi frame ~10 dtk masuk rekam; kandidat: SPA
+  mengganti elemen <audio> saat re-render, atau elemen ke-pause).
+  (b) directRecordJs ditulis ulang, ASINKRON (balik 'pending';
+  'no-audio'/'no-src' tetap sinkron): findAudio rekursif
+  menemukan elemen SPA -> dibuat elemen <audio> BARU di main frame
+  (document.body, hidden, DI LUAR tree React SPA) dengan src =
+  blob URL yang sama; tunggu metadata elemen itu (readyState>=1
+  + durasi finite >0, polling 250 ms, timeout 10 dtk ->
+  'metadata-timeout'); play() diverifikasi (tidak paused +
+  currentTime maju dalam 3 dtk -> 'play-denied'/'not-playing');
+  captureStream dari elemen itu -> MediaRecorder. Bila
+  stable-element gagal load (error event) -> fallback ke elemen
+  SPA dengan monitor yang sama. Monitor tiap 1 dtk ke blob-debug
+  ('record-monitor: t=.. ct=.. paused=.. ended=.. attached=..
+  chunks=.. bytes=..'); pause yang belum ended -> play() lagi
+  ('re-play'); elemen SPA ter-detach -> 'spa-detached' (gagal
+  jujur). Hasil dilaporkan via bridge baru onBlobRecordFail
+  (async, alasan) + onBlobRecordDone (verdict gate saat stop).
+  (c) Completion gate (in-run + manual): "done" HANYA bila bytes>0
+  DAN (ended ATAU currentTime>=durasi-1 ATAU wall>=durasi);
+  'empty'/'short' -> onBlobRecordDone saja, TANPA onBlobData
+  (tidak ada file yang boleh jadi "done"); detail status selalu
+  mencantumkan detik tertangkap vs durasi audio. Gate disimpan
+  di field ttsRecordGate* (di-reset tiap startDirectRecord);
+  saveDownloadedBytes menulis "done" manual hanya bila verdict
+  "ok"; waitTtsFile menulis "done" in-run hanya bila file .webm
+  (rekam; unduhan asli .wav) lolos gate + tidak 0-byte.
+  onBlobError pada rekam manual menulis "failed" supaya status
+  tidak menggantung "running".
+  Tanpa ubah perilaku: WatchdogWorker, diagnose anti-/docs
+  v0.1.83, suntikan core/trap v0.1.82, eksekutor PROMPT (v0.1.80),
+  eksekutor STUDIO, jalur UNDUH-WEB http(s), downloadDataUrl,
+  langkah TTS Style/Speaker/Run, runTtsCreateDialog, watchdog,
+  shed_refused_count (pindah), cacat sidebar-toggle attach (/new
+  — pindah).
