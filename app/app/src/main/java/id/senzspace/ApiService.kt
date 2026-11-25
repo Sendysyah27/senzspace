@@ -91,14 +91,19 @@ class ApiService : Service() {
         // sebelum startForeground(): bila app di background, panggilan
         // itu DITOLAK sistem dan — bila service di-start lewat
         // startForegroundService — ServiceRecord menunggu sampai
-        // dibunuh timeout. Ambang FOREGROUND (100) / VISIBLE (200)
-        // saja: TOP_SLEEPING (150, layar mati) dan FOREGROUND_SERVICE
-        // (125, service lain yang sudah foreground) TIDAK dihitung —
-        // keduanya bukan activity yang terlihat. Probe baca proses app
-        // sendiri lewat ActivityManager — lintas proses, tanpa static
-        // antar-proses (UX 31: static hidup per-proses). Bila probe
-        // gagal, kembalikan true supaya perilaku lama (coba
-        // startForeground + try/catch) yang berlaku.
+        // dibunuh timeout.
+        // v0.1.86 (§1 P0-A): nilai importance yang dihitung =
+        // FOREGROUND (100, activity di depan), FOREGROUND_SERVICE
+        // (125, service lain sudah foreground — proses ini bukan
+        // background yang harus dilewati promosinya),
+        // TOP_SLEEPING (150, activity di atas tapi layar mati —
+        // app tetap "top", bukan background), VISIBLE (200, activity
+        // terlihat). TIDAK dihitung: PERCEPTIBLE (130), SERVICE
+        // (300), CACHED (400+). Probe baca proses app sendiri lewat
+        // ActivityManager — lintas proses, tanpa static antar-proses
+        // (UX 31: static hidup per-proses). Bila probe gagal,
+        // kembalikan true supaya perilaku lama (coba startForeground
+        // + try/catch) yang berlaku.
         fun isAppVisible(ctx: Context): Boolean {
             return try {
                 val am = ctx.getSystemService(Context.ACTIVITY_SERVICE)
@@ -108,6 +113,10 @@ class ApiService : Service() {
                     it.processName.startsWith(ctx.packageName) &&
                         (it.importance ==
                             ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND ||
+                            it.importance ==
+                            ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND_SERVICE ||
+                            it.importance ==
+                            ActivityManager.RunningAppProcessInfo.IMPORTANCE_TOP_SLEEPING ||
                             it.importance ==
                             ActivityManager.RunningAppProcessInfo.IMPORTANCE_VISIBLE)
                 }

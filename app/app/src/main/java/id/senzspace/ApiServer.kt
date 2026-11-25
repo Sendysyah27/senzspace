@@ -282,7 +282,10 @@ class ApiServer(private val ctx: Context) {
 
     private fun handle(client: Socket) {
         // v0.1.85 (audit CODE-04): tenggat kumulatif 30 dtk per
-        // permintaan (header + body) — soTimeout 10 dtk hanya per-baca.
+        // permintaan — soTimeout 10 dtk hanya per-baca.
+        // v0.1.86 (§5): tenggat 30 dtk ini HANYA untuk fase header
+        // (request line + header); fase body memakai bodyDeadlineMs
+        // (600 dtk /upload, 60 dtk route lain — lihat di bawah).
         val deadlineMs = System.currentTimeMillis() + 30_000L
         try {
             client.soTimeout = 10_000
@@ -361,8 +364,17 @@ class ApiServer(private val ctx: Context) {
             // ByteArray+String di bawah — body di-streaming langsung
             // ke file tujuan (lihat handleUpload). Cabang ini harus
             // di sini, SEBELUM alokasi ByteArray.
+            // v0.1.86 (§5): tenggat 30 dtk HANYA untuk fase header
+            // (request line + header di atas). Sesudah header lengkap,
+            // fase body dapat tenggat longgar: 600 dtk untuk /upload
+            // (100 MB di ~0,4 MB/s ≈ 250 dtk + margin), 60 dtk untuk
+            // route lain (JSON ≤ 1 MB). Per-read idle timeout 10 dtk
+            // (soTimeout) tetap berlaku di kedua fase — klien yang
+            // diam > 10 dtk tetap diputus, jadi stall tetap terbatas.
+            val bodyDeadlineMs = System.currentTimeMillis() +
+                if (method == "POST" && path == "/upload") 600_000L else 60_000L
             if (method == "POST" && path == "/upload") {
-                handleUpload(client, query, input, contentLength, deadlineMs)
+                handleUpload(client, query, input, contentLength, bodyDeadlineMs)
                 return
             }
             val bodyBytes = try {
@@ -374,7 +386,7 @@ class ApiServer(private val ctx: Context) {
             }
             var read = 0
             while (read < contentLength) {
-                if (System.currentTimeMillis() > deadlineMs) return
+                if (System.currentTimeMillis() > bodyDeadlineMs) return
                 val n = input.read(bodyBytes, read, contentLength - read)
                 if (n == -1) break
                 read += n
@@ -456,13 +468,15 @@ class ApiServer(private val ctx: Context) {
      *  Batas 100 MB ditegakkan SELAMA streaming (batal + 413, 0 byte
      *  tersisa bila batal). Nama + folder divalidasi SEBELUM satu
      *  byte body dibaca. Body pendek (EOF sebelum content-length)
-     *  = 400 + file parsial dihapus. Tenggat 30 dtk berlaku per chunk. */
+     *  = 400 + file parsial dihapus. Tenggat body longgar v0.1.86
+     *  (§5): 600 dtk untuk /upload — per-read idle timeout 10 dtk
+     *  (soTimeout) tetap memutus klien yang diam. */
     private fun handleUpload(
         client: Socket,
         query: Map<String, String>,
         input: InputStream,
         contentLength: Int,
-        deadlineMs: Long
+        bodyDeadlineMs: Long
     ) {
         val folder = query["folder"] ?: "_inbox"
         val name = query["name"] ?: ""
@@ -496,7 +510,7 @@ class ApiServer(private val ctx: Context) {
         try {
             val buf = ByteArray(64 * 1024)
             while (written < contentLength) {
-                if (System.currentTimeMillis() > deadlineMs) return
+                if (System.currentTimeMillis() > bodyDeadlineMs) return
                 val want = minOf(buf.size.toLong(), contentLength - written).toInt()
                 val n = input.read(buf, 0, want)
                 if (n == -1) break
@@ -1821,6 +1835,10 @@ class ApiServer(private val ctx: Context) {
         // v0.1.85 (audit F-API-02): shed yang DITOLAK mentah-mentah
         // (target foreground / mati) — bukan cuma tidak mendarat.
         obj.put("shed_refused_count", guardState?.optInt("shed_refused_count", 0) ?: 0)
+        // v0.1.86 (§3 P0-C): antrean + hitung revive otomatis Space mati.
+        obj.put("revive_queue", guardState?.optJSONArray("revive_queue") ?: JSONArray())
+        obj.put("revive_count", guardState?.optInt("revive_count", 0) ?: 0)
+        obj.put("last_revive_ms", guardState?.optLong("last_revive_ms", 0L) ?: 0L)
     }
 
     /** v0.1.78 — state guard (sama dengan field /status di atas)

@@ -190,6 +190,14 @@ class WatchdogGuardService : Service() {
     // dari proses utama). Dipulihkan dari guard-state.json.
     private var shedRefusedCount = 0
 
+    // v0.1.86 (§3 P0-C) — revive otomatis Space mati: antrean slot
+    // yang terdeteksi hilang (in-memory; dibangun ulang tiap tick
+    // dari perbandingan registry vs proses hidup) + penghitung
+    // revive (dipulihkan dari guard-state.json, seperti shed).
+    private val reviveQueue = mutableSetOf<Int>()
+    private var reviveCount = 0
+    private var lastReviveMs = 0L
+
     private val checkRunnable = object : Runnable {
         override fun run() {
             if (!ApiToken.isEnabled(this@WatchdogGuardService)) {
@@ -209,6 +217,23 @@ class WatchdogGuardService : Service() {
                 memoryGuardTick()
             } catch (e: Exception) {
                 Log.w(TAG, "tick: MemoryGuard gagal: ${e.message}")
+            }
+            // v0.1.86 (§1 P0-A): retry promosi foreground berkala —
+            // HANYA bila probe visible baru saja benar di tick ini
+            // (bukan buta). Tanpa ini, promosi hanya terjadi di
+            // onResume (AK-01/AK-02).
+            try {
+                if (ApiService.isAppVisible(this@WatchdogGuardService)) {
+                    GuardPromoter.promoteAll(this@WatchdogGuardService)
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "tick: promoteAll gagal: ${e.message}")
+            }
+            // v0.1.86 (§3 P0-C): revive Space yang mati.
+            try {
+                reviveDeadSpaces()
+            } catch (e: Exception) {
+                Log.w(TAG, "tick: revive gagal: ${e.message}")
             }
             try {
                 writeGuardState()
@@ -406,6 +431,107 @@ class WatchdogGuardService : Service() {
         )
     }
 
+    /** v0.1.86 (§3 P0-C) — revive otomatis Space yang mati.
+     *  Tiap tick: bandingkan registry (slot yang "seharusnya hidup"
+     *  = terdaftar DAN pernah dibuka — lihat everOpened) dengan
+     *  proses yang sedang hidup. Slot yang hilang masuk antrean
+     *  revive. Revive dari antrean HANYA bila DUA syarat terpenuhi:
+     *  (a) API hidup (tanpa API tidak ada jalur /open internal);
+     *  (b) tidak ada app asing di foreground — top package adalah
+     *  SenzSpace sendiri, atau tidak ada app foreground sama sekali
+     *  (layar mati / lock screen). Bila app asing foreground
+     *  (mis. TikTok com.ss.android.ugc.trill) -> revive TETAP di
+     *  antrean, coba lagi tick berikut — JANGAN merebut layar
+     *  pengguna yang sedang memakai app lain. Revive maks 2 slot
+     *  per tick supaya RAM tidak melonjak sekaligus sesudah
+     *  kematian massal; revive ditahan juga saat RAM kritis
+     *  (MemoryGuard akan shed lagi — hindari churn revive/shed).
+     *  TIDAK ada state "Space dimatikan" di registry (SpaceRegistry
+     *  hanya slot/nama/warna/url; Space yang DIHAPUS user tidak ada
+     *  di registry) — jadi revive tidak pernah membangkitkan Space
+     *  yang sengaja dihapus. Mekanisme revive = jalur /open internal
+     *  yang sama dengan POST /open (SpaceLauncher.open +
+     *  GuardPromoter.promoteAll); overlay permission membebaskan
+     *  launch dari BAL (v0.1.42). */
+    private fun reviveDeadSpaces() {
+        if (!WatchdogWorker.isApiAlive(this)) {
+            Log.d(TAG, "revive: API tidak menjawab — antrean ditahan")
+            return
+        }
+        val am = getSystemService(ACTIVITY_SERVICE) as ActivityManager
+        val memInfo = ActivityManager.MemoryInfo()
+        try {
+            am.getMemoryInfo(memInfo)
+        } catch (_: Exception) {
+        }
+        if (memInfo.lowMemory || memInfo.availMem / (1024 * 1024) < SHED_AVAIL_MB) {
+            Log.d(TAG, "revive: RAM kritis — antrean ditahan")
+            return
+        }
+        val procs = try {
+            am.runningAppProcesses ?: emptyList()
+        } catch (_: Exception) {
+            emptyList()
+        }
+        val prefix = "$packageName:"
+        val liveSuffixes = procs.mapNotNull { it.processName }
+            .filter { it.startsWith(prefix) }
+            .map { it.substringAfter(":") }
+            .toSet()
+        val foreignForeground = procs.any {
+            it.importance ==
+                ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND &&
+                !it.processName.startsWith(packageName)
+        }
+        for (entry in SpaceRegistry.load(this)) {
+            val suffix = SpaceRegistry.suffixForSlot(entry.slot)
+            if (suffix in liveSuffixes) {
+                reviveQueue.remove(entry.slot)
+                continue
+            }
+            if (!everOpened(suffix)) continue
+            reviveQueue.add(entry.slot)
+        }
+        if (reviveQueue.isEmpty()) return
+        if (foreignForeground) {
+            Log.i(
+                TAG,
+                "revive: app asing di foreground — ${reviveQueue.size} " +
+                    "slot tetap antre ($reviveQueue)"
+            )
+            return
+        }
+        for (slot in reviveQueue.sorted().take(2)) {
+            val entry = SpaceRegistry.load(this)
+                .firstOrNull { it.slot == slot } ?: continue
+            try {
+                SpaceLauncher.open(this, entry)
+                GuardPromoter.promoteAll(this)
+                reviveQueue.remove(slot)
+                reviveCount++
+                lastReviveMs = System.currentTimeMillis()
+                Log.i(
+                    TAG,
+                    "revive: slot=$slot (${entry.name}) dibuka ulang " +
+                        "via /open internal"
+                )
+            } catch (e: Exception) {
+                Log.w(TAG, "revive: slot=$slot gagal: ${e.message}")
+            }
+        }
+    }
+
+    /** Proxy "pernah dibuka": file snapshot api-page-<suffix>.json
+     *  ada (ditulis live capture saat Space dibuka). Space yang
+     *  belum pernah dibuka tidak punya file ini. */
+    private fun everOpened(suffix: String): Boolean {
+        return try {
+            File(filesDir, "api-page-$suffix.json").isFile
+        } catch (_: Exception) {
+            false
+        }
+    }
+
     /** v0.1.79 — konsumsi marker shed (satu-satunya tempat counter
      *  berubah selain kenaikan langsung memoryGuard):
      *  (1) shed-pending-<slot>-<epochMs>.json — shed yang dikirim
@@ -570,6 +696,12 @@ class WatchdogGuardService : Service() {
                 put("shed_confirmed_count", shedConfirmedCount)
                 // v0.1.85 (audit F-API-02): shed yang ditolak.
                 put("shed_refused_count", shedRefusedCount)
+                // v0.1.86 (§3 P0-C): antrean + hitung revive otomatis.
+                val reviveArr = org.json.JSONArray()
+                for (slot in reviveQueue.sorted()) reviveArr.put(slot)
+                put("revive_queue", reviveArr)
+                put("revive_count", reviveCount)
+                put("last_revive_ms", lastReviveMs)
                 val confirmed = JSONObject()
                 for ((suffix, ms) in lastConfirmedShedMsBySuffix) {
                     confirmed.put(suffix, ms)
@@ -627,6 +759,10 @@ class WatchdogGuardService : Service() {
                 shedConfirmedCount = obj.optInt("shed_confirmed_count", 0)
                 // v0.1.85 (audit F-API-02): pulihkan penolakan.
                 shedRefusedCount = obj.optInt("shed_refused_count", 0)
+                // v0.1.86 (§3 P0-C): pulihkan hitung revive (antrean
+                // dibangun ulang tiap tick — tidak perlu dipulihkan).
+                reviveCount = obj.optInt("revive_count", 0)
+                lastReviveMs = obj.optLong("last_revive_ms", 0L)
                 val confirmed = obj.optJSONObject("last_confirmed_shed_ms")
                 if (confirmed != null) {
                     val keys = confirmed.keys()

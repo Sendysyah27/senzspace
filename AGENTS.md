@@ -1531,3 +1531,62 @@ Jangan cuma diagnosa dari kodenya.
   sink download CODE-01), semua counter lama (hanya TAMBAH
   shed_refused_count), sertifikat debug, build debug (bukan
   release).
+- API 86 (25 Nov, v0.1.86): ANTI-KILL P0 + 4 ITEM ANTREAN (audit
+  RedMuse anti-kill 25 Nov + live test v0.1.85).
+  (a) P0-A retry promosi foreground berkala (AK-01): tick
+  WatchdogGuardService 60 dtk memanggil GuardPromoter.promoteAll
+  HANYA bila probe isAppVisible baru saja benar di tick itu;
+  isAppVisible kini menghitung FOREGROUND (100) + FOREGROUND_SERVICE
+  (125) + TOP_SLEEPING (150) + VISIBLE (200) — PERCEPTIBLE (130) /
+  SERVICE (300) / CACHED (400+) tidak dihitung.
+  (b) P0-B promoteAll idempotent (AK-02): clear flag
+  guard_needs_promotion HANYA bila probe visible benar saat
+  promoteAll dipanggil (bila dilewati, flag TETAP — tick/onResume
+  berikut mencoba lagi); pemicu kedua di akhir
+  BrowserActivity.onCreate; onResume memanggil promoteIfNeeded
+  SEBELUM recreate() (dulu sesudah return — tertunda satu siklus).
+  (c) P0-C revive otomatis Space mati (AK-04): tick guard membandingkan
+  registry (slot terdaftar + pernah dibuka — proxy file snapshot
+  api-page-<suffix>.json) dengan proses hidup; slot hilang masuk
+  antrean revive; revive jalan maks 2 slot/tick HANYA bila API hidup
+  DAN tidak ada app asing di foreground (top IMPORTANCE_FOREGROUND
+  bukan paket sendiri) DAN RAM tidak kritis (bila app asing
+  foreground, revive tetap antre — JANGAN merebut layar pengguna);
+  mekanisme = jalur /open internal (SpaceLauncher.open +
+  promoteAll); suffix restart START_STICKY dipulihkan dari nama
+  kelas service (suffixFromServiceClass), bukan "space" generik;
+  state revive_queue/revive_count/last_revive_ms di guard-state.json
+  + /status + /guard. Tidak ada state "Space dimatikan" di registry
+  — Space yang dihapus user tidak ada di registry, tidak di-revive.
+  (d) DevTools eksplisit (F-API-06/CODE-06): BrowserActivity.onCreate
+  SELALU memanggil WebView.setWebContentsDebuggingEnabled(
+  isWebViewDebuggingEnabled(this)) — false saat toggle OFF (dulu
+  tidak pernah dipanggil false, socket DevTools hidup di build debug
+  walau toggle OFF); toggle ON/OFF via broadcast tetap berlaku.
+  (e) Deadline header-only (F-API-01 residual): tenggat 30 dtk hanya
+  fase header (request line + header); fase body 600 dtk untuk
+  /upload, 60 dtk route lain; per-read idle timeout 10 dtk
+  (soTimeout) tetap berlaku di kedua fase; antrean 503 (in-flight
+  maks 12) tidak berubah.
+  (f) Relay blob bertag (residual CODE-02): downloadBlob menyetel
+  window.__senzBlobReqId per unduhan + menyiarkannya di senz-get-blob;
+  core menyimpan req per URL (__senzBlobReqFor); __senzReplyBlob
+  menggemakan req + tag (= window.top.__senzBridgeNonce, hanya bisa
+  dibaca frame same-origin dengan frame utama); core frame utama
+  menerima senz-blob-data HANYA bila req cocok + tag cocok — tanpa
+  tag / tag salah -> ditolak + diag 'relay-reject: origin=.. req=..
+  tag=..', JANGAN disimpan. Origin pengirim hanya dicatat di log
+  (bukan gerbang — balasan terusan membawa origin perantara).
+  Batas: pemilik blob sah di iframe opaque-origin (player AI Studio
+  sandboxed) tidak bisa membaca nonce — balasannya ikut ditolak
+  relay, unduhan jatuh ke fallback rekam-ulang (jalur TTS v0.1.83).
+  (g) Gate TTS durasi (live test v0.1.84): metadata-wait lantai 0,5
+  dtk (durasi hantu ~0,04 dtk lolos syarat lama `>0` -> false done
+  0.0/0.0 dtk); gate onstop WAJIB durasi >= 0,5 dtk (selain bytes>0
+  + ended/currentTime>=durasi-1/wall>=durasi); lapis kedua di Kotlin
+  onBlobRecordDone — verdict "ok" dengan durasi < 0,5 dtk dipaksa
+  "short" (failed jujur). Berlaku di kedua jalur (in-run + /tts-record).
+  Tanpa ubah perilaku: WatchdogWorker (garis B10.2), manifest,
+  sertifikat debug, build debug (bukan release), token (tidak
+  dirotasi), ApiService self-check v0.1.85, onTrimMemory shed,
+  snapshotGenerating fail-open (AK-05/P1 — belum dibangun).

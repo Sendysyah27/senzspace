@@ -117,7 +117,12 @@ open class KeepAliveService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        val suffix = intent?.getStringExtra(EXTRA_SUFFIX) ?: "space"
+        // v0.1.86 (§3): suffix dari intent, atau dari kelas service
+        // sendiri bila intent null (restart START_STICKY) — JANGAN
+        // jatuh ke "space" generik (notifId 1100, cangkang tanpa
+        // identitas Space).
+        val suffix = intent?.getStringExtra(EXTRA_SUFFIX)
+            ?: suffixFromServiceClass() ?: "space"
         val name = intent?.getStringExtra(EXTRA_SPACE_NAME) ?: "Space"
         // ID notifikasi tetap per Space (1101–1110) — jangan pakai hash,
         // tabrakan ID bikin notifikasi service lain ikut kehapus.
@@ -196,6 +201,27 @@ open class KeepAliveService : Service() {
             // Pengayaan notifikasi gagal; notifikasi minimal tetap ada.
         }
         return START_STICKY
+    }
+
+    /** v0.1.86 (§3 P0-C): suffix dari kelas service sendiri.
+     *  Tiap subclass KeepAliveSpaceNService jalan di prosesnya
+     *  sendiri dan tahu slotnya dari nama kelasnya — jadi restart
+     *  START_STICKY dengan intent null (sistem me-restart service
+     *  tanpa intent asli) tidak kehilangan identitas Space.
+     *  Null hanya bila kelas bukan salah satu subclass yang dikenal
+     *  (tidak pernah terjadi di manifest saat ini). */
+    private fun suffixFromServiceClass(): String? = when (javaClass.simpleName) {
+        "KeepAliveSpace1Service" -> "space1"
+        "KeepAliveSpace2Service" -> "space2"
+        "KeepAliveSpace3Service" -> "space3"
+        "KeepAliveSpace4Service" -> "space4"
+        "KeepAliveSpace5Service" -> "space5"
+        "KeepAliveSpace6Service" -> "space6"
+        "KeepAliveAiStudioService" -> "aistudio"
+        "KeepAliveSpace8Service" -> "space8"
+        "KeepAliveSpace9Service" -> "space9"
+        "KeepAliveSpace10Service" -> "space10"
+        else -> null
     }
 
     private fun ensureSummary() {
@@ -375,8 +401,23 @@ object GuardPromoter {
      *  bangkitkan Space yang sudah mati (RAM justru bertambah, LMK
      *  makin cepat membunuh). ApiService + WatchdogGuardService selalu
      *  dipromosikan (bila saklar API hidup). Idempotent: startService
-     *  aman bila service sudah jalan. */
+     *  aman bila service sudah jalan.
+     *  v0.1.86 (§2 P0-B): idempotent JUGA soal flag — clear
+     *  guard_needs_promotion HANYA bila probe visible benar saat
+     *  promoteAll dipanggil. Bila promosi dilewati (probe salah),
+     *  flag TETAP supaya tick guard / onResume berikutnya mencoba
+     *  lagi. Dulu clear tanpa syarat di akhir (L401 v0.1.85) —
+     *  flag bisa hilang walau tidak satu pun startForeground
+     *  berhasil. Koreksi verify audit: tiap KeepAlive.start() di
+     *  sini memicu onStartCommand yang (bila dilewati) menandai
+     *  ulang flag secara async — tapi urutan itu implisit dan
+     *  bergantung timing antar-proses; fix ini menghilangkan
+     *  ketergantungan itu. */
     fun promoteAll(ctx: Context) {
+        // v0.1.86: probe dibaca SEKALI di awal — keputusan clear
+        // di akhir memakai hasil probe ini, bukan probe baru
+        // (probe bisa berubah di tengah promosi antar-proses).
+        val visible = ApiService.isAppVisible(ctx)
         try {
             if (ApiToken.isEnabled(ctx)) {
                 ApiService.promote(ctx)
@@ -398,7 +439,12 @@ object GuardPromoter {
         } catch (e: Exception) {
             Log.w(TAG, "promoteAll gagal: ${e.message}")
         }
-        clearNeedsPromotion(ctx)
+        // v0.1.86 (§2): clear HANYA bila probe visible benar —
+        // promosi (startForeground) benar-benar dicoba di tiap
+        // service; bila sistem menolaknya, onStartCommand mereka
+        // menandai ulang flag lewat markNeedsPromotion. Bila probe
+        // salah, flag TETAP (tidak ada yang dicoba).
+        if (visible) clearNeedsPromotion(ctx)
     }
 
     /** Suffix Space yang prosesnya sedang hidup. */

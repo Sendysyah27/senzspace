@@ -127,13 +127,19 @@ abstract class BrowserActivity : AppCompatActivity() {
      *  gerbang origin (isBridgeOriginAllowed, yang hanya membaca
      *  URL frame utama) meloloskannya. JS app sendiri (core/trap/
      *  executor, semua jalan di frame utama) menyertakan nonce di
-     *  tiap panggilan. Batas jujur: relay postMessage core
-     *  (senz-blob-data) masih percaya balasan frame mana pun untuk
-     *  URL yang sedang ditunggu — nonce tidak menutup jalur tidak
-     *  langsung itu (frame pemilik blob ASLI harus bisa menjawab
-     *  lintas-origin); yang membatasi dampaknya adalah validasi
-     *  nama file CODE-01 (byte palsu hanya bisa mendarat di folder
-     *  Space itu dengan nama aman). */
+     *  tiap panggilan.
+     *  v0.1.86 (§6): nonce yang sama JUGA menutup jalur tidak
+     *  langsung relay postMessage — balasan senz-blob-data harus
+     *  membawa tag = nonce frame utama (hanya bisa dibaca frame
+     *  yang same-origin dengan frame utama) + req = id permintaan
+     *  downloadBlob saat ini; balasan tanpa tag / tag salah
+     *  ditolak core frame utama (relay-reject di blob-debug).
+     *  Batas jujur yang tersisa: pemilik blob sah di iframe
+     *  opaque-origin (mis. player AI Studio di iframe sandboxed)
+     *  tidak bisa membaca nonce — balasannya ikut ditolak relay
+     *  dan unduhan jatuh ke fallback rekam-ulang (jalur TTS
+     *  v0.1.83 yang memang sudah bekerja); relay tetap melayani
+     *  pemilik same-origin + frame utama sendiri. */
     private val bridgeNonce: String = java.util.UUID.randomUUID().toString()
 
     /** v0.1.85 (audit CODE-16): hitung file yang dibuat lewat
@@ -1118,12 +1124,15 @@ abstract class BrowserActivity : AppCompatActivity() {
         // toggle "Izinkan debug WebView (adb)" di Pengaturan ON
         // (default MATI di semua build — dulu selalu ON di build
         // debug sehingga socket DevTools menjawab lewat adb).
-        // Toggle yang diubah saat Space sudah jalan berlaku langsung
-        // lewat broadcast ACTION_WEBVIEW_DEBUG (lihat receiver shed);
-        // Space yang dibuka sesudahnya membaca pref di sini.
-        if (isWebViewDebuggingEnabled(this)) {
-            WebView.setWebContentsDebuggingEnabled(true)
-        }
+        // v0.1.86 (§4): SELALU setel eksplisit — false saat toggle
+        // OFF, true saat ON. Build debug menciptakan socket DevTools
+        // secara default; tanpa panggilan false eksplisit, tidak ada
+        // yang mematikannya (bukti live v0.1.85: 8 socket hidup
+        // walau toggle OFF + prefs tanpa key itu). Toggle yang diubah
+        // saat Space sudah jalan berlaku langsung lewat broadcast
+        // ACTION_WEBVIEW_DEBUG (lihat receiver shed); Space yang
+        // dibuka sesudahnya membaca pref di sini.
+        WebView.setWebContentsDebuggingEnabled(isWebViewDebuggingEnabled(this))
         super.onCreate(savedInstanceState)
         // v0.1.71: buka Space langsung (tanpa Beranda) tetap memastikan
         // API hidup + watchdog terdaftar. ApiService jalan di proses
@@ -1713,6 +1722,12 @@ abstract class BrowserActivity : AppCompatActivity() {
         } catch (_: Exception) {
             shedReceiver = null
         }
+        // v0.1.86 (§2 P0-B): pemicu promosi kedua — onCreate jalan
+        // saat proses Space sedang dibawa ke foreground (activity
+        // launch), jadi probe visible diharapkan benar; bila belum,
+        // flag tetap dan onResume / tick guard mencoba lagi.
+        // (Pemicu pertama: onResume; pemicu ketiga: handler /open.)
+        GuardPromoter.promoteIfNeeded(this)
     }
 
 
@@ -3182,9 +3197,16 @@ abstract class BrowserActivity : AppCompatActivity() {
      *  blob cross-origin iframe sandbox) -> fallback ke elemen SPA
      *  dengan monitor yang sama.
      *  (D) TUNGGU METADATA: polling readyState>=1 + durasi finite
-     *  >0 tiap 250 ms, timeout 10 dtk -> 'metadata-timeout'
-     *  (bukti live v0.1.83: rekam in-run baca durasi 1 dtk karena
-     *  metadata belum ke-load -> file 0-byte). play() diverifikasi
+     *  tiap 250 ms, timeout 10 dtk -> 'metadata-timeout' (bukti live
+     *  v0.1.83: rekam in-run baca durasi 1 dtk karena metadata belum
+     *  ke-load -> file 0-byte). v0.1.86 (§7): syarat lolos BUKAN
+     *  sekadar durasi > 0 — elemen audio yang baru digenerate bisa
+     *  melaporkan durasi HANTU ~0,04 dtk sesaat (bukti live v0.1.84:
+     *  'metadata ok dur=0.0' -> false done 0.0/0.0 dtk) — jadi lantai
+     *  0,5 dtk: durasi < 0,5 dtk dianggap metadata belum ke-load dan
+     *  polling berlanjut sampai timeout. VO asli tidak pernah
+     *  sependek itu; fixture harness 0,5 dtk (Test F) tetap lolos
+     *  di batas inklusif. play() diverifikasi
      *  (tidak paused + currentTime maju dalam 3 dtk) -> bila
      *  ditolak / tidak main -> 'play-denied' / 'not-playing'.
      *  (B) MONITOR tiap 1 dtk ke blob-debug
@@ -3193,9 +3215,13 @@ abstract class BrowserActivity : AppCompatActivity() {
      *  play() lagi ('re-play'); elemen SPA ter-detach ->
      *  'spa-detached' (gagal jujur, jangan simpan pendek diam-diam).
      *  (C) GATE di onstop: verdict 'ok' hanya bila bytes>0 DAN
-     *  (ended ATAU currentTime>=durasi-1 ATAU wall>=durasi);
-     *  'empty' (0 byte) / 'short' -> onBlobRecordDone saja, TANPA
-     *  onBlobData (tidak ada file yang boleh jadi "done").
+     *  durasi >= 0,5 dtk DAN (ended ATAU currentTime>=durasi-1 ATAU
+     *  wall>=durasi); 'empty' (0 byte) / 'short' -> onBlobRecordDone
+     *  saja, TANPA onBlobData (tidak ada file yang boleh jadi
+     *  "done"). v0.1.86 (§7): syarat durasi >= 0,5 dtk menutup
+     *  lubang v0.1.84 — saat durasi 0, kondisi 'ok' lama lolos
+     *  vakum (currentTime 0.0 >= durasi-1 = -1 -> true; wall >= 0
+     *  -> true).
      *  window.__senzBlobDone di-reset false saat rekam mulai
      *  (unduhan sukses sebelumnya di sesi yang sama bisa
      *  meninggalkan flag true dan membuang rekaman);
@@ -3253,7 +3279,7 @@ abstract class BrowserActivity : AppCompatActivity() {
                         var ct=0;try{ct=au.currentTime||0;}catch(e){}
                         var ended=false;try{ended=!!au.ended;}catch(e){}
                         var b=new Blob(chunks,{type:rec.mimeType||'audio/webm'});
-                        var ok=b.size>0&&(ended||ct>=dur-1||(Date.now()-startWall)/1000>=dur);
+                        var ok=b.size>0&&dur>=0.5&&(ended||ct>=dur-1||(Date.now()-startWall)/1000>=dur);
                         var verdict=ok?'ok':(b.size===0?'empty':'short');
                         try{window.SenzBlob.onBlobRecordDone(String(Math.round(ct*10)/10),String(Math.round(dur*10)/10),String(chunks.length),String(b.size),verdict,window.__senzBridgeNonce);}catch(e){}
                         if(!ok){return;}
@@ -3303,7 +3329,7 @@ abstract class BrowserActivity : AppCompatActivity() {
                 var d=0,rs=0;
                 try{d=au.duration||0;}catch(e){}
                 try{rs=au.readyState||0;}catch(e){}
-                if(isFinite(d)&&d>0&&rs>=1){startRec(d);return;}
+                if(isFinite(d)&&d>=0.5&&rs>=1){startRec(d);return;}
                 waited+=250;
                 if(waited>=10000){failAsync('metadata-timeout');return;}
                 setTimeout(metaPoll,250);
@@ -4830,6 +4856,10 @@ abstract class BrowserActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         isForeground = true
+        // v0.1.86 (§2 P0-B): promosi DULU sebelum recreate() — dulu
+        // promoteIfNeeded jalan sesudah recreate() + return, jadi
+        // promosi tertunda satu siklus onResume.
+        GuardPromoter.promoteIfNeeded(this)
         // v0.1.78: WebView di-shed MemoryGuard — buat ulang activity
         // (WebView segar + restore v0.1.77). Jangan sentuh WebView
         // yang sudah di-destroy (url/draw melempar).
@@ -4838,9 +4868,6 @@ abstract class BrowserActivity : AppCompatActivity() {
             recreate()
             return
         }
-        // v0.1.78: promosikan service guard bila ada yang gagal
-        // dipromosikan sebelumnya (flag guard_needs_promotion).
-        GuardPromoter.promoteIfNeeded(this)
         // v0.1.31: hidupkan lagi timer tangkap live (idempotent) — bila
         // activity sempat dihancurkan sistem selagi Space dibekukan,
         // timer mati dan "Nyalakan Live" saja tidak menghidupkannya lagi
@@ -5306,6 +5333,11 @@ abstract class BrowserActivity : AppCompatActivity() {
         val js = "(function(){try{" +
             "var url='$escaped';" +
             "window.__senzPendingBlobUrl=url;" +
+            // v0.1.86 (§6): id permintaan unduhan ini — disiarkan
+            // bersama senz-get-blob; balasan sah menggemakannya
+            // (lihat core __senzReplyBlob); balasan tanpa req yang
+            // cocok ditolak core frame utama.
+            "window.__senzBlobReqId='rq'+Date.now().toString(36)+Math.floor(Math.random()*1e6).toString(36);" +
             "window.__senzBlobDone=false;" +
             "window.__senzXhrTried=false;" +
             "window.__senzFallbackErr='';" +
@@ -5322,8 +5354,8 @@ abstract class BrowserActivity : AppCompatActivity() {
             "try{window.SenzBlob.onBlobDiag('dl url='+url.slice(0,60)+',iframes='+fs0.length+',hit='+(cached!==''),window.__senzBridgeNonce);}catch(e){}" +
             "try{if(window.__senzTrapRescan){var sc=window.__senzTrapRescan();try{window.SenzBlob.onBlobDiag('dl scan: '+sc,window.__senzBridgeNonce);}catch(e){}}}catch(e){}" +
             "if(cached){window.__senzBlobDone=true;window.SenzBlob.onBlobData(cached,name,window.__senzBridgeNonce);return;}" +
-            "var postAll=function(){var fs=senzAllIframes();for(var i=0;i<fs.length;i++){try{fs[i].contentWindow.postMessage({type:'senz-get-blob',url:url},'*');}catch(e){}}};" +
-            "var postSelf=function(){try{window.postMessage({type:'senz-get-blob',url:url},'*');}catch(e){}};" +
+            "var postAll=function(){var fs=senzAllIframes();for(var i=0;i<fs.length;i++){try{fs[i].contentWindow.postMessage({type:'senz-get-blob',url:url,req:window.__senzBlobReqId},'*');}catch(e){}}};" +
+            "var postSelf=function(){try{window.postMessage({type:'senz-get-blob',url:url,req:window.__senzBlobReqId},'*');}catch(e){}};" +
             "postAll();postSelf();" +
             "setTimeout(function(){try{if(window.__senzBlobDone)return;postAll();postSelf();}catch(e){}},3000);" +
             "var senzTryXhr=function(){try{" +
@@ -5560,16 +5592,24 @@ abstract class BrowserActivity : AppCompatActivity() {
             ttsRecordGateDurationSec = durationSec.toDoubleOrNull() ?: 0.0
             ttsRecordGateChunks = chunks.toIntOrNull() ?: 0
             ttsRecordGateBytes = bytes.toLongOrNull() ?: 0
-            ttsRecordGateVerdict = verdict
+            // v0.1.86 (§7): pertahanan lapis kedua di sisi Kotlin —
+            // verdict "ok" dari JS dengan durasi < 0,5 dtk TIDAK
+            // BOLEH jadi "done" (bukti live v0.1.84: durasi hantu
+            // 0,04 dtk lolos `>0` di JS). Paksa "short" supaya
+            // status failed jujur — lapisan ini berlaku walau JS
+            // berubah / verdict dikirim jalur lain.
+            val effectiveVerdict =
+                if (verdict == "ok" && ttsRecordGateDurationSec < 0.5) "short" else verdict
+            ttsRecordGateVerdict = effectiveVerdict
             val cap = "%.1f".format(java.util.Locale.US, ttsRecordGateCapturedSec)
             val dur = "%.1f".format(java.util.Locale.US, ttsRecordGateDurationSec)
-            ttsRecordGateDetail = when (verdict) {
+            ttsRecordGateDetail = when (effectiveVerdict) {
                 "ok" -> "tertangkap $cap dtk dari $dur dtk (${ttsRecordGateChunks} chunk, ${ttsRecordGateBytes} byte)"
                 "empty" -> "rekaman kosong (0 byte)"
                 else -> "rekaman tidak lengkap: tertangkap $cap dtk dari $dur dtk (currentTime terakhir $cap dtk, ${ttsRecordGateChunks} chunk)"
             }
-            logBlobDiag("record-gate: $verdict — ${ttsRecordGateDetail}")
-            if (verdict == "ok") return
+            logBlobDiag("record-gate: $effectiveVerdict — ${ttsRecordGateDetail}")
+            if (effectiveVerdict == "ok") return
             if (ttsRecordManual) {
                 ttsRecordManual = false
                 ttsFallbackDeadlineMs = 0
@@ -5651,6 +5691,12 @@ abstract class BrowserActivity : AppCompatActivity() {
             "window.__senzBlobDone=false;" +
             "window.__senzPendingReqs={};" +
             "window.__senzFetchTried={};" +
+            // v0.1.86 (§6): tag balasan relay — req per URL (dari
+            // siaran senz-get-blob) + tag same-origin (nonce
+            // jembatan frame utama, hanya bisa dibaca frame yang
+            // same-origin dengannya). Lihat __senzReplyBlob +
+            // cabang senz-blob-data di bawah.
+            "window.__senzBlobReqFor={};" +
             // v0.1.85 (audit CODE-02): relay diagnosa — core jalan di
             // SETIAP frame (termasuk iframe lintas-origin), tapi
             // nonce hanya ada di frame utama. Di frame utama:
@@ -5666,7 +5712,19 @@ abstract class BrowserActivity : AppCompatActivity() {
             "var nm=window.__senzBlobName(u)||'';" +
             "if(!nm){try{var as=document.querySelectorAll('a[download]');for(var ai=0;ai<as.length;ai++){if(as[ai].href===u&&as[ai].getAttribute('download')){nm=as[ai].getAttribute('download');break;}}}catch(e){}}" +
             "try{window.__senzDiag('core: balas '+u.slice(-8));}catch(e){}" +
-            "var rp={type:'senz-blob-data',url:u,data:d,name:nm};" +
+            // v0.1.86 (§6): balasan membawa DUA tag — req (id
+            // permintaan dari siaran senz-get-blob, anti replay
+            // basi) + tag (nonce jembatan frame utama). Tag dibaca
+            // dari window.top.__senzBridgeNonce — hanya frame yang
+            // same-origin dengan frame utama yang bisa membacanya;
+            // iframe lintas-origin / sandboxed (baca melempar)
+            // mengirim tag kosong dan DITOLAK core frame utama.
+            // Tag TIDAK disiarkan di permintaan (hanya di balasan),
+            // jadi frame pemalsu tidak bisa menyadapnya dari siaran.
+            "var rq=(window.__senzBlobReqFor&&window.__senzBlobReqFor[u])||'';" +
+            "var tag='';" +
+            "try{tag=(window.top&&window.top.__senzBridgeNonce)||'';}catch(e){tag='';}" +
+            "var rp={type:'senz-blob-data',url:u,data:d,name:nm,req:rq,tag:tag};" +
             "if(window.parent&&window.parent!==window){window.parent.postMessage(rp,'*');}" +
             "else{try{window.__senzBlobDone=true;}catch(e){}if(window.SenzBlob)window.SenzBlob.onBlobData(d,nm,window.__senzBridgeNonce);}};" +
             "window.__senzFlushPending=function(u){" +
@@ -5704,6 +5762,14 @@ abstract class BrowserActivity : AppCompatActivity() {
             "try{var m=ev.data||{};" +
             "if(m&&m.type==='senz-get-blob'&&m.url){" +
             "try{window.__senzDiag('core: req '+m.url.slice(-8)+' cache='+(window.__senzBlobGet(m.url)?'ada':'kosong'));}catch(e){}" +
+            // v0.1.86 (§6): req disimpan SEBELUM cek cache — cabang
+            // cache-hit langsung membalas (__senzReplyBlob) tanpa
+            // lewat cabang else di bawah; bila req hanya disimpan di
+            // else, balasan cache-hit membawa req kosong dan DITOLAK
+            // core frame utama (req salah) — padahal itu balasan sah
+            // dari pemilik blob (cache-hit adalah jalur umum: blob
+            // dibuat pemiliknya jauh sebelum tombol unduh ditekan).
+            "window.__senzBlobReqFor[m.url]=m.req||'';" +
             "if(window.__senzBlobGet(m.url)){window.__senzReplyBlob(m.url);}" +
             "else{window.__senzPendingReqs[m.url]=true;" +
             "setTimeout(function(){try{delete window.__senzPendingReqs[m.url];}catch(e){}},20000);" +
@@ -5729,9 +5795,23 @@ abstract class BrowserActivity : AppCompatActivity() {
             "}else if(m&&m.type==='senz-blob-data'){" +
             "if(window.parent===window){" +
             "if(m.url===window.__senzPendingBlobUrl&&m.data&&!window.__senzBlobDone){" +
-            "var nm=m.name||'';" +
+            // v0.1.86 (§6): terima HANYA balasan bertag — req harus
+            // sama dengan id permintaan downloadBlob saat ini (anti
+            // replay basi; req kosong diterima hanya bila downloadBlob
+            // belum menyetel id — kompatibilitas jalur lama) DAN tag
+            // harus sama dengan nonce jembatan frame utama (bukti
+            // pengirim same-origin dengan frame utama). Balasan tanpa
+            // tag / tag salah -> DITOLAK + dicatat relay-reject,
+            // JANGAN disimpan sebagai file. Origin pengirim dicatat
+            // di log untuk diagnosa (bukan gerbang — balasan yang
+            // diteruskan frame perantara membawa origin perantara,
+            // bukan pemilik blob; tag end-to-end yang memutuskan).
+            "var okReq=!window.__senzBlobReqId||m.req===window.__senzBlobReqId;" +
+            "var okTag=!!(m.tag&&window.__senzBridgeNonce&&m.tag===window.__senzBridgeNonce);" +
+            "if(!okReq||!okTag){try{window.__senzDiag('relay-reject: origin='+(ev.origin||'?')+' req='+(okReq?'ok':'salah')+' tag='+(okTag?'ok':'salah'));}catch(e){}}" +
+            "else{var nm=m.name||'';" +
             "try{nm=nm||window.__senzBlobName(m.url)||'';}catch(e){}" +
-            "window.__senzBlobDone=true;window.SenzBlob.onBlobData(m.data,nm,window.__senzBridgeNonce);}}" +
+            "window.__senzBlobDone=true;window.SenzBlob.onBlobData(m.data,nm,window.__senzBridgeNonce);}}}" +
             // v0.1.85 (audit CODE-02): cabang senz-diag HARUS sejajar
             // dengan cabang senz-blob-data (bukan tersarang di dalamnya
             // - di sana m.type sudah pasti 'senz-blob-data', jadi
