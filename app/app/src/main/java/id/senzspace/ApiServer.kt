@@ -164,6 +164,8 @@ class ApiServer(private val ctx: Context) {
         private const val MAX_HEADERS = 100
         private const val MAX_BODY_JSON = 1024 * 1024
         private const val MAX_BODY_UPLOAD = 100 * 1024 * 1024
+        private const val MAX_IN_FLIGHT = 12
+        private const val API_LOG_MAX_BYTES = 1024 * 1024L
     }
 
     private var serverSocket: ServerSocket? = null
@@ -174,7 +176,6 @@ class ApiServer(private val ctx: Context) {
     // dari itu ditolak cepat 503 (lihat start()). Counter naik saat
     // accept, turun di finally eksekutor (bukan di handle()).
     private val inFlight = java.util.concurrent.atomic.AtomicInteger(0)
-    private const val MAX_IN_FLIGHT = 12
 
     // v0.1.85 (audit CODE-05): pembatas auth gagal — 10 kegagalan
     // dalam 60 dtk -> 429 selama 60 dtk. Auth BENAR tidak pernah
@@ -190,7 +191,6 @@ class ApiServer(private val ctx: Context) {
     // pool supaya send() (yang tahu status) bisa menulis barisnya.
     private val apiLogLock = Any()
     private val currentRequest = ThreadLocal<Pair<String, String>>()
-    private const val API_LOG_MAX_BYTES = 1024 * 1024L
 
     @Volatile
     private var running = false
