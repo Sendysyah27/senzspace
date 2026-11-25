@@ -1445,3 +1445,89 @@ Jangan cuma diagnosa dari kodenya.
   langkah TTS Style/Speaker/Run, runTtsCreateDialog, watchdog,
   shed_refused_count (pindah), cacat sidebar-toggle attach (/new
   — pindah).
+- API 85 (25 Nov, v0.1.85): REDMUSE FIX — 18 finding kode (audit
+  v0.1.84: 1 Critical = CVE WebView, device-side, BUKAN di kode;
+  7 Medium, 8 Low, 3 Info di kode).
+  (a) CODE-01 traversal nama file jembatan: FileStore.isSafeFileName()
+  tolak kosong/./.. (substring)/\/NUL/CR/LF/"; dicek di PINTU
+  (onBlobData, onMeta, onChunk nama pertama — unduhan batal sebelum
+  satu byte ditulis) + di SINK (uniqueFile lempar
+  IllegalArgumentException + canonical containment: parent kanonis
+  harus == dir; saveDownloadedBytes). Nama biasa tetap jalan.
+  (b) CODE-02 gerbang jembatan top-frame-only: nonce UUID acak per
+  instance BrowserActivity, disuntik ke frame UTAMA saja lewat
+  evaluateJavascript sebagai window.__senzBridgeNonce (onPageStarted
+  best-effort + onPageFinished, sebelum injectLiveObserver/
+  ensureBlobCoreInjected); ke-14 method @JavascriptInterface terima
+  nonce sebagai parameter TERAKHIR + banding constant-time
+  (MessageDigest.isEqual, seperti ApiToken.check); semua call-site
+  JS app (47) menyertakan nonce; onBlobDiag dari iframe di-relay
+  lewat postMessage 'senz-diag' ke core frame utama (helper
+  __senzDiag di core; trap pakai relay yang sama) — relay hanya
+  jadi BARIS LOG, tidak menyentuh file/state. Residual jujur:
+  relay 'senz-get-blob'/'senz-blob-data' masih percaya balasan
+  frame mana pun untuk URL yang sedang diunduh (frame
+  lintas-origin bisa memalsukan byte); CODE-01 membatasi kerusakan
+  (byte palsu hanya mendarat di folder Space sendiri dengan
+  basename aman, dan hanya saat ada unduhan berjalan).
+  (c) CODE-03 /upload streaming: handleUpload() streaming 64 KB
+  langsung ke file tujuan, cap 100 MB ditegakkan SELAMA streaming
+  (abort + 413 + hapus parsial; body pendek -> 400 + hapus
+  parsial); nama+folder divalidasi SEBELUM body dibaca; JSON routes
+  tetap body parsed, cap 1 MB tidak berubah.
+  (d) CODE-04 + F-API-01 pool exhaustion: deadline kumulatif 30 dtk
+  per request (readLine + loop header/body lempar
+  SocketTimeoutException di 30 dtk); antrean accept terbatas 8
+  (in-flight maks 12 = 4 worker + 8 antrean), penuh -> 503 cepat;
+  /ping normal tetap <1 dtk.
+  (e) CODE-05 + F-API-05 token statis: TIDAK dirotasi diam-diam —
+  rate limit auth gagal (10 dalam 60 dtk -> 429 selama 60 dtk;
+  auth valid dicek dulu, tidak pernah kena limit) + audit log satu
+  baris per request ke _log-api/api.log (method + path + status +
+  timestamp + port ephemeral klien sebagai marker, TIDAK PERNAH
+  token; rotasi 1 MB: hapus + baru); model trust didokumentasikan
+  di komentar pada token check (loopback-only, satu bearer statis,
+  rotasi manual di Pengaturan).
+  (f) CODE-06 + F-API-06 debug WebView: setWebContentsDebuggingEnabled
+  default MATI di semua build; toggle Pengaturan "Izinkan debug
+  WebView (adb)" default OFF (pref webview_debug_enabled di
+  senzspace_ui); ON/OFF berlaku langsung tanpa restart via broadcast
+  ACTION_WEBVIEW_DEBUG (receiver shed; Space baru baca pref di
+  onCreate); socket DevTools hilang secara default.
+  (g) CODE-07 + F-API-03 CRLF: /upload tolak CR LF " NUL
+  (melengkapi tolak / \ .. yang sudah ada, bentuk error sama);
+  /download streaming 64 KB (bukan readBytes) + Content-Disposition
+  aman (filename= disanitasi + filename*=UTF-8'' RFC 5987, '+' ->
+  '%20').
+  (h) F-API-02 /guard shed jujur: respons membawa landed + reason
+  (dead-activity / foreground-refused / sent-awaiting-confirmation /
+  confirmed); foreground -> ditolak langsung TANPA broadcast yang
+  akan dibuang; dead activity -> landed:false; counter baru
+  shed_refused_count (marker shed-refused-<slot>-<epoch>.json,
+  dikonsumsi tick guard, tersimpan di guard-state.json, tampil di
+  /status bersama shed_count/shed_confirmed_count).
+  (i) F-API-04: /open + /freeze bungkus parse JSON -> 400 "body
+  bukan JSON" (sama seperti sibling); body chunked -> 400 eksplisit
+  "transfer-encoding chunked tidak didukung".
+  (j) CODE-08/09/10/11/12/16: pop-up WebView dapat
+  shouldOverrideUrlLoading dengan allowlist host yang sama seperti
+  gerbang jembatan (URL awal window.open TIDAK melewatinya —
+  residual); unzip cap total 100 MB + per-file 50 MB + maks 1000
+  entri, nama bentrok -> nama unik (tidak pernah timpa diam-diam),
+  destDir parsial dihapus hanya bila baru dibuat run ini;
+  pick-from-phone cek ukuran SEBELUM salin (abort >100 MB + hapus
+  dest); ekspor SAF tidak pernah hapus file pengguna (nama unik
+  "nama (1).ext"); hapus Space membersihkan limit state tersimpan
+  (SpaceStatus.clearLimit); unduhan jembatan cap 100 MB/file +
+  50 file/sesi (tolak jujur, tulis nol byte).
+  (k) CODE-13/14/15: _log-* dan _live dikecualikan dari share/export
+  user (tetap bisa dibaca via /files + /download untuk agen;
+  share/export menolak dengan Toast); nama file crash log unik
+  (timestamp ms + 8 hex UUID); toggle nonaktifkan API SUDAH ADA
+  (default ON; ApiService.onCreate kini self-check stopSelf bila
+  OFF).
+  Tanpa ubah perilaku: WatchdogWorker, alur /prompt attach,
+  eksekutor TTS, eksekutor Studio, record stabil v0.1.84 (kecuali
+  sink download CODE-01), semua counter lama (hanya TAMBAH
+  shed_refused_count), sertifikat debug, build debug (bukan
+  release).

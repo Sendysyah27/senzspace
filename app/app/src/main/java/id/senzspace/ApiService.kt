@@ -138,6 +138,16 @@ class ApiService : Service() {
         // (bisa dipicu ulang dari onStartCommand via EXTRA_PROMOTE).
         Log.i(TAG, "onCreate: masuk")
         super.onCreate()
+        // v0.1.85 (audit CODE-15): saklar API mati = service tidak
+        // perlu jalan sama sekali — jangan buat server di bawah.
+        // Semua pemanggil start() sudah mengecek isEnabled; ini
+        // jaring pengaman supaya ApiServer TIDAK PERNAH mendengarkan
+        // saat saklar mati, dari jalur mana pun ia di-start.
+        if (!ApiToken.isEnabled(this)) {
+            Log.i(TAG, "onCreate: saklar API mati — service berhenti")
+            stopSelf()
+            return
+        }
         promoteToForeground()
         server = ApiServer(applicationContext).also { it.start() }
         // v0.1.78: mutual watchdog — API memastikan guard jalan

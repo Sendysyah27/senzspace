@@ -23,8 +23,14 @@ object CrashLog {
             try {
                 val dir = File(FileStore.rootDir(ctx), FOLDER)
                 dir.mkdirs()
-                val stamp = SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US).format(Date())
-                val file = File(dir, "crash-$stamp.txt")
+                // v0.1.85 (audit CODE-14): nama UNIK per crash —
+                // milidetik + 8 heks acak — supaya dua crash dalam
+                // detik yang sama tidak saling menimpa (dulu
+                // "crash-yyyyMMdd-HHmmss.txt" + writeText menimpa).
+                val stamp = SimpleDateFormat("yyyyMMdd-HHmmss-SSS", Locale.US).format(Date())
+                val uniq = java.util.UUID.randomUUID().toString()
+                    .replace("-", "").take(8)
+                val file = File(dir, "crash-$stamp-$uniq.txt")
                 val info = StringBuilder()
                 info.append("SenzSpace ${BuildConfig.VERSION_NAME} (build ${BuildConfig.VERSION_CODE})\n")
                 info.append("Waktu: $stamp\n")

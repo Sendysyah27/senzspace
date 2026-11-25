@@ -167,6 +167,11 @@ object SpaceRegistry {
             File(ctx.applicationInfo.dataDir, "app_webview_$suffix")
                 .deleteRecursively()
             File(ctx.filesDir, "space_$suffix.txt").delete()
+            // v0.1.85 (audit CODE-12): hapus JUGA marker limit Space
+            // ini — Space baru di slot yang sama tidak boleh mewarisi
+            // limit akun yang sudah dihapus (/spaces melapor limit
+            // untuk akun yang tidak pernah kena limit).
+            SpaceStatus.clearLimit(ctx, suffix)
         } catch (e: Exception) {
             // Best-effort: hapus registry sudah cukup.
         }

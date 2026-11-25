@@ -152,7 +152,9 @@ class ApiServer(private val ctx: Context) {
         private val FILE_KEYS = setOf(
             "space1", "space2", "space3", "space4", "space5", "space6",
             "aistudio", "space8", "space9", "space10",
-            "_inbox", "_arsip", "_log-blob", "_log-crash", "_live"
+            "_inbox", "_arsip", "_log-blob", "_log-crash", "_live",
+            // v0.1.85 (audit CODE-05): log audit permintaan API.
+            "_log-api"
         )
         // v0.1.75 (audit #4): batas body per-route, dicek SEBELUM
         // alokasi ByteArray — satu request tanpa token tidak bisa
@@ -166,6 +168,29 @@ class ApiServer(private val ctx: Context) {
 
     private var serverSocket: ServerSocket? = null
     private val pool = Executors.newFixedThreadPool(4)
+
+    // v0.1.85 (audit CODE-04/F-API-01): antrean terima TERBATAS —
+    // 4 worker + 8 antrean = 12 permintaan dalam penerbangan; lebih
+    // dari itu ditolak cepat 503 (lihat start()). Counter naik saat
+    // accept, turun di finally eksekutor (bukan di handle()).
+    private val inFlight = java.util.concurrent.atomic.AtomicInteger(0)
+    private const val MAX_IN_FLIGHT = 12
+
+    // v0.1.85 (audit CODE-05): pembatas auth gagal — 10 kegagalan
+    // dalam 60 dtk -> 429 selama 60 dtk. Auth BENAR tidak pernah
+    // dibatasi (dicek dulu sebelum blokir, lihat handle()). Daftar
+    // waktu kegagalan hanya dipegang di memori proses utama.
+    private val failedAuthLock = Any()
+    private val failedAuthTimes = ArrayDeque<Long>()
+    private var authBlockedUntilMs = 0L
+
+    // v0.1.85 (audit CODE-05): log audit — satu baris per permintaan
+    // (method + path + status + epoch-ms + port remote klien, BUKAN
+    // token). Method/path permintaan berjalan disimpan per thread
+    // pool supaya send() (yang tahu status) bisa menulis barisnya.
+    private val apiLogLock = Any()
+    private val currentRequest = ThreadLocal<Pair<String, String>>()
+    private const val API_LOG_MAX_BYTES = 1024 * 1024L
 
     @Volatile
     private var running = false
@@ -183,7 +208,29 @@ class ApiServer(private val ctx: Context) {
                 while (running) {
                     try {
                         val client = server.accept()
-                        pool.execute { handle(client) }
+                        // v0.1.85 (audit CODE-04): antrean penuh ->
+                        // tolak cepat 503, jangan antre tanpa batas.
+                        // (Backlog kernel ServerSocket sudah 8; ini
+                        // lapisan aplikasi di atasnya: 4 worker + 8.)
+                        if (inFlight.get() >= MAX_IN_FLIGHT) {
+                            try {
+                                send(client, 503, "application/json", errJson("server sibuk"))
+                            } catch (_: Exception) {
+                            }
+                            try {
+                                client.close()
+                            } catch (_: Exception) {
+                            }
+                            continue
+                        }
+                        inFlight.incrementAndGet()
+                        pool.execute {
+                            try {
+                                handle(client)
+                            } finally {
+                                inFlight.decrementAndGet()
+                            }
+                        }
                     } catch (e: Exception) {
                         if (running) Log.w(TAG, "accept gagal: ${e.message}")
                     }
@@ -205,9 +252,16 @@ class ApiServer(private val ctx: Context) {
 
     // ---- HTTP minimal: baca header byte-per-byte dari stream mentah
     // (BufferedReader bisa menelan byte body ke buffernya sendiri).
-    private fun readLine(input: InputStream): String? {
+    // v0.1.85 (audit CODE-04): tenggat kumulatif per permintaan —
+    // readLine melempar SocketTimeoutException bila tenggat lewat
+    // (klien yang menetes 1 byte tiap ~9 dtk tidak boleh memegang
+    // worker selamanya; soTimeout 10 dtk hanya per-baca).
+    private fun readLine(input: InputStream, deadlineMs: Long = Long.MAX_VALUE): String? {
         val bytes = mutableListOf<Byte>()
         while (true) {
+            if (System.currentTimeMillis() > deadlineMs) {
+                throw java.net.SocketTimeoutException("batas 30 dtk")
+            }
             val b = input.read()
             if (b == -1) return if (bytes.isEmpty()) null else String(bytes.toByteArray(), Charsets.US_ASCII)
             if (b == '\n'.code) break
@@ -227,10 +281,13 @@ class ApiServer(private val ctx: Context) {
     }
 
     private fun handle(client: Socket) {
+        // v0.1.85 (audit CODE-04): tenggat kumulatif 30 dtk per
+        // permintaan (header + body) — soTimeout 10 dtk hanya per-baca.
+        val deadlineMs = System.currentTimeMillis() + 30_000L
         try {
             client.soTimeout = 10_000
             val input = client.getInputStream()
-            val requestLine = readLine(input) ?: return
+            val requestLine = readLine(input, deadlineMs) ?: return
             val parts = requestLine.split(" ")
             if (parts.size < 2) {
                 send(client, 400, "application/json", errJson("bad request"))
@@ -238,10 +295,13 @@ class ApiServer(private val ctx: Context) {
             }
             val method = parts[0].uppercase()
             val rawTarget = parts[1]
+            val qIdx = rawTarget.indexOf('?')
+            val path = if (qIdx >= 0) rawTarget.substring(0, qIdx) else rawTarget
+            currentRequest.set(method to path)
             val headers = mutableMapOf<String, String>()
             var headerCount = 0
             while (true) {
-                val line = readLine(input) ?: break
+                val line = readLine(input, deadlineMs) ?: break
                 if (line.isEmpty()) break
                 headerCount++
                 if (headerCount > MAX_HEADERS) {
@@ -256,12 +316,36 @@ class ApiServer(private val ctx: Context) {
             }
             // v0.1.75 (audit #4): token DICEK DULU — sebelum body
             // dibaca. Tanpa token, server tidak mengalokasikan apa pun.
+            // v0.1.85 (audit CODE-05) — MODEL KEPERCAYAAN token: API
+            // ini hanya mendengarkan loopback (127.0.0.1:19335, tanpa
+            // TLS karena tidak ada jaringan luar yang bisa mencapai).
+            // Satu bearer statis per install adalah SATU-SATUNYA
+            // gerbang; token tidak kedaluwarsa dan TIDAK diputar
+            // diam-diam — rotasi hanya manual lewat Pengaturan
+            // ("Buat token baru"), karena agen VM membaca token dari
+            // cermin file dan tidak punya jalur bootstrap untuk
+            // menemukan token yang diputar. Yang membatasi brute-force
+            // adalah pembatas auth gagal (§6.1) + log audit (§6.2),
+            // bukan rotasi. check() membandingkan constant-time.
             if (!ApiToken.check(ctx, headers["authorization"])) {
+                // v0.1.85 (audit CODE-05): auth BENAR tidak pernah
+                // dibatasi — cek token dulu; yang gagal saja kena
+                // blokir 429 (10 gagal dalam 60 dtk -> blokir 60 dtk).
+                if (isAuthRateLimited()) {
+                    send(client, 429, "application/json", errJson("terlalu banyak percobaan auth"))
+                    return
+                }
+                recordFailedAuth()
                 send(client, 401, "application/json", errJson("unauthorized"))
                 return
             }
-            val qIdx = rawTarget.indexOf('?')
-            val path = if (qIdx >= 0) rawTarget.substring(0, qIdx) else rawTarget
+            // v0.1.85 (audit F-API-04): chunked TIDAK didukung —
+            // tolak eksplisit 400, jangan diam-diam dibaca sebagai
+            // body kosong lalu 500 di rute JSON.
+            if (headers["transfer-encoding"]?.contains("chunked", ignoreCase = true) == true) {
+                send(client, 400, "application/json", errJson("transfer-encoding chunked tidak didukung"))
+                return
+            }
             val query = if (qIdx >= 0) parseQuery(rawTarget.substring(qIdx + 1)) else emptyMap()
             // Batas body per-route — dicek SEBELUM alokasi.
             val contentLength = headers["content-length"]?.toIntOrNull() ?: 0
@@ -273,6 +357,14 @@ class ApiServer(private val ctx: Context) {
                 send(client, 413, "application/json", errJson("body terlalu besar"))
                 return
             }
+            // v0.1.85 (audit CODE-03): /upload TIDAK lewat jalur
+            // ByteArray+String di bawah — body di-streaming langsung
+            // ke file tujuan (lihat handleUpload). Cabang ini harus
+            // di sini, SEBELUM alokasi ByteArray.
+            if (method == "POST" && path == "/upload") {
+                handleUpload(client, query, input, contentLength, deadlineMs)
+                return
+            }
             val bodyBytes = try {
                 ByteArray(contentLength)
             } catch (e: OutOfMemoryError) {
@@ -282,13 +374,13 @@ class ApiServer(private val ctx: Context) {
             }
             var read = 0
             while (read < contentLength) {
+                if (System.currentTimeMillis() > deadlineMs) return
                 val n = input.read(bodyBytes, read, contentLength - read)
                 if (n == -1) break
                 read += n
             }
             val body = String(bodyBytes, 0, read, Charsets.UTF_8)
-            val bodyRaw = bodyBytes.copyOf(read)
-            route(client, method, path, query, body, bodyRaw)
+            route(client, method, path, query, body)
         } catch (e: OutOfMemoryError) {
             Log.e(TAG, "handle OOM: ${e.message}")
             try {
@@ -302,11 +394,194 @@ class ApiServer(private val ctx: Context) {
             } catch (_: Exception) {
             }
         } finally {
+            currentRequest.remove()
             try {
                 client.close()
             } catch (_: Exception) {
             }
         }
+    }
+
+    // ---- v0.1.85 (audit CODE-05) — pembatas auth gagal + log audit ----
+
+    /** True bila jendela blokir 429 sedang aktif. */
+    private fun isAuthRateLimited(): Boolean {
+        synchronized(failedAuthLock) {
+            return System.currentTimeMillis() < authBlockedUntilMs
+        }
+    }
+
+    /** Catat satu kegagalan auth; bila sudah 10 dalam 60 dtk,
+     *  pasang blokir 429 selama 60 dtk. Dipanggil HANYA sesudah
+     *  check() gagal dan blokir belum aktif. */
+    private fun recordFailedAuth() {
+        synchronized(failedAuthLock) {
+            val now = System.currentTimeMillis()
+            while (failedAuthTimes.isNotEmpty() && failedAuthTimes.first() < now - 60_000L) {
+                failedAuthTimes.removeFirst()
+            }
+            failedAuthTimes.addLast(now)
+            if (failedAuthTimes.size >= 10 && now >= authBlockedUntilMs) {
+                authBlockedUntilMs = now + 60_000L
+                Log.w(TAG, "auth dibatasi 429 selama 60 dtk (10 gagal dalam 60 dtk)")
+            }
+        }
+    }
+
+    /** Tulis satu baris log audit: epoch-ms, method, path, status,
+     *  port remote klien. TIDAK PERNAH menulis token (utuh maupun
+     *  sebagian) — penanda kliennya port ephemeral loopback.
+     *  Retensi: satu file, bila > 1 MB dihapus lalu mulai baru
+     *  (tidak ada retensi log lain di app ini). Dipanggil send()
+     *  tiap balasan; /download (yang menulis balasan mentah) memanggil
+     *  langsung sesudah streaming sukses. */
+    private fun logApiRequest(method: String, path: String, status: Int, client: Socket) {
+        try {
+            val dir = FileStore.folderDir(ctx, "_log-api")
+            dir.mkdirs()
+            val f = File(dir, "api.log")
+            synchronized(apiLogLock) {
+                if (f.isFile && f.length() > API_LOG_MAX_BYTES) f.delete()
+                val line = "${System.currentTimeMillis()} $method $path $status ${client.port}\n"
+                f.appendText(line)
+            }
+        } catch (_: Exception) {
+        }
+    }
+
+    // ---- v0.1.85 (audit CODE-03) — /upload streaming ----
+
+    /** Streaming body /upload langsung ke file tujuan — TANPA
+     *  ByteArray + String + copyOf (v0.1.83: 50 MB -> RSS +196 MB).
+     *  Batas 100 MB ditegakkan SELAMA streaming (batal + 413, 0 byte
+     *  tersisa bila batal). Nama + folder divalidasi SEBELUM satu
+     *  byte body dibaca. Body pendek (EOF sebelum content-length)
+     *  = 400 + file parsial dihapus. Tenggat 30 dtk berlaku per chunk. */
+    private fun handleUpload(
+        client: Socket,
+        query: Map<String, String>,
+        input: InputStream,
+        contentLength: Int,
+        deadlineMs: Long
+    ) {
+        val folder = query["folder"] ?: "_inbox"
+        val name = query["name"] ?: ""
+        if (folder !in FILE_KEYS) {
+            send(client, 400, "application/json", errJson("folder tidak diizinkan"))
+            return
+        }
+        // v0.1.85 (audit CODE-07): tolak CR/LF/quote/NUL di samping
+        // "/" "\" ".." yang sudah ditolak — bentuk error sama.
+        if (!FileStore.isSafeFileName(name)) {
+            send(client, 400, "application/json", errJson("nama file tidak valid"))
+            return
+        }
+        val dir = FileStore.folderDir(ctx, folder)
+        dir.mkdirs()
+        val dest = try {
+            FileStore.uniqueFile(dir, name)
+        } catch (e: IllegalArgumentException) {
+            send(client, 400, "application/json", errJson("nama file tidak valid"))
+            return
+        }
+        val out = try {
+            java.io.FileOutputStream(dest)
+        } catch (e: Exception) {
+            send(client, 500, "application/json", errJson("internal error"))
+            return
+        }
+        var written = 0L
+        var ok = false
+        var reason = ""
+        try {
+            val buf = ByteArray(64 * 1024)
+            while (written < contentLength) {
+                if (System.currentTimeMillis() > deadlineMs) return
+                val want = minOf(buf.size.toLong(), contentLength - written).toInt()
+                val n = input.read(buf, 0, want)
+                if (n == -1) break
+                written += n
+                if (written > MAX_BODY_UPLOAD) {
+                    reason = "file > 100MB"
+                    break
+                }
+                out.write(buf, 0, n)
+            }
+            if (written > MAX_BODY_UPLOAD) {
+                send(client, 413, "application/json", errJson(reason))
+                return
+            }
+            if (written < contentLength) {
+                send(client, 400, "application/json", errJson("body tidak lengkap"))
+                return
+            }
+            ok = true
+        } catch (e: Exception) {
+            Log.w(TAG, "handleUpload gagal: ${e.message}")
+            try {
+                send(client, 500, "application/json", errJson("internal error"))
+            } catch (_: Exception) {
+            }
+            return
+        } finally {
+            try {
+                out.close()
+            } catch (_: Exception) {
+            }
+            if (!ok) {
+                try {
+                    dest.delete()
+                } catch (_: Exception) {
+                }
+            }
+        }
+        sendJson(client, 200, JSONObject().apply {
+            put("uploaded", dest.name)
+            put("folder", folder)
+            put("size", written)
+        })
+    }
+
+    // ---- v0.1.85 (audit F-API-02) — status target shed ----
+
+    /** Keadaan target shed untuk POST /guard: "dead" (proses Space
+     *  tidak hidup), "foreground" (Space sedang terlihat — shed
+     *  PASTI ditolak onShedBroadcast), "already-shed" (proses mati
+     *  TAPI marker konfirmasi shed < 10 mnt ada — shed sudah mendarat
+     *  sebelumnya, tidak ada yang perlu di-shed), "background"
+     *  (hidup, tidak foreground — broadcast dikirim, hasil menunggu
+     *  konfirmasi tick guard). Dibaca dari ActivityManager (proses
+     *  app sendiri) + marker shed-<suffix>.json. */
+    private fun shedTargetState(slot: Int, suffix: String): String {
+        val prefix = "${ctx.packageName}:"
+        val procs = try {
+            (ctx.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager)
+                .runningAppProcesses ?: emptyList()
+        } catch (_: Exception) {
+            emptyList()
+        }
+        val live = procs.mapNotNull { it.processName }
+            .filter { it.startsWith(prefix) }
+            .map { it.substringAfter(":") }
+            .toSet()
+        if (suffix !in live) {
+            val marker = try {
+                val f = File(ctx.filesDir, "shed-$suffix.json")
+                if (f.isFile) JSONObject(f.readText()).optLong("shed_ms", 0L) else 0L
+            } catch (_: Exception) {
+                0L
+            }
+            if (marker > 0 && System.currentTimeMillis() - marker <= 600_000L) {
+                return "already-shed"
+            }
+            return "dead"
+        }
+        val foreground = procs.any {
+            it.processName == "$prefix$suffix" &&
+                (it.importance == ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND ||
+                    it.importance == ActivityManager.RunningAppProcessInfo.IMPORTANCE_VISIBLE)
+        }
+        return if (foreground) "foreground" else "background"
     }
 
     private fun parseQuery(q: String): Map<String, String> {
@@ -334,9 +609,16 @@ class ApiServer(private val ctx: Context) {
             401 -> "Unauthorized"
             404 -> "Not Found"
             413 -> "Payload Too Large"
+            429 -> "Too Many Requests"
             500 -> "Internal Server Error"
+            503 -> "Service Unavailable"
             else -> "OK"
         }
+        // v0.1.85 (audit CODE-05): satu baris log audit per
+        // balasan — method/path dari thread yang sama (tidak ada =
+        // "-" untuk penolakan sebelum baris permintaan dibaca).
+        val req = currentRequest.get()
+        logApiRequest(req?.first ?: "-", req?.second ?: "-", code, client)
         val head = "HTTP/1.1 $code $reason\r\n" +
             "Content-Type: $contentType\r\n" +
             "Content-Length: ${body.size}\r\n" +
@@ -351,7 +633,7 @@ class ApiServer(private val ctx: Context) {
         send(client, code, "application/json", obj.toString().toByteArray(Charsets.UTF_8))
     }
 
-    private fun route(client: Socket, method: String, path: String, query: Map<String, String>, body: String, bodyBytes: ByteArray = ByteArray(0)) {
+    private fun route(client: Socket, method: String, path: String, query: Map<String, String>, body: String) {
         when {
             method == "GET" && path == "/ping" -> {
                 sendJson(client, 200, JSONObject().apply {
@@ -387,12 +669,56 @@ class ApiServer(private val ctx: Context) {
                     sendJson(client, 404, JSONObject().put("error", "no Space on slot $slot"))
                     return
                 }
-                WatchdogGuardService.sendShedBroadcast(ctx, slot)
-                sendJson(client, 200, JSONObject().apply {
-                    put("action", "shed")
-                    put("slot", slot)
-                    put("sent", true)
-                })
+                // v0.1.85 (audit F-API-02): balasan HARUS melaporkan
+                // HASIL, bukan cuma "terkirim" — shed ke target mati
+                // / foreground tidak pernah mendarat tapi dulu
+                // dilaporkan sent:true. Target mati / foreground
+                // DITOLAK di sini (broadcast tidak dikirim, jadi
+                // shed_count tidak naik untuk shed yang mustahil);
+                // penolakan dicatat lewat marker supaya tick guard
+                // menaikkan shed_refused_count.
+                val suffix = SpaceRegistry.suffixForSlot(slot)
+                when (shedTargetState(slot, suffix)) {
+                    "foreground" -> {
+                        WatchdogGuardService.writeShedRefusedMarker(ctx, slot, "foreground-refused")
+                        sendJson(client, 200, JSONObject().apply {
+                            put("action", "shed")
+                            put("slot", slot)
+                            put("sent", false)
+                            put("landed", false)
+                            put("reason", "foreground-refused")
+                        })
+                    }
+                    "dead" -> {
+                        WatchdogGuardService.writeShedRefusedMarker(ctx, slot, "dead-activity")
+                        sendJson(client, 200, JSONObject().apply {
+                            put("action", "shed")
+                            put("slot", slot)
+                            put("sent", false)
+                            put("landed", false)
+                            put("reason", "dead-activity")
+                        })
+                    }
+                    "already-shed" -> {
+                        sendJson(client, 200, JSONObject().apply {
+                            put("action", "shed")
+                            put("slot", slot)
+                            put("sent", false)
+                            put("landed", true)
+                            put("reason", "confirmed")
+                        })
+                    }
+                    else -> {
+                        WatchdogGuardService.sendShedBroadcast(ctx, slot)
+                        sendJson(client, 200, JSONObject().apply {
+                            put("action", "shed")
+                            put("slot", slot)
+                            put("sent", true)
+                            put("landed", "unknown")
+                            put("reason", "sent-awaiting-confirmation")
+                        })
+                    }
+                }
             }
             method == "GET" && path == "/spaces" -> {
                 val arr = JSONArray()
@@ -400,7 +726,14 @@ class ApiServer(private val ctx: Context) {
                 sendJson(client, 200, JSONObject().put("spaces", arr))
             }
             method == "POST" && path == "/open" -> {
-                val req = JSONObject(body)
+                // v0.1.85 (audit F-API-04): JSON rusak -> 400
+                // "body bukan JSON", sama seperti rute lain (dulu 500).
+                val req = try {
+                    JSONObject(body)
+                } catch (_: Exception) {
+                    sendJson(client, 400, JSONObject().put("error", "body bukan JSON"))
+                    return
+                }
                 val slot = req.optInt("slot", -1)
                 val entry = SpaceRegistry.load(ctx).firstOrNull { it.slot == slot }
                 if (entry == null) {
@@ -450,40 +783,9 @@ class ApiServer(private val ctx: Context) {
                     })
                 }
             }
-            method == "POST" && path == "/upload" -> {
-                // v0.1.38: kirim file dari VM ke folder kerja app
-                // (biasanya _inbox, untuk dilampirkan /prompt). Body =
-                // byte mentah file, BUKAN JSON (String body merusak
-                // byte biner). Nama file disaring: tanpa pemisah path.
-                val folder = query["folder"] ?: "_inbox"
-                val name = query["name"] ?: ""
-                if (folder !in FILE_KEYS) {
-                    sendJson(client, 400, JSONObject().put("error", "folder tidak diizinkan"))
-                    return
-                }
-                if (name.isBlank() || name.contains('/') || name.contains('\\') ||
-                    name == "." || name == ".." || name.contains("..")
-                ) {
-                    sendJson(client, 400, JSONObject().put("error", "nama file tidak valid"))
-                    return
-                }
-                if (bodyBytes.size > 100 * 1024 * 1024) {
-                    sendJson(client, 413, JSONObject().put("error", "file > 100MB"))
-                    return
-                }
-                val dir = FileStore.folderDir(ctx, folder)
-                dir.mkdirs()
-                // v0.1.56: nama bentrok → tambah (1), (2) (uniqueFile),
-                // JANGAN timpa file lama diam-diam (audit §6.1). Balasan
-                // membawa nama FINAL yang dipakai.
-                val dest = FileStore.uniqueFile(dir, name)
-                dest.writeBytes(bodyBytes)
-                sendJson(client, 200, JSONObject().apply {
-                    put("uploaded", dest.name)
-                    put("folder", folder)
-                    put("size", bodyBytes.size)
-                })
-            }
+            // v0.1.85 (audit CODE-03): POST /upload TIDAK lagi
+            // di sini — ditangani handleUpload() (streaming langsung
+            // ke file, tanpa ByteArray+String+copyOf).
             method == "POST" && path == "/stage" -> {
                 // v0.1.56 (Opsi B): salin/pindah satu file kerja ke
                 // _inbox supaya bisa dilampirkan /prompt — staging yang
@@ -1064,7 +1366,14 @@ class ApiServer(private val ctx: Context) {
                 }
             }
             method == "POST" && path == "/freeze" -> {
-                val req = JSONObject(body)
+                // v0.1.85 (audit F-API-04): JSON rusak -> 400
+                // "body bukan JSON", sama seperti rute lain (dulu 500).
+                val req = try {
+                    JSONObject(body)
+                } catch (_: Exception) {
+                    sendJson(client, 400, JSONObject().put("error", "body bukan JSON"))
+                    return
+                }
                 val slot = req.optInt("slot", -1)
                 val entry = SpaceRegistry.load(ctx).firstOrNull { it.slot == slot }
                 if (entry == null) {
@@ -1101,16 +1410,38 @@ class ApiServer(private val ctx: Context) {
                     sendJson(client, 404, JSONObject().put("error", "file tidak ketemu"))
                     return
                 }
-                val bytes = file.readBytes()
+                // v0.1.85 (audit CODE-07): JANGAN PERNAH baca seluruh
+                // file ke memori (readBytes tanpa batas — 50 MB unduh
+                // = +50 MB RSS) — streaming 64 KB per chunk. Nama
+                // file TIDAK PERNAH mentah di Content-Disposition
+                // (injeksi CRLF): fallback filename= disanitasi +
+                // filename*= RFC 5987 (UTF-8, persen-encode).
+                val safeName = FileStore.sanitizeFileName(file.name)
+                val asciiName = safeName.map { c ->
+                    if (c.code in 32..126 && c != '"') c else '_'
+                }.joinToString("")
+                val encodedName = java.net.URLEncoder.encode(safeName, "UTF-8")
+                    .replace("+", "%20")
                 val out = client.getOutputStream()
                 val head = "HTTP/1.1 200 OK\r\n" +
                     "Content-Type: ${FileStore.mimeType(file)}\r\n" +
-                    "Content-Disposition: attachment; filename=\"${file.name}\"\r\n" +
-                    "Content-Length: ${bytes.size}\r\n" +
+                    "Content-Disposition: attachment; filename=\"$asciiName\"; filename*=UTF-8''$encodedName\r\n" +
+                    "Content-Length: ${file.length()}\r\n" +
                     "Connection: close\r\n\r\n"
                 out.write(head.toByteArray(Charsets.US_ASCII))
-                out.write(bytes)
                 out.flush()
+                file.inputStream().use { input ->
+                    val buf = ByteArray(64 * 1024)
+                    while (true) {
+                        val n = input.read(buf)
+                        if (n <= 0) break
+                        out.write(buf, 0, n)
+                    }
+                }
+                out.flush()
+                // /download menulis balasan mentah (bukan send()) —
+                // tulis baris log auditnya langsung di sini.
+                logApiRequest(method, path, 200, client)
             }
             method == "GET" && path == "/thumb" -> {
                 val suffix = query["space"] ?: ""
@@ -1487,6 +1818,9 @@ class ApiServer(private val ctx: Context) {
         obj.put("shed_count", guardState?.optInt("shed_count", 0) ?: 0)
         obj.put("last_shed_ms", guardState?.optLong("last_shed_ms", 0L) ?: 0L)
         obj.put("shed_confirmed_count", guardState?.optInt("shed_confirmed_count", 0) ?: 0)
+        // v0.1.85 (audit F-API-02): shed yang DITOLAK mentah-mentah
+        // (target foreground / mati) — bukan cuma tidak mendarat.
+        obj.put("shed_refused_count", guardState?.optInt("shed_refused_count", 0) ?: 0)
     }
 
     /** v0.1.78 — state guard (sama dengan field /status di atas)

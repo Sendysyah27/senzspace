@@ -33,6 +33,9 @@ object FileStore {
         Folder("_log-crash", "_Log-Crash", "#8A94A6"),
         // Log diagnosis unduh blob (v0.1.15) — alasan gagal per unduhan.
         Folder("_log-blob", "_Log-Blob", "#8A94A6"),
+        // v0.1.85 (audit CODE-05): log audit permintaan API
+        // (_log-api/api.log) — satu baris per permintaan.
+        Folder("_log-api", "_Log-Api", "#8A94A6"),
         // Thumbnail live Multi Live — kelihatan di File Manager supaya
         // bisa dicek langsung bila tile Beranda abu-abu (debug).
         Folder(LIVE, "_Live (thumbnail)", "#8A94A6")
@@ -142,15 +145,71 @@ object FileStore {
         return folders + files
     }
 
-    /** Nama file yang belum dipakai di folder (bentrok → tambah (1), (2)). */
+    /** v0.1.85 (audit CODE-01 + CODE-07): nama file aman dipakai
+     *  sebagai SATU nama file di dalam satu folder — tanpa pemisah
+     *  path, tanpa "..", tanpa NUL/CR/LF/quote, bukan absolut, bukan
+     *  "." atau "..". Dipakai semua gerbang yang menerima nama file
+     *  dari luar (POST /upload, jembatan unduh blob). */
+    fun isSafeFileName(name: String): Boolean {
+        if (name.isBlank()) return false
+        if (name == "." || name == "..") return false
+        if (name.contains("..")) return false
+        if (name.contains('/') || name.contains('\\')) return false
+        if (name.contains('\u0000') || name.contains('\r') ||
+            name.contains('\n') || name.contains('"')
+        ) return false
+        if (name.startsWith("/")) return false
+        return true
+    }
+
+    /** v0.1.85 (audit CODE-07): nama file yang aman ditaruh di header
+     *  Content-Disposition — karakter yang bisa memutus header (CR/LF/
+     *  quote) diganti "_". BUKAN untuk menerima nama traversal: nama
+     *  traversal DITOLAK di gerbang (isSafeFileName), bukan disanitasi
+     *  diam-diam. */
+    fun sanitizeFileName(name: String): String {
+        var s = name.map { c ->
+            if (c == '/' || c == '\\' || c == '\u0000' || c == '\r' ||
+                c == '\n' || c == '"'
+            ) '_' else c
+        }.joinToString("")
+        while (".." in s) s = s.replace("..", "__")
+        s = s.trim()
+        if (s.isEmpty() || s == "." || s == "..") return "file"
+        return s
+    }
+
+    /** Nama file yang belum dipakai di folder (bentrok → tambah (1), (2)).
+     *  v0.1.85 (audit CODE-01, sink): nama TIDAK AMAN (isSafeFileName)
+     *  DITOLAK dengan IllegalArgumentException — JANGAN PERNAH
+     *  disanitasi diam-diam jadi nama lain; dan file hasil WAJIB
+     *  kanonis di dalam dir (penahanan terhadap dir symlink). Semua
+     *  pemanggil sudah memvalidasi nama di gerbang atau menangkap
+     *  exception ini (simpan gagal jujur). */
     fun uniqueFile(dir: File, name: String): File {
-        var dest = File(dir, name)
+        if (!isSafeFileName(name)) {
+            throw IllegalArgumentException("nama file tidak valid: $name")
+        }
+        val dirCanon = try {
+            dir.canonicalFile
+        } catch (_: Exception) {
+            dir
+        }
+        var dest = File(dirCanon, name)
+        val destCanon = try {
+            dest.canonicalFile
+        } catch (_: Exception) {
+            dest
+        }
+        if (destCanon.parentFile != dirCanon) {
+            throw IllegalArgumentException("nama file keluar dari folder: $name")
+        }
         if (!dest.exists()) return dest
         val base = dest.nameWithoutExtension
         val ext = dest.extension.let { if (it.isEmpty()) "" else ".$it" }
         var i = 1
         while (dest.exists()) {
-            dest = File(dir, "$base ($i)$ext")
+            dest = File(dirCanon, "$base ($i)$ext")
             i++
         }
         return dest
@@ -304,16 +363,28 @@ object FileStore {
                     treeUri,
                     DocumentsContract.getTreeDocumentId(treeUri)
                 )
-                // Hapus dulu file lama bernama sama (agar tidak dobel).
-                val old = findInTree(cr, docUri, file.name)
-                if (old != null) DocumentsContract.deleteDocument(cr, old)
+                // v0.1.85 (audit CODE-11): JANGAN PERNAH hapus file
+                // pengguna bernama sama — pakai nama unik (pola
+                // uniqueFile: "nama (1).ext") supaya file lama tetap
+                // ada bila pembuatan salinan gagal sesudahnya.
+                // (TOCTOU: nama bisa dibuat app lain di sela probe —
+                // createDocument tetap membuat dokumen baru, bukan
+                // menimpa; yang dijamin = file lama tidak dihapus.)
+                var finalName = file.name
+                if (findInTree(cr, docUri, finalName) != null) {
+                    val base = file.nameWithoutExtension
+                    val ext = file.extension.let { if (it.isEmpty()) "" else ".$it" }
+                    var i = 1
+                    while (findInTree(cr, docUri, "$base ($i)$ext") != null) i++
+                    finalName = "$base ($i)$ext"
+                }
                 val newDoc = DocumentsContract.createDocument(
-                    cr, docUri, mimeType(file), file.name
+                    cr, docUri, mimeType(file), finalName
                 ) ?: return exportToDownloadsLegacy(ctx, file)
                 cr.openOutputStream(newDoc)?.use { out ->
                     file.inputStream().use { it.copyTo(out) }
                 }
-                return file.name
+                return finalName
             } catch (e: Exception) {
                 return exportToDownloadsLegacy(ctx, file)
             }

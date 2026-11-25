@@ -144,6 +144,30 @@ class WatchdogGuardService : Service() {
                 Log.w(TAG, "sendShedBroadcast gagal: ${e.message}")
             }
         }
+
+        /** v0.1.85 (audit F-API-02): tulis marker penolakan shed
+         *  (dipakai POST /guard saat target foreground / mati —
+         *  broadcast TIDAK dikirim). Pola sama seperti marker pending
+         *  shed-pending (atomik tmp+rename); tick guard mengonsumsi
+         *  marker ini jadi shed_refused_count — counter HANYA
+         *  dimutasi tick guard (satu penulis, seperti shed_count). */
+        fun writeShedRefusedMarker(ctx: Context, slot: Int, reason: String) {
+            try {
+                val now = System.currentTimeMillis()
+                val obj = JSONObject().apply {
+                    put("slot", slot)
+                    put("refused_ms", now)
+                    put("reason", reason)
+                }
+                val f = File(ctx.filesDir, "shed-refused-$slot-$now.json")
+                val tmp = File(ctx.filesDir, "shed-refused-$slot-$now.json.tmp")
+                tmp.writeText(obj.toString())
+                if (!tmp.renameTo(f)) f.writeText(obj.toString())
+                Log.i(TAG, "writeShedRefusedMarker: slot=$slot reason=$reason")
+            } catch (e: Exception) {
+                Log.w(TAG, "writeShedRefusedMarker gagal: ${e.message}")
+            }
+        }
     }
 
     private val handler = Handler(Looper.getMainLooper())
@@ -160,6 +184,11 @@ class WatchdogGuardService : Service() {
     // dua kali (dipulihkan dari guard-state.json).
     private var shedConfirmedCount = 0
     private val lastConfirmedShedMsBySuffix = mutableMapOf<String, Long>()
+
+    // v0.1.85 (audit F-API-02) — shed yang DITOLAK mentah-mentah
+    // (target foreground / mati, marker shed-refused-<slot>-<ms>.json
+    // dari proses utama). Dipulihkan dari guard-state.json.
+    private var shedRefusedCount = 0
 
     private val checkRunnable = object : Runnable {
         override fun run() {
@@ -385,8 +414,41 @@ class WatchdogGuardService : Service() {
      *  (2) shed-<suffix>.json — konfirmasi Space sesudah
      *  webView.destroy(): JANGAN dihapus (bukti terakhir yang
      *  dibaca verifikasi live); hitung sekali per marker baru
-     *  (watermark per suffix di lastConfirmedShedMsBySuffix). */
+     *  (watermark per suffix di lastConfirmedShedMsBySuffix).
+     *  v0.1.85 (audit F-API-02):
+     *  (3) shed-refused-<slot>-<epochMs>.json — shed yang DITOLAK
+     *  POST /guard (target foreground / mati): hapus sesudah
+     *  dibaca, shedRefusedCount++. */
     private fun consumeShedMarkers() {
+        try {
+            val refused = filesDir.listFiles { f ->
+                f.isFile && f.name.startsWith("shed-refused-") &&
+                    f.name.endsWith(".json")
+            } ?: emptyArray()
+            for (f in refused) {
+                var refusedMs = 0L
+                var reason = ""
+                try {
+                    val obj = JSONObject(f.readText())
+                    refusedMs = obj.optLong("refused_ms", 0L)
+                    reason = obj.optString("reason", "")
+                } catch (_: Exception) {
+                }
+                try {
+                    f.delete()
+                } catch (_: Exception) {
+                }
+                shedRefusedCount++
+                Log.i(
+                    TAG,
+                    "consumeShedMarkers: shed ditolak dikonsumsi " +
+                        "(refused_ms=$refusedMs, reason=$reason, " +
+                        "shed_refused_count=$shedRefusedCount)"
+                )
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "consumeShedMarkers: penolakan gagal: ${e.message}")
+        }
         try {
             val pending = filesDir.listFiles { f ->
                 f.isFile && f.name.startsWith("shed-pending-") &&
@@ -506,6 +568,8 @@ class WatchdogGuardService : Service() {
                 put("shed_count", shedCount)
                 put("last_shed_ms", lastShedMs)
                 put("shed_confirmed_count", shedConfirmedCount)
+                // v0.1.85 (audit F-API-02): shed yang ditolak.
+                put("shed_refused_count", shedRefusedCount)
                 val confirmed = JSONObject()
                 for ((suffix, ms) in lastConfirmedShedMsBySuffix) {
                     confirmed.put(suffix, ms)
@@ -561,6 +625,8 @@ class WatchdogGuardService : Service() {
                 shedCount = obj.optInt("shed_count", 0)
                 lastShedMs = obj.optLong("last_shed_ms", 0L)
                 shedConfirmedCount = obj.optInt("shed_confirmed_count", 0)
+                // v0.1.85 (audit F-API-02): pulihkan penolakan.
+                shedRefusedCount = obj.optInt("shed_refused_count", 0)
                 val confirmed = obj.optJSONObject("last_confirmed_shed_ms")
                 if (confirmed != null) {
                     val keys = confirmed.keys()

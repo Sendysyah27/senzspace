@@ -28,6 +28,7 @@ import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.webkit.WebViewCompat
 import java.io.FileOutputStream
+import java.security.MessageDigest
 
 /**
  * Browser per Space (S0).
@@ -48,6 +49,21 @@ abstract class BrowserActivity : AppCompatActivity() {
 
     companion object {
         private const val TAG = "SenzSpace"
+
+        // v0.1.85 (audit CODE-06): aksi broadcast untuk toggle debug
+        // WebView — dikirim Pengaturan ke semua proses Space supaya
+        // saklar berlaku tanpa restart app (lihat receiver shed di
+        // bawah, yang juga mendengarkan aksi ini). Nilai saklarnya
+        // di PREF_WEBVIEW_DEBUG (default MATI).
+        const val ACTION_WEBVIEW_DEBUG = "id.senzspace.debug.action.WEBVIEW_DEBUG"
+        const val PREF_WEBVIEW_DEBUG = "webview_debug_enabled"
+
+        /** True bila toggle "Izinkan debug WebView (adb)" di Pengaturan
+         *  ON. Default MATI di semua build (dulu: selalu ON di build
+         *  debug — socket DevTools menjawab lewat adb). */
+        fun isWebViewDebuggingEnabled(ctx: android.content.Context): Boolean =
+            ctx.getSharedPreferences("senzspace_ui", android.content.Context.MODE_PRIVATE)
+                .getBoolean(PREF_WEBVIEW_DEBUG, false)
 
         /** Split-screen (v0.1.21): slot Space yang harus dibuka
          *  berdampingan begitu Space peminta tampil. Satu tembakan —
@@ -99,6 +115,31 @@ abstract class BrowserActivity : AppCompatActivity() {
     private val lockLauncher = LockGate.register(this)
     private var popupView: WebView? = null
     private var currentUrl = ""
+    /** v0.1.85 (audit CODE-02): nonce jembatan JS — acak per
+     *  instance Activity (per proses :spaceN). Disuntik ke frame
+     *  UTAMA saja (window.__senzBridgeNonce, lewat
+     *  evaluateJavascript di onPageStarted/onPageFinished).
+     *  Semua 14 method @JavascriptInterface mewajibkan nonce ini
+     *  sebagai argumen terakhir (banding constant-time); iframe
+     *  lintas-origin TIDAK PERNAH melihat nilainya — jendela
+     *  iframe tidak bisa membaca window frame utama — jadi
+     *  panggilan bridge dari iframe asing selalu ditolak walau
+     *  gerbang origin (isBridgeOriginAllowed, yang hanya membaca
+     *  URL frame utama) meloloskannya. JS app sendiri (core/trap/
+     *  executor, semua jalan di frame utama) menyertakan nonce di
+     *  tiap panggilan. Batas jujur: relay postMessage core
+     *  (senz-blob-data) masih percaya balasan frame mana pun untuk
+     *  URL yang sedang ditunggu — nonce tidak menutup jalur tidak
+     *  langsung itu (frame pemilik blob ASLI harus bisa menjawab
+     *  lintas-origin); yang membatasi dampaknya adalah validasi
+     *  nama file CODE-01 (byte palsu hanya bisa mendarat di folder
+     *  Space itu dengan nama aman). */
+    private val bridgeNonce: String = java.util.UUID.randomUUID().toString()
+
+    /** v0.1.85 (audit CODE-16): hitung file yang dibuat lewat
+     *  jembatan unduh di sesi Activity ini (maks 50 — lihat
+     *  onBlobData/onChunk). */
+    private var bridgeDownloadFileCount = 0
     private var spaceName = "Space"
     private var homeUrl = "https://claude.ai"
     private var activityDestroyed = false
@@ -168,6 +209,33 @@ abstract class BrowserActivity : AppCompatActivity() {
         return TRAP_HOSTS.any { host.endsWith(".$it") }
     }
 
+    /** v0.1.85 (audit CODE-02): nonce jembatan valid? Banding
+     *  constant-time (MessageDigest.isEqual, seperti ApiToken.check)
+     *  supaya percobaan nonce tidak membocorkan posisi benar. */
+    private fun isBridgeNonceValid(nonce: String?): Boolean {
+        if (nonce.isNullOrEmpty()) return false
+        return MessageDigest.isEqual(
+            nonce.toByteArray(Charsets.UTF_8),
+            bridgeNonce.toByteArray(Charsets.UTF_8)
+        )
+    }
+
+    /** v0.1.85 (audit CODE-02): suntik nonce ke frame utama.
+     *  Dipanggil di onPageStarted (awal, best-effort — konteks JS
+     *  halaman baru bisa belum siap) DAN onPageFinished (yang
+     *  diandalkan, sebelum injectLiveObserver/ensureBlobCoreInjected
+     *  — evaluateJavascript dieksekusi berurutan). Idempoten (nilai
+     *  sama per instance). Iframe TIDAK PERNAH dapat nilai ini. */
+    private fun injectBridgeNonce() {
+        if (!::webView.isInitialized) return
+        try {
+            webView.evaluateJavascript(
+                "window.__senzBridgeNonce='$bridgeNonce';", null
+            )
+        } catch (e: Exception) {
+        }
+    }
+
     /** v0.1.75 (audit #1): gerbang origin jembatan JS. Jembatan
      *  (SenzLive/SenzBlob/SenzHttp) HANYA boleh dipanggil halaman
      *  yang URL-nya sekarang di host home Space ini, host trap
@@ -177,6 +245,28 @@ abstract class BrowserActivity : AppCompatActivity() {
     private fun isBridgeOriginAllowed(): Boolean {
         val host = try {
             android.net.Uri.parse(currentUrl).host
+        } catch (_: Exception) {
+            null
+        } ?: return false
+        if (isTrapHost(host)) return true
+        if (host in NO_INJECT_HOSTS) return true
+        if (NO_INJECT_HOSTS.any { host.endsWith(".$it") }) return true
+        val homeHost = try {
+            android.net.Uri.parse(homeUrl).host
+        } catch (_: Exception) {
+            null
+        }
+        if (homeHost != null && (host == homeHost || host.endsWith(".$homeHost"))) return true
+        return false
+    }
+
+    /** v0.1.85 (audit CODE-08): host yang boleh dimuat pop-up —
+     *  sama seperti gerbang origin jembatan (host home Space ini,
+     *  host trap, host login Google + subdomainnya), tapi diperiksa
+     *  dari URL yang AKAN dimuat (bukan currentUrl frame utama). */
+    private fun isPopupHostAllowed(url: String): Boolean {
+        val host = try {
+            android.net.Uri.parse(url).host
         } catch (_: Exception) {
             null
         } ?: return false
@@ -816,7 +906,8 @@ abstract class BrowserActivity : AppCompatActivity() {
      *  membawa jam reset ("10:30 PM") untuk chip Beranda. */
     private inner class LiveBridge {
         @android.webkit.JavascriptInterface
-        fun onChanged() {
+        fun onChanged(nonce: String) {
+            if (!isBridgeNonceValid(nonce)) return
             if (!isBridgeOriginAllowed()) return
             liveHandler.post {
                 // v0.1.35: catat DOM berubah — Beranda pakai ini untuk
@@ -828,7 +919,8 @@ abstract class BrowserActivity : AppCompatActivity() {
         }
 
         @android.webkit.JavascriptInterface
-        fun onLimit(reset: String) {
+        fun onLimit(reset: String, nonce: String) {
+            if (!isBridgeNonceValid(nonce)) return
             if (!isBridgeOriginAllowed()) return
             liveHandler.post {
                 SpaceStatus.writeLimit(this@BrowserActivity, dataDirectorySuffix, reset)
@@ -836,7 +928,8 @@ abstract class BrowserActivity : AppCompatActivity() {
         }
 
         @android.webkit.JavascriptInterface
-        fun onLimitCleared() {
+        fun onLimitCleared(nonce: String) {
+            if (!isBridgeNonceValid(nonce)) return
             if (!isBridgeOriginAllowed()) return
             liveHandler.post {
                 SpaceStatus.clearLimit(this@BrowserActivity, dataDirectorySuffix)
@@ -851,7 +944,7 @@ abstract class BrowserActivity : AppCompatActivity() {
                 "(function(){if(window.__senzLive)return;window.__senzLive=true;" +
                     "var t=null;var ob=new MutationObserver(function(){" +
                     "clearTimeout(t);t=setTimeout(function(){" +
-                    "window.SenzLive.onChanged();},400);});" +
+                    "window.SenzLive.onChanged(window.__senzBridgeNonce);},400);});" +
                     "if(document.body){ob.observe(document.body," +
                     "{childList:true,subtree:true,characterData:true});}" +
                     // Deteksi limit 5 jam Claude: modal "You hit your 5-hour
@@ -864,7 +957,7 @@ abstract class BrowserActivity : AppCompatActivity() {
                     "var m=txt.match(/resets at ([0-9:]+ [AP]M)/)||txt.match(/returns? at ([0-9:]+ [AP]M)/)||txt.match(/until ([0-9:]+ [AP]M)/);" +
                     "var reset=m?m[1]:'';var st=hit?('LIMIT:'+reset):'OK';" +
                     "if(window.__senzLimitState!==st){window.__senzLimitState=st;" +
-                    "if(hit){window.SenzLive.onLimit(reset);}else{window.SenzLive.onLimitCleared();}}" +
+                    "if(hit){window.SenzLive.onLimit(reset,window.__senzBridgeNonce);}else{window.SenzLive.onLimitCleared(window.__senzBridgeNonce);}}" +
                     "}catch(e){}};checkLimit();setInterval(checkLimit,5000);})();",
                 null
             )
@@ -907,6 +1000,24 @@ abstract class BrowserActivity : AppCompatActivity() {
                 .replace("; wv", "")
                 .replace(" Version/4.0", "")
             webViewClient = object : WebViewClient() {
+                override fun shouldOverrideUrlLoading(
+                    v: WebView,
+                    request: WebResourceRequest
+                ): Boolean {
+                    // v0.1.85 (audit CODE-08): pop-up hanya boleh
+                    // navigasi ke host yang diizinkan (host home Space
+                    // ini, host trap, host login Google) — host lain
+                    // diblokir (true = jangan muat). Batas jujur: URL
+                    // AWAL pop-up (pilihan window.open halaman
+                    // pembuka) tidak lewat sini — WebView memuatnya
+                    // langsung via transport; penjaga ini menahan
+                    // navigasi sesudah pop-up terbuka.
+                    val url = request.url.toString()
+                    if (isPopupHostAllowed(url)) return false
+                    android.util.Log.w(TAG, "POPUP diblokir: $url")
+                    return true
+                }
+
                 override fun onPageStarted(
                     v: WebView,
                     url: String,
@@ -1003,7 +1114,14 @@ abstract class BrowserActivity : AppCompatActivity() {
                 dataDirectorySuffixSet = true
             }
         }
-        if (BuildConfig.DEBUG) {
+        // v0.1.85 (audit CODE-06): WebContents debugging HANYA bila
+        // toggle "Izinkan debug WebView (adb)" di Pengaturan ON
+        // (default MATI di semua build — dulu selalu ON di build
+        // debug sehingga socket DevTools menjawab lewat adb).
+        // Toggle yang diubah saat Space sudah jalan berlaku langsung
+        // lewat broadcast ACTION_WEBVIEW_DEBUG (lihat receiver shed);
+        // Space yang dibuka sesudahnya membaca pref di sini.
+        if (isWebViewDebuggingEnabled(this)) {
             WebView.setWebContentsDebuggingEnabled(true)
         }
         super.onCreate(savedInstanceState)
@@ -1174,6 +1292,8 @@ abstract class BrowserActivity : AppCompatActivity() {
                 ) {
                     currentUrl = url
                     logEvent("MULAI: $url")
+                    // v0.1.85 (audit CODE-02): nonce jembatan, awal.
+                    injectBridgeNonce()
                 }
 
                 override fun onPageFinished(view: WebView, url: String) {
@@ -1190,6 +1310,10 @@ abstract class BrowserActivity : AppCompatActivity() {
                     // chip di Dashboard jujur. Hanya bendera 1/0 — BUKAN
                     // cookie/sesi, jadi aman disimpan sebagai file biasa.
                     saveLoginState(url)
+                    // v0.1.85 (audit CODE-02): nonce jembatan dulu —
+                    // injectLiveObserver + ensureBlobCoreInjected di
+                    // bawah memanggil bridge dengan nonce ini.
+                    injectBridgeNonce()
                     // Multi Live v2: pasang pengamat DOM + tangkap langsung
                     // bila halaman selesai dimuat saat Space di belakang.
                     injectLiveObserver()
@@ -1557,13 +1681,26 @@ abstract class BrowserActivity : AppCompatActivity() {
             ) {
                 if (intent?.action == WatchdogGuardService.ACTION_SHED_SPACE) {
                     onShedBroadcast(intent)
+                } else if (intent?.action == ACTION_WEBVIEW_DEBUG) {
+                    // v0.1.85 (audit CODE-06): toggle debug WebView
+                    // berlaku langsung di Space yang sudah jalan —
+                    // tanpa restart app (Space yang dibuka sesudahnya
+                    // membaca pref di onCreate).
+                    try {
+                        WebView.setWebContentsDebuggingEnabled(
+                            intent.getBooleanExtra("enabled", false)
+                        )
+                    } catch (_: Exception) {
+                    }
                 }
             }
         }
         shedReceiver = receiver
         try {
-            val filter =
-                android.content.IntentFilter(WatchdogGuardService.ACTION_SHED_SPACE)
+            val filter = android.content.IntentFilter().apply {
+                addAction(WatchdogGuardService.ACTION_SHED_SPACE)
+                addAction(ACTION_WEBVIEW_DEBUG)
+            }
             if (android.os.Build.VERSION.SDK_INT >= 33) {
                 registerReceiver(
                     receiver, filter,
@@ -3068,7 +3205,7 @@ abstract class BrowserActivity : AppCompatActivity() {
     private fun directRecordJs(fileName: String): String {
         val nameJson = org.json.JSONObject.quote(fileName)
         return """(function(){
-            function diag(s){try{window.SenzBlob.onBlobDiag(s);}catch(e){}}
+            function diag(s){try{window.SenzBlob.onBlobDiag(s,window.__senzBridgeNonce);}catch(e){}}
             function findAudio(root){
                 if(!root)return null;
                 if(root.tagName==='AUDIO')return root;
@@ -3095,7 +3232,7 @@ abstract class BrowserActivity : AppCompatActivity() {
                 if(dead)return;dead=true;
                 if(monTimer){clearInterval(monTimer);monTimer=null;}
                 try{if(rec&&rec.state!=='inactive'){rec.stop();}}catch(e){}
-                try{window.SenzBlob.onBlobRecordFail(reason);}catch(e){}
+                try{window.SenzBlob.onBlobRecordFail(reason,window.__senzBridgeNonce);}catch(e){}
             }
             function startRec(d){
                 if(dead||started)return;started=true;dur=d;recStarted=true;
@@ -3118,13 +3255,13 @@ abstract class BrowserActivity : AppCompatActivity() {
                         var b=new Blob(chunks,{type:rec.mimeType||'audio/webm'});
                         var ok=b.size>0&&(ended||ct>=dur-1||(Date.now()-startWall)/1000>=dur);
                         var verdict=ok?'ok':(b.size===0?'empty':'short');
-                        try{window.SenzBlob.onBlobRecordDone(String(Math.round(ct*10)/10),String(Math.round(dur*10)/10),String(chunks.length),String(b.size),verdict);}catch(e){}
+                        try{window.SenzBlob.onBlobRecordDone(String(Math.round(ct*10)/10),String(Math.round(dur*10)/10),String(chunks.length),String(b.size),verdict,window.__senzBridgeNonce);}catch(e){}
                         if(!ok){return;}
                         var r=new FileReader();
-                        r.onloadend=function(){if(dead)return;if(window.__senzBlobDone)return;window.__senzBlobDone=true;var s=r.result||'';var i=s.indexOf(',');window.SenzBlob.onBlobData(i>=0?s.substring(i+1):s,__NAME_JSON__);};
-                        r.onerror=function(){try{window.SenzBlob.onBlobError('fallback: reader-error (langsung)');}catch(e){}};
+                        r.onloadend=function(){if(dead)return;if(window.__senzBlobDone)return;window.__senzBlobDone=true;var s=r.result||'';var i=s.indexOf(',');window.SenzBlob.onBlobData(i>=0?s.substring(i+1):s,__NAME_JSON__,window.__senzBridgeNonce);};
+                        r.onerror=function(){try{window.SenzBlob.onBlobError('fallback: reader-error (langsung)',window.__senzBridgeNonce);}catch(e){}};
                         r.readAsDataURL(b);
-                    }catch(e){try{window.SenzBlob.onBlobError('fallback: '+(e.message||e)+' (langsung)');}catch(e2){}}
+                    }catch(e){try{window.SenzBlob.onBlobError('fallback: '+(e.message||e)+' (langsung)',window.__senzBridgeNonce);}catch(e2){}}
                 };
                 var maxMs=Math.min(300000,(dur+15)*1000);
                 var stopOnce=function(){if(stopped)return;stopped=true;try{rec.stop();}catch(e){}try{au.pause();}catch(e){}};
@@ -3158,7 +3295,7 @@ abstract class BrowserActivity : AppCompatActivity() {
                 },3000);
                 try{rec.start(1000);}catch(e){failAsync('rec-start-fail');return;}
                 diag('fallback: rekam langsung durasi='+Math.ceil(dur)+' dtk');
-                try{window.SenzBlob.onBlobFallbackStart(String(Math.ceil(dur)));}catch(e){}
+                try{window.SenzBlob.onBlobFallbackStart(String(Math.ceil(dur)),window.__senzBridgeNonce);}catch(e){}
             }
             var waited=0;
             function metaPoll(){
@@ -4882,26 +5019,26 @@ abstract class BrowserActivity : AppCompatActivity() {
         )
         val js = "(function(){try{" +
             "if(!window.SenzHttp){return;}" +
-            "window.SenzHttp.onDiag('fetch mulai');" +
+            "window.SenzHttp.onDiag('fetch mulai',window.__senzBridgeNonce);" +
             "fetch(window.__senzDlUrl,{credentials:'include'}).then(function(r){" +
-            "if(!r.ok){window.SenzHttp.onError('server menolak ('+r.status+')');return null;}" +
-            "window.SenzHttp.onDiag('fetch ok total='+(r.headers.get('Content-Length')||'?'));" +
+            "if(!r.ok){window.SenzHttp.onError('server menolak ('+r.status+')',window.__senzBridgeNonce);return null;}" +
+            "window.SenzHttp.onDiag('fetch ok total='+(r.headers.get('Content-Length')||'?'),window.__senzBridgeNonce);" +
             "var cd=r.headers.get('Content-Disposition')||'';" +
             "var nm='';" +
             "var m=/filename\\*?=([^;]+)/.exec(cd);" +
             "if(m){nm=decodeURIComponent(m[1].replace(/^utf-8''/i,'').replace(/\"/g,''));}" +
-            "window.SenzHttp.onMeta(r.headers.get('Content-Length')||'0',nm);" +
+            "window.SenzHttp.onMeta(r.headers.get('Content-Length')||'0',nm,window.__senzBridgeNonce);" +
             "var reader=r.body.getReader();" +
             "var pump=function(){return reader.read().then(function(res){" +
-            "if(res.done){window.SenzHttp.onDone();return;}" +
+            "if(res.done){window.SenzHttp.onDone(window.__senzBridgeNonce);return;}" +
             "var v=res.value;var bin='';" +
             "for(var j=0;j<v.length;j+=0x8000){" +
             "bin+=String.fromCharCode.apply(null,v.subarray(j,j+0x8000));}" +
-            "window.SenzHttp.onChunk(btoa(bin));" +
+            "window.SenzHttp.onChunk(btoa(bin),window.__senzBridgeNonce);" +
             "return pump();});};" +
             "return pump();}).catch(function(e){" +
-            "window.SenzHttp.onError(''+(e&&e.message?e.message:e));});" +
-            "}catch(e){try{window.SenzHttp.onError('js '+e.message);}catch(_){}}})();"
+            "window.SenzHttp.onError(''+(e&&e.message?e.message:e),window.__senzBridgeNonce);});" +
+            "}catch(e){try{window.SenzHttp.onError('js '+e.message,window.__senzBridgeNonce);}catch(_){}}})();"
         try {
             webView.evaluateJavascript(js) { v ->
                 logBlobDiag("UNDUH-WEB js-result: $v")
@@ -4922,17 +5059,36 @@ abstract class BrowserActivity : AppCompatActivity() {
         private var written = 0L
         private var lastPct = -1
         private var notifId = 0
+        // v0.1.85 (audit CODE-16): unduhan yang sudah ditolak cap
+        // (nama/cap) tidak boleh dihidupkan lagi oleh potongan
+        // berikutnya dari halaman yang sama — potongan itu dibuang.
+        private var downloadDead = false
 
         @android.webkit.JavascriptInterface
-        fun onDiag(msg: String) {
+        fun onDiag(msg: String, nonce: String) {
+            if (!isBridgeNonceValid(nonce)) return
             if (!isBridgeOriginAllowed()) return
             logBlobDiag("UNDUH-WEB diag: $msg")
         }
 
         @android.webkit.JavascriptInterface
-        fun onMeta(totalStr: String, cdName: String) {
+        fun onMeta(totalStr: String, cdName: String, nonce: String) {
+            if (!isBridgeNonceValid(nonce)) return
             if (!isBridgeOriginAllowed()) return
+            // v0.1.85 (audit CODE-01): nama dari Content-Disposition
+            // (dikontrol halaman) DITOLAK bila traversal — unduhan
+            // batal sebelum satu byte ditulis.
+            if (cdName.isNotBlank() && !FileStore.isSafeFileName(cdName)) {
+                httpMetaReceived = true
+                downloadDead = true
+                logBlobDiag("UNDUH-WEB DITOLAK: nama file tidak valid: $cdName")
+                runOnUiThread {
+                    android.widget.Toast.makeText(this@BrowserActivity, "Nama file unduhan tidak valid", android.widget.Toast.LENGTH_LONG).show()
+                }
+                return
+            }
             httpMetaReceived = true
+            downloadDead = false
             total = totalStr.toLongOrNull() ?: 0L
             baseName = cdName.ifBlank { pendingHttpFileName }
             notifId = 2000 + (System.currentTimeMillis() % 90).toInt()
@@ -4944,14 +5100,30 @@ abstract class BrowserActivity : AppCompatActivity() {
         }
 
         @android.webkit.JavascriptInterface
-        fun onChunk(base64: String) {
+        fun onChunk(base64: String, nonce: String) {
+            if (!isBridgeNonceValid(nonce)) return
             if (!isBridgeOriginAllowed()) return
+            if (downloadDead) return
             try {
                 val bytes = android.util.Base64.decode(base64, android.util.Base64.DEFAULT)
                 if (out == null) {
                     // Potongan pertama: tentukan nama final dari isi
                     // (sniff) sebelum file dibuat.
                     val finalName = fixExtension(baseName, bytes)
+                    // v0.1.85 (audit CODE-01): nama final DITOLAK
+                    // bila traversal — jangan buat file.
+                    if (!FileStore.isSafeFileName(finalName)) {
+                        downloadDead = true
+                        finishError("nama file tidak valid")
+                        return
+                    }
+                    // v0.1.85 (audit CODE-16): maks 50 file per sesi.
+                    if (bridgeDownloadFileCount >= 50) {
+                        downloadDead = true
+                        finishError("terlalu banyak file unduhan (maks 50 per sesi)")
+                        return
+                    }
+                    bridgeDownloadFileCount++
                     val dir = FileStore.folderDir(this@BrowserActivity, dataDirectorySuffix)
                     dir.mkdirs()
                     dest = FileStore.uniqueFile(dir, finalName)
@@ -4959,6 +5131,15 @@ abstract class BrowserActivity : AppCompatActivity() {
                 }
                 out?.write(bytes)
                 written += bytes.size
+                // v0.1.85 (audit CODE-16): maks 100 MB per file —
+                // lebih dari itu = batal + file parsial dihapus
+                // (finishError menghapus dest) + potongan berikut
+                // dibuang (downloadDead).
+                if (written > 100L * 1024 * 1024) {
+                    downloadDead = true
+                    finishError("file unduhan melebihi 100 MB")
+                    return
+                }
                 if (total > 0) {
                     val pct = (written * 100 / total).toInt().coerceIn(0, 100)
                     if (pct != lastPct && pct % 5 == 0) {
@@ -4972,7 +5153,8 @@ abstract class BrowserActivity : AppCompatActivity() {
         }
 
         @android.webkit.JavascriptInterface
-        fun onDone() {
+        fun onDone(nonce: String) {
+            if (!isBridgeNonceValid(nonce)) return
             if (!isBridgeOriginAllowed()) return
             try { out?.close() } catch (e: Exception) {}
             out = null
@@ -4996,7 +5178,8 @@ abstract class BrowserActivity : AppCompatActivity() {
         }
 
         @android.webkit.JavascriptInterface
-        fun onError(reason: String) {
+        fun onError(reason: String, nonce: String) {
+            if (!isBridgeNonceValid(nonce)) return
             if (!isBridgeOriginAllowed()) return
             finishError(reason)
         }
@@ -5136,9 +5319,9 @@ abstract class BrowserActivity : AppCompatActivity() {
             "try{cached=(window.__senzBlobGet&&window.__senzBlobGet(url))||'';}catch(e){}" +
             "var senzAllIframes=function(){var out=[];var walk=function(root){try{var els=root.querySelectorAll('iframe');for(var i=0;i<els.length;i++)out.push(els[i]);var all=root.querySelectorAll('*');for(var j=0;j<all.length;j++){var sr=null;try{sr=all[j].shadowRoot;}catch(e){}if(sr)walk(sr);}}catch(e){}};walk(document);return out;};" +
             "var fs0=senzAllIframes();" +
-            "try{window.SenzBlob.onBlobDiag('dl url='+url.slice(0,60)+',iframes='+fs0.length+',hit='+(cached!==''));}catch(e){}" +
-            "try{if(window.__senzTrapRescan){var sc=window.__senzTrapRescan();try{window.SenzBlob.onBlobDiag('dl scan: '+sc);}catch(e){}}}catch(e){}" +
-            "if(cached){window.__senzBlobDone=true;window.SenzBlob.onBlobData(cached,name);return;}" +
+            "try{window.SenzBlob.onBlobDiag('dl url='+url.slice(0,60)+',iframes='+fs0.length+',hit='+(cached!==''),window.__senzBridgeNonce);}catch(e){}" +
+            "try{if(window.__senzTrapRescan){var sc=window.__senzTrapRescan();try{window.SenzBlob.onBlobDiag('dl scan: '+sc,window.__senzBridgeNonce);}catch(e){}}}catch(e){}" +
+            "if(cached){window.__senzBlobDone=true;window.SenzBlob.onBlobData(cached,name,window.__senzBridgeNonce);return;}" +
             "var postAll=function(){var fs=senzAllIframes();for(var i=0;i<fs.length;i++){try{fs[i].contentWindow.postMessage({type:'senz-get-blob',url:url},'*');}catch(e){}}};" +
             "var postSelf=function(){try{window.postMessage({type:'senz-get-blob',url:url},'*');}catch(e){}};" +
             "postAll();postSelf();" +
@@ -5153,20 +5336,20 @@ abstract class BrowserActivity : AppCompatActivity() {
             "xhr.onload=function(){var r=new FileReader();" +
             "r.onloadend=function(){if(window.__senzBlobDone)return;" +
             "window.__senzBlobDone=true;var s=r.result||'';var i=s.indexOf(',');" +
-            "window.SenzBlob.onBlobData(i>=0?s.substring(i+1):s,name);};" +
-            "r.onerror=function(){window.SenzBlob.onBlobError('reader-error');};" +
+            "window.SenzBlob.onBlobData(i>=0?s.substring(i+1):s,name,window.__senzBridgeNonce);};" +
+            "r.onerror=function(){window.SenzBlob.onBlobError('reader-error',window.__senzBridgeNonce);};" +
             "r.readAsDataURL(xhr.response);};" +
-            "xhr.onerror=function(){var fb=window.__senzFallbackErr||'';window.SenzBlob.onBlobError('xhr-error status='+xhr.status+(fb?(' (fallback gagal: '+fb+')'):''));};" +
-            "xhr.ontimeout=function(){window.SenzBlob.onBlobError('xhr-timeout');};" +
-            "xhr.send();}catch(e){window.SenzBlob.onBlobError('js-exception '+e.message);}};" +
+            "xhr.onerror=function(){var fb=window.__senzFallbackErr||'';window.SenzBlob.onBlobError('xhr-error status='+xhr.status+(fb?(' (fallback gagal: '+fb+')'):''),window.__senzBridgeNonce);};" +
+            "xhr.ontimeout=function(){window.SenzBlob.onBlobError('xhr-timeout',window.__senzBridgeNonce);};" +
+            "xhr.send();}catch(e){window.SenzBlob.onBlobError('js-exception '+e.message,window.__senzBridgeNonce);}};" +
             "var senzTryRecorder=function(){try{" +
             "var findAudio=function(root){try{var aus=root.querySelectorAll('audio');for(var ai2=0;ai2<aus.length;ai2++){if(aus[ai2].src===url)return {el:aus[ai2],sh:(root!==document)};}}catch(e){}try{var all=root.querySelectorAll('*');for(var j=0;j<all.length;j++){var sr=null;try{sr=all[j].shadowRoot;}catch(e){}if(sr){var r=findAudio(sr);if(r)return r;}}}catch(e){}return null;};" +
             "var found=findAudio(document);var a=found?found.el:null;var audioInShadow=found?found.sh:false;" +
-            "var shadowFail=function(rs){try{if(audioInShadow&&window.SenzBlob)window.SenzBlob.onBlobDiag('fallback: audio ketemu di shadow DOM tapi '+rs);}catch(e){}};" +
-            "if(!a){try{window.SenzBlob.onBlobDiag('fallback: tidak ada <audio> untuk url ini');}catch(e){}senzTryXhr();return;}" +
+            "var shadowFail=function(rs){try{if(audioInShadow&&window.SenzBlob)window.SenzBlob.onBlobDiag('fallback: audio ketemu di shadow DOM tapi '+rs,window.__senzBridgeNonce);}catch(e){}};" +
+            "if(!a){try{window.SenzBlob.onBlobDiag('fallback: tidak ada <audio> untuk url ini',window.__senzBridgeNonce);}catch(e){}senzTryXhr();return;}" +
             "var dur=(a.duration&&isFinite(a.duration))?a.duration:60;" +
-            "try{window.SenzBlob.onBlobDiag('fallback: rekam ulang audio durasi='+Math.ceil(dur)+' dtk'+(audioInShadow?' di shadow DOM':''));}catch(e){}" +
-            "try{window.SenzBlob.onBlobFallbackStart(String(Math.ceil(dur)));}catch(e){}" +
+            "try{window.SenzBlob.onBlobDiag('fallback: rekam ulang audio durasi='+Math.ceil(dur)+' dtk'+(audioInShadow?' di shadow DOM':''),window.__senzBridgeNonce);}catch(e){}" +
+            "try{window.SenzBlob.onBlobFallbackStart(String(Math.ceil(dur)),window.__senzBridgeNonce);}catch(e){}" +
             "var stream=null;" +
             "try{stream=a.captureStream?a.captureStream():(a.mozCaptureStream?a.mozCaptureStream():null);}catch(e){}" +
             "if(!stream){shadowFail('captureStream tidak tersedia');window.__senzFallbackErr='captureStream tidak tersedia';senzTryXhr();return;}" +
@@ -5179,9 +5362,9 @@ abstract class BrowserActivity : AppCompatActivity() {
             "rec.onstop=function(){if(dead)return;try{" +
             "var b=new Blob(chunks,{type:rec.mimeType||'audio/webm'});" +
             "var r=new FileReader();" +
-            "r.onloadend=function(){if(dead)return;if(window.__senzBlobDone)return;window.__senzBlobDone=true;var s=r.result||'';var i=s.indexOf(',');window.SenzBlob.onBlobData(i>=0?s.substring(i+1):s,name);};" +
-            "r.onerror=function(){window.SenzBlob.onBlobError('fallback: reader-error');};" +
-            "r.readAsDataURL(b);}catch(e){window.SenzBlob.onBlobError('fallback: '+(e.message||e));}};" +
+            "r.onloadend=function(){if(dead)return;if(window.__senzBlobDone)return;window.__senzBlobDone=true;var s=r.result||'';var i=s.indexOf(',');window.SenzBlob.onBlobData(i>=0?s.substring(i+1):s,name,window.__senzBridgeNonce);};" +
+            "r.onerror=function(){window.SenzBlob.onBlobError('fallback: reader-error',window.__senzBridgeNonce);};" +
+            "r.readAsDataURL(b);}catch(e){window.SenzBlob.onBlobError('fallback: '+(e.message||e),window.__senzBridgeNonce);}};" +
             "rec.onerror=function(){if(dead)return;window.__senzFallbackErr='recorder-error';senzTryXhr();};" +
             "var maxMs=Math.min(300000,(dur+15)*1000);" +
             "var stopOnce=function(){if(stopped)return;stopped=true;try{rec.stop();}catch(e){}try{a.pause();}catch(e){}};" +
@@ -5191,9 +5374,9 @@ abstract class BrowserActivity : AppCompatActivity() {
             "var p=null;try{p=a.play();}catch(e){dead=true;shadowFail('play ditolak');window.__senzFallbackErr='play ditolak ('+(e.message||e)+')';senzTryXhr();return;}" +
             "if(p&&p.catch){p.catch(function(e){if(dead)return;dead=true;try{rec.stop();}catch(e){}shadowFail('play ditolak');window.__senzFallbackErr='play ditolak ('+(e.message||e)+')';senzTryXhr();});}" +
             "try{rec.start(1000);}catch(e){if(!dead){shadowFail('rec.start gagal');window.__senzFallbackErr='rec.start gagal ('+(e.message||e)+')';senzTryXhr();}}" +
-            "}catch(e){window.SenzBlob.onBlobError('fallback: js '+(e.message||e));}};" +
-            "setTimeout(function(){try{if(window.__senzBlobDone)return;senzTryRecorder();}catch(e){window.SenzBlob.onBlobError('js-exception '+e.message);}},15000);" +
-            "}catch(e){window.SenzBlob.onBlobError('js-exception '+e.message);}})();"
+            "}catch(e){window.SenzBlob.onBlobError('fallback: js '+(e.message||e),window.__senzBridgeNonce);}};" +
+            "setTimeout(function(){try{if(window.__senzBlobDone)return;senzTryRecorder();}catch(e){window.SenzBlob.onBlobError('js-exception '+e.message,window.__senzBridgeNonce);}},15000);" +
+            "}catch(e){window.SenzBlob.onBlobError('js-exception '+e.message,window.__senzBridgeNonce);}})();"
         try {
             webView.evaluateJavascript(js, null)
         } catch (e: Exception) {
@@ -5223,8 +5406,27 @@ abstract class BrowserActivity : AppCompatActivity() {
      *  decode + tulis di thread pekerja. */
     private inner class BlobDownloadBridge {
         @android.webkit.JavascriptInterface
-        fun onBlobData(base64: String, fileName: String) {
+        fun onBlobData(base64: String, fileName: String, nonce: String) {
+            if (!isBridgeNonceValid(nonce)) return
             if (!isBridgeOriginAllowed()) return
+            // v0.1.85 (audit CODE-01): nama dari halaman DITOLAK bila
+            // traversal — jangan decode/tulis apa pun.
+            if (fileName.isNotBlank() && !FileStore.isSafeFileName(fileName)) {
+                logBlobDiag("BLOB DITOLAK: nama file tidak valid: $fileName")
+                runOnUiThread {
+                    Toast.makeText(this@BrowserActivity, "Nama file unduhan tidak valid", android.widget.Toast.LENGTH_LONG).show()
+                }
+                return
+            }
+            // v0.1.85 (audit CODE-16): maks 50 file per sesi.
+            if (bridgeDownloadFileCount >= 50) {
+                logBlobDiag("BLOB DITOLAK: terlalu banyak file unduhan (maks 50 per sesi)")
+                runOnUiThread {
+                    Toast.makeText(this@BrowserActivity, "Terlalu banyak file unduhan (maks 50 per sesi)", android.widget.Toast.LENGTH_LONG).show()
+                }
+                return
+            }
+            bridgeDownloadFileCount++
             // Nama asli dari atribut download anchor (mis.
             // "Generated Audio ... .wav", "PROJECT STATE.md") MENANG
             // atas nama tebakan WebView (UUID + .bin/.txt) — tebakan
@@ -5237,7 +5439,22 @@ abstract class BrowserActivity : AppCompatActivity() {
                     val bytes = android.util.Base64.decode(
                         base64, android.util.Base64.DEFAULT
                     )
+                    // v0.1.85 (audit CODE-16): maks 100 MB per file.
+                    if (bytes.size > 100 * 1024 * 1024) {
+                        runOnUiThread {
+                            Toast.makeText(this@BrowserActivity, "File unduhan melebihi 100 MB", android.widget.Toast.LENGTH_LONG).show()
+                        }
+                        return@Thread
+                    }
                     name = fixExtension(name, bytes)
+                    // v0.1.85 (audit CODE-01): nama final (termasuk
+                    // tebakan WebView) DITOLAK bila traversal.
+                    if (!FileStore.isSafeFileName(name)) {
+                        runOnUiThread {
+                            Toast.makeText(this@BrowserActivity, "Nama file unduhan tidak valid", android.widget.Toast.LENGTH_LONG).show()
+                        }
+                        return@Thread
+                    }
                     saveDownloadedBytes(name, bytes)
                 } catch (e: Exception) {
                     runOnUiThread {
@@ -5254,7 +5471,8 @@ abstract class BrowserActivity : AppCompatActivity() {
 
         /** Diagnosis dari halaman — ditulis ke _Log-Blob. */
         @android.webkit.JavascriptInterface
-        fun onBlobDiag(info: String) {
+        fun onBlobDiag(info: String, nonce: String) {
+            if (!isBridgeNonceValid(nonce)) return
             if (!isBridgeOriginAllowed()) return
             // v0.1.81 (B3): hitung jawaban frame untuk diagnosa gagal.
             try {
@@ -5283,7 +5501,8 @@ abstract class BrowserActivity : AppCompatActivity() {
          *  jalur ini — tenggat ditulis + status rekam diperbarui,
          *  walau pendingTtsScript null. */
         @android.webkit.JavascriptInterface
-        fun onBlobFallbackStart(durationSec: String) {
+        fun onBlobFallbackStart(durationSec: String, nonce: String) {
+            if (!isBridgeNonceValid(nonce)) return
             if (!isBridgeOriginAllowed()) return
             val dur = durationSec.toIntOrNull() ?: 60
             val waitMs = minOf(300000L, (dur + 30L) * 1000L)
@@ -5302,7 +5521,8 @@ abstract class BrowserActivity : AppCompatActivity() {
          *  (failTts membersihkan pendingTtsScript sehingga
          *  waitTtsFile yang sudah terjadwal langsung kembali). */
         @android.webkit.JavascriptInterface
-        fun onBlobRecordFail(reason: String) {
+        fun onBlobRecordFail(reason: String, nonce: String) {
+            if (!isBridgeNonceValid(nonce)) return
             if (!isBridgeOriginAllowed()) return
             val msg = when (reason) {
                 "metadata-timeout" -> "metadata audio tidak ke-load (10 dtk)"
@@ -5333,7 +5553,8 @@ abstract class BrowserActivity : AppCompatActivity() {
          *  supaya status tidak menggantung "running"). Detail
          *  selalu mencantumkan detik tertangkap vs durasi audio. */
         @android.webkit.JavascriptInterface
-        fun onBlobRecordDone(capturedSec: String, durationSec: String, chunks: String, bytes: String, verdict: String) {
+        fun onBlobRecordDone(capturedSec: String, durationSec: String, chunks: String, bytes: String, verdict: String, nonce: String) {
+            if (!isBridgeNonceValid(nonce)) return
             if (!isBridgeOriginAllowed()) return
             ttsRecordGateCapturedSec = capturedSec.toDoubleOrNull() ?: 0.0
             ttsRecordGateDurationSec = durationSec.toDoubleOrNull() ?: 0.0
@@ -5359,7 +5580,8 @@ abstract class BrowserActivity : AppCompatActivity() {
         }
 
         @android.webkit.JavascriptInterface
-        fun onBlobError(reason: String) {
+        fun onBlobError(reason: String, nonce: String) {
+            if (!isBridgeNonceValid(nonce)) return
             if (!isBridgeOriginAllowed()) return
             // v0.1.81 (B3): kegagalan membawa rantai diagnosa —
             // berapa iframe ditanya, berapa menjawab, apakah ada
@@ -5429,15 +5651,24 @@ abstract class BrowserActivity : AppCompatActivity() {
             "window.__senzBlobDone=false;" +
             "window.__senzPendingReqs={};" +
             "window.__senzFetchTried={};" +
-            "try{if(window.SenzBlob)window.SenzBlob.onBlobDiag('core: installed '+location.href);}catch(e){}" +
+            // v0.1.85 (audit CODE-02): relay diagnosa — core jalan di
+            // SETIAP frame (termasuk iframe lintas-origin), tapi
+            // nonce hanya ada di frame utama. Di frame utama:
+            // panggil bridge langsung (dengan nonce). Di iframe:
+            // kirim ke parent lewat postMessage 'senz-diag' — core
+            // frame utama meneruskannya ke bridge (cabang listener
+            // di bawah). Balasan 'senz-diag' dari frame asing hanya
+            // jadi BARIS LOG — tidak pernah menyentuh file/state.
+            "window.__senzDiag=function(m){try{if(window.parent===window){if(window.SenzBlob)window.SenzBlob.onBlobDiag(m,window.__senzBridgeNonce);}else{window.parent.postMessage({type:'senz-diag',msg:m},'*');}}catch(e){}};" +
+            "try{window.__senzDiag('core: installed '+location.href);}catch(e){}" +
             "window.__senzReplyBlob=function(u){" +
             "var d=window.__senzBlobGet(u)||'';if(!d)return;" +
             "var nm=window.__senzBlobName(u)||'';" +
             "if(!nm){try{var as=document.querySelectorAll('a[download]');for(var ai=0;ai<as.length;ai++){if(as[ai].href===u&&as[ai].getAttribute('download')){nm=as[ai].getAttribute('download');break;}}}catch(e){}}" +
-            "try{if(window.SenzBlob)window.SenzBlob.onBlobDiag('core: balas '+u.slice(-8));}catch(e){}" +
+            "try{window.__senzDiag('core: balas '+u.slice(-8));}catch(e){}" +
             "var rp={type:'senz-blob-data',url:u,data:d,name:nm};" +
             "if(window.parent&&window.parent!==window){window.parent.postMessage(rp,'*');}" +
-            "else{try{window.__senzBlobDone=true;}catch(e){}if(window.SenzBlob)window.SenzBlob.onBlobData(d,nm);}};" +
+            "else{try{window.__senzBlobDone=true;}catch(e){}if(window.SenzBlob)window.SenzBlob.onBlobData(d,nm,window.__senzBridgeNonce);}};" +
             "window.__senzFlushPending=function(u){" +
             "if(!window.__senzPendingReqs[u])return;" +
             "delete window.__senzPendingReqs[u];" +
@@ -5472,26 +5703,26 @@ abstract class BrowserActivity : AppCompatActivity() {
             "window.addEventListener('message',function(ev){" +
             "try{var m=ev.data||{};" +
             "if(m&&m.type==='senz-get-blob'&&m.url){" +
-            "try{if(window.SenzBlob)window.SenzBlob.onBlobDiag('core: req '+m.url.slice(-8)+' cache='+(window.__senzBlobGet(m.url)?'ada':'kosong'));}catch(e){}" +
+            "try{window.__senzDiag('core: req '+m.url.slice(-8)+' cache='+(window.__senzBlobGet(m.url)?'ada':'kosong'));}catch(e){}" +
             "if(window.__senzBlobGet(m.url)){window.__senzReplyBlob(m.url);}" +
             "else{window.__senzPendingReqs[m.url]=true;" +
             "setTimeout(function(){try{delete window.__senzPendingReqs[m.url];}catch(e){}},20000);" +
             "try{" +
             "if(!window.__senzFetchTried[m.url]){window.__senzFetchTried[m.url]=true;" +
-            "try{if(window.SenzBlob)window.SenzBlob.onBlobDiag('core: fetch-try '+m.url.slice(-8));}catch(e){}" +
+            "try{window.__senzDiag('core: fetch-try '+m.url.slice(-8));}catch(e){}" +
             "fetch(m.url).then(function(r){" +
-            "if(!r.ok){try{if(window.SenzBlob)window.SenzBlob.onBlobDiag('core: fetch-gagal http '+r.status);}catch(e){}return null;}" +
+            "if(!r.ok){try{window.__senzDiag('core: fetch-gagal http '+r.status);}catch(e){}return null;}" +
             "return r.blob();}).then(function(b){" +
             "if(!b)return;" +
             "var rr=new FileReader();" +
             "rr.onloadend=function(){var s=rr.result||'';var i=s.indexOf(',');var d=i>=0?s.substring(i+1):s;" +
             "try{window.__senzBlobCache[m.url]=d;}catch(e){}" +
-            "try{if(window.SenzBlob)window.SenzBlob.onBlobDiag('core: fetch-ok '+m.url.slice(-8));}catch(e){}" +
+            "try{window.__senzDiag('core: fetch-ok '+m.url.slice(-8));}catch(e){}" +
             "window.__senzReplyBlob(m.url);};" +
-            "rr.onerror=function(){try{if(window.SenzBlob)window.SenzBlob.onBlobDiag('core: fetch-gagal reader');}catch(e){}};" +
+            "rr.onerror=function(){try{window.__senzDiag('core: fetch-gagal reader');}catch(e){}};" +
             "rr.readAsDataURL(b);}).catch(function(e){" +
-            "try{if(window.SenzBlob)window.SenzBlob.onBlobDiag('core: fetch-gagal '+(e&&e.message?e.message:e));}catch(e){}" +
-            "});}}catch(e){try{if(window.SenzBlob)window.SenzBlob.onBlobDiag('core: fetch-gagal js '+e.message);}catch(e){}}" +
+            "try{window.__senzDiag('core: fetch-gagal '+(e&&e.message?e.message:e));}catch(e){}" +
+            "});}}catch(e){try{window.__senzDiag('core: fetch-gagal js '+e.message);}catch(e){}}" +
             "}" +
             "try{var fs=document.querySelectorAll('iframe');" +
             "for(var i=0;i<fs.length;i++){try{fs[i].contentWindow.postMessage(m,'*');}catch(e){}}}catch(e){}" +
@@ -5500,9 +5731,17 @@ abstract class BrowserActivity : AppCompatActivity() {
             "if(m.url===window.__senzPendingBlobUrl&&m.data&&!window.__senzBlobDone){" +
             "var nm=m.name||'';" +
             "try{nm=nm||window.__senzBlobName(m.url)||'';}catch(e){}" +
-            "window.__senzBlobDone=true;window.SenzBlob.onBlobData(m.data,nm);}}" +
-            "else if(m.data){try{window.parent.postMessage(m,'*');}catch(e){}}" +
-            "}}catch(e){}});" +
+            "window.__senzBlobDone=true;window.SenzBlob.onBlobData(m.data,nm,window.__senzBridgeNonce);}}" +
+            // v0.1.85 (audit CODE-02): cabang senz-diag HARUS sejajar
+            // dengan cabang senz-blob-data (bukan tersarang di dalamnya
+            // - di sana m.type sudah pasti 'senz-blob-data', jadi
+            // cabang ini mati dan relay diag iframe tidak pernah
+            // sampai; ketemu harness Test J 25 Nov).
+            "else if(m.data){try{window.parent.postMessage(m,'*');}catch(e){}}}" +
+            "else if(m&&m.type==='senz-diag'){" +
+            "if(window.parent===window){try{if(window.SenzBlob)window.SenzBlob.onBlobDiag(m.msg,window.__senzBridgeNonce);}catch(e){}}" +
+            "else{try{window.parent.postMessage(m,'*');}catch(e){}}}" +
+            "}catch(e){}});" +
             "}catch(e){}})();"
         // Perangkap iframe (v0.1.18, diperluas v0.1.81) — jalan di
         // SETIAP frame (bukan hanya frame utama, supaya iframe
@@ -5518,7 +5757,7 @@ abstract class BrowserActivity : AppCompatActivity() {
             "var wrap=function(h){try{" +
             "if(!h||h.indexOf('__senzBlobCache')!==-1)return h;" +
             "return h+'<scr'+'ipt>'+CORE+'</scr'+'ipt>';}catch(e){return h;}};" +
-            "var diag=function(m){try{if(window.SenzBlob)window.SenzBlob.onBlobDiag(m);}catch(e){}};" +
+            "var diag=function(m){try{if(window.parent===window){if(window.SenzBlob)window.SenzBlob.onBlobDiag(m,window.__senzBridgeNonce);}else{window.parent.postMessage({type:'senz-diag',msg:m},'*');}}catch(e){}};" +
             "try{diag('trap: installed '+location.href+' frames='+(document.querySelectorAll?document.querySelectorAll('iframe').length:0));}catch(e){}" +
             "var rewriteDataSrc=function(s){try{" +
             "if(!s||s.indexOf('data:text/html')!==0)return s;" +
@@ -5754,6 +5993,20 @@ abstract class BrowserActivity : AppCompatActivity() {
     private fun saveDownloadedBytes(fileName: String, bytes: ByteArray) {
         Thread {
             try {
+                // v0.1.85 (audit CODE-16): maks 100 MB per file —
+                // lapis sink (pemanggil sudah memeriksa; ini jaring
+                // pengaman untuk jalur data: URL + rekam).
+                if (bytes.size > 100 * 1024 * 1024) {
+                    if (ttsRecordManual) {
+                        ttsRecordManual = false
+                        ttsFallbackDeadlineMs = 0
+                        writeTtsRecordStatus("failed", "rekaman melebihi 100 MB")
+                    }
+                    runOnUiThread {
+                        Toast.makeText(this, "File unduhan melebihi 100 MB", android.widget.Toast.LENGTH_LONG).show()
+                    }
+                    return@Thread
+                }
                 val dir = FileStore.folderDir(this, dataDirectorySuffix)
                 dir.mkdirs()
                 val dest = FileStore.uniqueFile(dir, fileName)

@@ -886,9 +886,28 @@ class FileManagerActivity : AppCompatActivity() {
         val inboxDir = FileStore.folderDir(this, "_inbox")
         inboxDir.mkdirs()
         val dest = FileStore.uniqueFile(inboxDir, clean)
+        // v0.1.85 (audit CODE-10): hitung byte SELAMA menyalin —
+        // batal begitu melewati 100 MB, jangan salin penuh dulu baru
+        // cek (dulu: file multi-GB sempat memenuhi storage sebelum
+        // akhirnya dihapus). Cek panjang sesudah salin di bawah
+        // tetap dipertahankan sebagai lapis kedua.
+        var oversize = false
         try {
             contentResolver.openInputStream(uri)?.use { input ->
-                dest.outputStream().use { out -> input.copyTo(out) }
+                dest.outputStream().use { out ->
+                    val buf = ByteArray(8192)
+                    var copied = 0L
+                    while (true) {
+                        val n = input.read(buf)
+                        if (n <= 0) break
+                        copied += n
+                        if (copied > PICK_MAX_BYTES) {
+                            oversize = true
+                            break
+                        }
+                        out.write(buf, 0, n)
+                    }
+                }
             } ?: run {
                 Toast.makeText(this, "Tidak bisa membaca file itu", Toast.LENGTH_LONG).show()
                 return
@@ -896,6 +915,14 @@ class FileManagerActivity : AppCompatActivity() {
         } catch (e: Exception) {
             dest.delete()
             Toast.makeText(this, "Gagal menyalin file: ${e.message}", Toast.LENGTH_LONG).show()
+            return
+        }
+        if (oversize) {
+            dest.delete()
+            Toast.makeText(
+                this, "File lebih dari 100 MB — tidak bisa dilampirkan",
+                Toast.LENGTH_LONG
+            ).show()
             return
         }
         if (dest.length() > PICK_MAX_BYTES) {
@@ -915,10 +942,37 @@ class FileManagerActivity : AppCompatActivity() {
         finish()
     }
 
+    /** v0.1.85 (audit CODE-13): folder sensitif (_log-* dan _live)
+     *  tidak bisa dibagikan/diekspor lewat File Manager — isinya
+     *  (jejak crash, diagnosa blob, thumbnail live) tetap bisa dibaca
+     *  agen lewat API /files + /download, tapi aksi user-facing
+     *  menolak dengan pesan jujur. Penentuan lewat folder tingkat
+     *  atas kanonis di bawah root (subfolder ikut terlindungi). */
+    private fun isSensitiveFolder(file: File): Boolean {
+        val root = try {
+            FileStore.rootDir(this).canonicalFile
+        } catch (_: Exception) {
+            return false
+        }
+        val canon = try {
+            file.canonicalFile
+        } catch (_: Exception) {
+            return false
+        }
+        val prefix = root.path + File.separator
+        if (!canon.path.startsWith(prefix)) return false
+        val top = canon.path.substring(prefix.length).substringBefore(File.separator)
+        return top.startsWith("_log-") || top == "_live"
+    }
+
     private fun shareFiles(files: List<File>) {
         val onlyFiles = files.filter { it.isFile }
         if (onlyFiles.isEmpty()) {
             Toast.makeText(this, "Folder tidak bisa dibagikan", Toast.LENGTH_SHORT).show()
+            return
+        }
+        if (onlyFiles.any { isSensitiveFolder(it) }) {
+            Toast.makeText(this, "File log tidak bisa dibagikan", Toast.LENGTH_LONG).show()
             return
         }
         try {
@@ -1079,18 +1133,34 @@ class FileManagerActivity : AppCompatActivity() {
     }
 
     private fun unzipFile(file: File) {
+        // v0.1.85 (audit CODE-09): batas ekstrak — total 100 MB,
+        // per file 50 MB, maks 1000 entri; lebih dari itu = tolak
+        // (jangan ekstrak). File yang sudah ada TIDAK PERNAH ditimpa
+        // diam-diam (nama unik). Gagal di tengah jalan = folder
+        // parsial dihapus bila folder itu baru dibuat run ini
+        // (folder yang sudah ada sebelumnya tidak ikut dihapus).
+        val totalMax = 100L * 1024 * 1024
+        val perFileMax = 50L * 1024 * 1024
+        val maxEntries = 1000
         val dir = currentDir() ?: return
         Thread {
+            val destDir = File(dir, file.nameWithoutExtension)
+            val destExisted = destDir.exists()
             try {
-                val destDir = File(dir, file.nameWithoutExtension)
                 destDir.mkdirs()
                 val destCanonical = destDir.canonicalPath
+                var totalBytes = 0L
+                var entries = 0
                 java.util.zip.ZipInputStream(
                     java.io.BufferedInputStream(file.inputStream())
                 ).use { zis ->
                     var entry = zis.nextEntry
                     while (entry != null) {
-                        val out = File(destDir, entry.name)
+                        entries++
+                        if (entries > maxEntries) {
+                            throw IllegalStateException("terlalu banyak entri zip (maks $maxEntries)")
+                        }
+                        var out = File(destDir, entry.name)
                         // Anti Zip-Slip (v0.1.75, audit #12): bandingkan
                         // dengan dest + separator — sibling yang berbagi
                         // prefix nama (mis. archive2 vs archive) DITOLAK.
@@ -1110,7 +1180,24 @@ class FileManagerActivity : AppCompatActivity() {
                             out.mkdirs()
                         } else {
                             out.parentFile?.mkdirs()
-                            out.outputStream().use { zis.copyTo(it) }
+                            // Nama bentrok -> nama unik, jangan timpa.
+                            if (out.exists()) {
+                                out = FileStore.uniqueFile(out.parentFile ?: destDir, out.name)
+                            }
+                            var fileBytes = 0L
+                            val buf = ByteArray(8192)
+                            out.outputStream().use { o ->
+                                while (true) {
+                                    val n = zis.read(buf)
+                                    if (n <= 0) break
+                                    fileBytes += n
+                                    totalBytes += n
+                                    if (fileBytes > perFileMax || totalBytes > totalMax) {
+                                        throw IllegalStateException("ukuran ekstrak melebihi batas (maks 100 MB total, 50 MB per file)")
+                                    }
+                                    o.write(buf, 0, n)
+                                }
+                            }
                         }
                         zis.closeEntry()
                         entry = zis.nextEntry
@@ -1121,6 +1208,12 @@ class FileManagerActivity : AppCompatActivity() {
                     render()
                 }
             } catch (e: Exception) {
+                if (!destExisted) {
+                    try {
+                        destDir.deleteRecursively()
+                    } catch (_: Exception) {
+                    }
+                }
                 runOnUiThread {
                     Toast.makeText(this, "Gagal mengekstrak: ${e.message}", Toast.LENGTH_LONG).show()
                 }
@@ -1134,8 +1227,14 @@ class FileManagerActivity : AppCompatActivity() {
     }
 
     private fun exportFiles(files: List<File>) {
+        val onlyFiles = files.filter { it.isFile }
+        if (onlyFiles.any { isSensitiveFolder(it) }) {
+            Toast.makeText(this, "File log tidak bisa diekspor", Toast.LENGTH_LONG).show()
+            clearSelection()
+            return
+        }
         var ok = 0
-        for (f in files.filter { it.isFile }) {
+        for (f in onlyFiles) {
             if (FileStore.exportToDownloads(this, f) != null) ok++
         }
         Toast.makeText(

@@ -31,6 +31,8 @@ class SettingsActivity : AppCompatActivity() {
     private lateinit var hiddenSwitch: Switch
     // v0.1.36: saklar + token API kontrol lokal.
     private lateinit var apiSwitch: Switch
+    // v0.1.85 (audit CODE-06): saklar debug WebView — default OFF.
+    private lateinit var webviewDebugSwitch: Switch
     private lateinit var apiTokenValue: TextView
     private lateinit var overlayStatusValue: TextView
     private var expectingLockResult = false
@@ -446,6 +448,53 @@ class SettingsActivity : AppCompatActivity() {
             refresh()
         }
 
+        // ---------- v0.1.85 (audit CODE-06): debug WebView ----------
+        // Default MATI di semua build — socket DevTools (@webview_devtools_remote_*)
+        // hanya terbuka bila saklar ini ON. Berlaku langsung tanpa restart
+        // (BrowserActivity mendengarkan ACTION_WEBVIEW_DEBUG).
+        val webviewDebugRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, 0, 0, 8)
+        }
+        webviewDebugRow.addView(TextView(this).apply {
+            text = "Izinkan debug WebView (adb)"
+            textSize = 16f
+            setTextColor(Color.parseColor("#E8ECF4"))
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+        })
+        webviewDebugSwitch = Switch(this)
+        webviewDebugRow.addView(webviewDebugSwitch)
+        root.addView(webviewDebugRow)
+        root.addView(TextView(this).apply {
+            text = "Membuka socket debug WebView untuk ADB (chrome://inspect). " +
+                "MATI secara default — nyalakan hanya saat perlu memeriksa halaman lewat ADB, " +
+                "lalu matikan lagi."
+            textSize = 12f
+            setTextColor(Color.parseColor("#8A94A6"))
+            setPadding(0, 0, 0, 16)
+        })
+        webviewDebugSwitch.setOnCheckedChangeListener { _, checked ->
+            if (checked == BrowserActivity.isWebViewDebuggingEnabled(this)) return@setOnCheckedChangeListener
+            // v0.1.85: tulis ke uiPrefs() ("senzspace_ui") — file yang
+            // sama dibaca BrowserActivity.isWebViewDebuggingEnabled().
+            uiPrefs().edit()
+                .putBoolean(BrowserActivity.PREF_WEBVIEW_DEBUG, checked).apply()
+            android.webkit.WebView.setWebContentsDebuggingEnabled(checked)
+            sendBroadcast(
+                android.content.Intent(BrowserActivity.ACTION_WEBVIEW_DEBUG)
+                    .putExtra("enabled", checked)
+                    .setPackage(packageName)
+            )
+            Toast.makeText(
+                this,
+                if (checked) "Debug WebView diaktifkan — socket adb terbuka"
+                else "Debug WebView dimatikan",
+                Toast.LENGTH_LONG
+            ).show()
+            refresh()
+        }
+
         // ---------- v0.1.42: izin overlay (BAL) ----------
         // "Tampil di atas aplikasi lain" — tanpa ini, tugas API dari
         // background mentok bila activity Space sudah dihancurkan
@@ -650,6 +699,9 @@ class SettingsActivity : AppCompatActivity() {
         }
         if (::apiSwitch.isInitialized) {
             apiSwitch.isChecked = ApiToken.isEnabled(this)
+        }
+        if (::webviewDebugSwitch.isInitialized) {
+            webviewDebugSwitch.isChecked = BrowserActivity.isWebViewDebuggingEnabled(this)
         }
         if (::apiTokenValue.isInitialized) {
             apiTokenValue.text = ApiToken.getOrCreate(this)
